@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "SF Pro Display", "PingFang SC", sans-serif;
+  color: #f3f0ea;
+  background:
+    radial-gradient(circle at top, rgba(255, 163, 102, 0.28), transparent 34%),
+    linear-gradient(135deg, #0c1a24 0%, #162635 42%, #3d2417 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.panel {
+  width: min(100%, 960px);
+  padding: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 28px;
+  background: rgba(8, 13, 18, 0.56);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+}
+
+.eyebrow {
+  display: inline-block;
+  margin-bottom: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #f2b880;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: clamp(2.4rem, 5vw, 4rem);
+}
+
+p {
+  margin: 0;
+  color: rgba(243, 240, 234, 0.82);
+}
+
+.grid {
+  margin-top: 32px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+article {
+  padding: 20px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+article h2 {
+  margin: 0 0 8px;
+}
+

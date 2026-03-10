@@ -1,0 +1,11 @@
+{
+  "name": "nuyess-chat",
+  "private": true,
+  "packageManager": "pnpm@10.18.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @nuychat/api dev",
+    "build": "pnpm -r build",
+    "test": "pnpm --filter @nuychat/api test"
+  }
+}
+

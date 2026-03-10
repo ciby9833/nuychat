@@ -1,0 +1,27 @@
+{
+  "name": "@nuychat/agent-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build"
+  },
+  "dependencies": {
+    "axios": "*",
+    "react": "*",
+    "react-dom": "*",
+    "react-router-dom": "*",
+    "socket.io-client": "*",
+    "zustand": "*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "*",
+    "@types/react": "*",
+    "@types/react-dom": "*",
+    "@vitejs/plugin-react": "*",
+    "tailwindcss": "*",
+    "typescript": "*",
+    "vite": "*"
+  }
+}
+

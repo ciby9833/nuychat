@@ -1,0 +1,26 @@
+{
+  "name": "@nuychat/tenant-admin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build"
+  },
+  "dependencies": {
+    "axios": "*",
+    "react": "*",
+    "react-dom": "*",
+    "react-router-dom": "*",
+    "zustand": "*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "*",
+    "@types/react": "*",
+    "@types/react-dom": "*",
+    "@vitejs/plugin-react": "*",
+    "tailwindcss": "*",
+    "typescript": "*",
+    "vite": "*"
+  }
+}
+

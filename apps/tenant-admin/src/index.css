@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "Avenir Next", "PingFang SC", sans-serif;
+  color: #f7f4ec;
+  background:
+    radial-gradient(circle at top right, rgba(81, 175, 143, 0.26), transparent 32%),
+    linear-gradient(140deg, #11171b 0%, #1a2431 52%, #213b32 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.panel {
+  width: min(100%, 920px);
+  padding: 40px;
+  border-radius: 28px;
+  background: rgba(10, 16, 18, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 72px rgba(0, 0, 0, 0.3);
+}
+
+.eyebrow {
+  display: inline-block;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #97dfc0;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: clamp(2.2rem, 5vw, 3.8rem);
+}
+
+p {
+  margin: 0;
+  color: rgba(247, 244, 236, 0.78);
+}
+
+.grid {
+  margin-top: 32px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+article {
+  padding: 20px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+article h2 {
+  margin: 0 0 8px;
+}
+

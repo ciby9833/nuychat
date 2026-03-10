@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: nuychat_pg
+    environment:
+      POSTGRES_DB: nuychat_dev
+      POSTGRES_USER: nuychat
+      POSTGRES_PASSWORD: nuychat_dev_pw
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nuychat"]
+      interval: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nuychat_redis
+    ports:
+      - "6380:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: nuychat_qdrant
+    ports:
+      - "6335:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  adminer:
+    image: adminer
+    container_name: nuychat_adminer
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  pg_data:
+  qdrant_data:
