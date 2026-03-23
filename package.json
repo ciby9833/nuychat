@@ -4,8 +4,8 @@
   "packageManager": "pnpm@10.18.0",
   "scripts": {
     "dev:api": "pnpm --filter @nuychat/api dev",
+    "dev:customer-web": "pnpm --filter @nuychat/customer-web dev",
     "build": "pnpm -r build",
     "test": "pnpm --filter @nuychat/api test"
   }
 }
-

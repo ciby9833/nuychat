@@ -1,71 +1,77 @@
-@import "tailwindcss";
-
 :root {
-  font-family: "IBM Plex Sans", "PingFang SC", sans-serif;
-  color: #f8f3ee;
-  background:
-    radial-gradient(circle at top left, rgba(77, 129, 255, 0.25), transparent 30%),
-    linear-gradient(145deg, #12121b 0%, #171f32 50%, #1a2d4f 100%);
+  font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
 }
 
 * {
   box-sizing: border-box;
 }
 
-body {
+html,
+body,
+#root {
   margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+  min-height: 100%;
+}
+
+body {
+  background: #f5f7fb;
+  color: #1f1f1f;
 }
 
 .shell {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 32px;
+  padding: 20px;
 }
 
 .panel {
-  width: min(100%, 960px);
-  padding: 40px;
-  border-radius: 28px;
-  background: rgba(7, 11, 20, 0.64);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 18px 72px rgba(0, 0, 0, 0.35);
+  width: min(460px, 96vw);
+  border: 1px solid #e5eaf1;
+  border-radius: 16px;
+  background: #fff;
+  padding: 24px;
+  box-shadow: 0 12px 28px rgba(31, 41, 55, 0.08);
 }
 
 .eyebrow {
   display: inline-block;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: #8fb0ff;
+  color: #1677ff;
 }
 
-h1 {
-  margin: 0 0 12px;
-  font-size: clamp(2.2rem, 5vw, 3.8rem);
-}
-
-p {
-  margin: 0;
-  color: rgba(248, 243, 238, 0.78);
-}
-
-.grid {
-  margin-top: 32px;
+.login-form {
+  margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
+  gap: 10px;
 }
 
-article {
-  padding: 20px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.05);
+.login-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: #6b7280;
 }
 
-article h2 {
-  margin: 0 0 8px;
+.login-form input {
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  padding: 9px 11px;
 }
 
+.login-form button {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #1677ff;
+  color: #fff;
+  cursor: pointer;
+}
+
+.error-msg {
+  color: #cf1322;
+  margin: 0;
+}

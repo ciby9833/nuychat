@@ -5,3 +5,7 @@ dist/
 *.local
 .DS_Store
 *.tsbuildinfo
+apps/api/data/
+package-lock.json
+tests/webchat/report-*.json
+third_party/openclaw/

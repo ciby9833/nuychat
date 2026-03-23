@@ -1,14 +1,10 @@
 import type { Knex } from "knex";
 
+import { getDatabaseConnection } from "./config.js";
+
 const config: Knex.Config = {
   client: "pg",
-  connection: process.env.DATABASE_URL ?? {
-    host: "localhost",
-    port: 5432,
-    database: "nuychat_dev",
-    user: "nuychat",
-    password: "nuychat_dev_pw"
-  },
+  connection: getDatabaseConnection(),
   migrations: {
     directory: new URL("../../../migrations", import.meta.url).pathname,
     extension: "ts"
@@ -17,4 +13,3 @@ const config: Knex.Config = {
 };
 
 export default config;
-

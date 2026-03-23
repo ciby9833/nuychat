@@ -1,11 +1,31 @@
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import jwt from "@fastify/jwt";
+import multipart from "@fastify/multipart";
 import sensible from "@fastify/sensible";
+import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 
+import { getMaxFileSize, getUploadsDir } from "./infra/storage/upload.service.js";
+
+import { authRoutes } from "./modules/auth/auth.routes.js";
+import { agentRoutes } from "./modules/agent/agent.routes.js";
+import { channelAdminRoutes } from "./modules/channel/channel-admin.routes.js";
 import { channelGateway } from "./modules/channel/channel.gateway.js";
+import { conversationRoutes } from "./modules/conversation/conversation.routes.js";
+import { closeDatabase } from "./infra/db/client.js";
+import { platformRoutes } from "./modules/platform/platform.routes.js";
+import { realtimeRoutes } from "./modules/realtime/realtime.routes.js";
+import { tenantCustomerIntelligenceRoutes } from "./modules/tenant/tenant-ai-knowledge.routes.js";
+import { tenantAdminRoutes } from "./modules/tenant/tenant-admin.routes.js";
+import { tenantCustomerSegmentRoutes } from "./modules/tenant/tenant-customer-segment.routes.js";
+import { tenantContextPlugin } from "./modules/tenant/tenant.middleware.js";
+import { tenantOrgMemberRoutes } from "./modules/tenant/tenant-org-member.routes.js";
+import { tenantQualityRoutes } from "./modules/tenant/tenant-quality.routes.js";
+import { ticketRoutes } from "./modules/ticket/ticket.routes.js";
+import { uploadRoutes } from "./modules/upload/upload.routes.js";
+import { webchatRoutes } from "./modules/webchat/webchat.routes.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -15,7 +35,11 @@ export async function buildApp() {
     }
   });
 
-  await app.register(cors, { origin: process.env.CORS_ORIGIN ?? "*" });
+  await app.register(cors, {
+    origin: process.env.CORS_ORIGIN ?? "*",
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+  });
   await app.register(helmet);
   await app.register(sensible);
   await app.register(jwt, {
@@ -27,14 +51,38 @@ export async function buildApp() {
     encoding: false,
     runFirst: true
   });
+  await app.register(multipart, { limits: { fileSize: getMaxFileSize() } });
+  await app.register(fastifyStatic, {
+    root: getUploadsDir(),
+    prefix: "/uploads/",
+    decorateReply: false
+  });
 
   app.get("/health", async () => ({
     status: "ok",
     ts: new Date().toISOString()
   }));
 
+  await app.register(authRoutes);
+  await app.register(platformRoutes);
+  await app.register(tenantContextPlugin);
   await app.register(channelGateway);
+  await app.register(realtimeRoutes);
+  await app.register(webchatRoutes);
+  await app.register(uploadRoutes);
+  await app.register(conversationRoutes);
+  await app.register(ticketRoutes);
+  await app.register(agentRoutes);
+  await app.register(channelAdminRoutes);
+  await app.register(tenantCustomerIntelligenceRoutes);
+  await app.register(tenantOrgMemberRoutes);
+  await app.register(tenantQualityRoutes);
+  await app.register(tenantCustomerSegmentRoutes);
+  await app.register(tenantAdminRoutes);
+
+  app.addHook("onClose", async () => {
+    await closeDatabase();
+  });
 
   return app;
 }
-
