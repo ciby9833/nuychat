@@ -7,8 +7,8 @@ import {
   type CustomerProfileRefreshJobPayload
 } from "../infra/queue/queues.js";
 import {
-  claimDirtyCustomerProfiles,
-  enqueueClaimedCustomerProfiles
+  claimMemoryRefreshWork,
+  enqueueClaimedMemoryRefreshWork
 } from "../modules/tasks/customer-profile-refresh.service.js";
 
 export function createCustomerProfileRefreshWorker() {
@@ -18,27 +18,26 @@ export function createCustomerProfileRefreshWorker() {
   return new Worker<CustomerProfileRefreshJobPayload>(
     customerProfileRefreshQueue.name,
     async (job) => {
-      const claimed = await claimDirtyCustomerProfiles({
+      const claimed = await claimMemoryRefreshWork({
         db,
         workerId,
         tenantId: job.data.tenantId ?? null,
         limit: Math.max(1, Math.min(job.data.limit ?? 100, 500))
       });
 
-      if (claimed.length === 0) {
-        return { claimed: 0 };
+      if (claimed.profiles.length === 0 && claimed.memoryUnits.length === 0) {
+        return { claimedProfiles: 0, claimedMemoryUnits: 0 };
       }
 
-      await enqueueClaimedCustomerProfiles({
+      await enqueueClaimedMemoryRefreshWork({
         workerId,
-        claimed: claimed.map((item) => ({
-          tenantId: item.tenantId,
-          customerId: item.customerId,
-          sourceVersion: item.sourceVersion
-        }))
+        claimed
       });
 
-      return { claimed: claimed.length };
+      return {
+        claimedProfiles: claimed.profiles.length,
+        claimedMemoryUnits: claimed.memoryUnits.length
+      };
     },
     {
       connection: workerConnection,

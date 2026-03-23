@@ -2319,7 +2319,7 @@ function extractMessagePreview(content: unknown): string {
   if (content && typeof content === "object" && !Array.isArray(content)) {
     const record = content as Record<string, unknown>;
     if (typeof record.text === "string" && record.text.trim()) return record.text.trim();
-    if (record.media && typeof record.media === "object") return "[media]";
+    if (Array.isArray(record.attachments) && record.attachments.length > 0) return "[media]";
   }
 
   return "-";

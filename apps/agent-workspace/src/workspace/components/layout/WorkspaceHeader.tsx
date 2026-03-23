@@ -1,3 +1,5 @@
+// 作用: 工作台顶部组件，显示当前租户、坐席信息、连接状态，并提供切换租户和退出登录功能。
+import React from "react";
 import type { Session } from "../../types";
 
 type WorkspaceHeaderProps = {

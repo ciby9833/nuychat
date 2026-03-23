@@ -9,11 +9,17 @@ type WhatsAppRawMessage = {
   from?: string;
   timestamp?: string;
   type?: string;
+  context?: {
+    id?: string;
+    forwarded?: boolean;
+    frequently_forwarded?: boolean;
+  };
   text?: { body?: string };
   image?: { id?: string; mime_type?: string; caption?: string };
   audio?: { id?: string; mime_type?: string };
   video?: { id?: string; mime_type?: string; caption?: string };
   document?: { id?: string; mime_type?: string; filename?: string; caption?: string };
+  sticker?: { id?: string; mime_type?: string };
   location?: { latitude?: number; longitude?: number; name?: string; address?: string };
   contacts?: Array<{ name?: { formatted_name?: string }; phones?: Array<{ phone?: string }> }>;
   reaction?: { emoji?: string; message_id?: string };
@@ -46,6 +52,11 @@ export const whatsappAdapter = {
       receivedAt: resolveTimestamp(message.timestamp),
       metadata: {
         rawType: message.type ?? "unknown"
+      },
+      context: {
+        externalMessageId: message.context?.id,
+        forwarded: Boolean(message.context?.forwarded),
+        frequentlyForwarded: Boolean(message.context?.frequently_forwarded)
       }
     };
 
@@ -60,14 +71,16 @@ export const whatsappAdapter = {
       case "audio":
       case "video":
       case "document":
+      case "sticker":
         return {
           ...base,
           messageType: "media",
           text:
             message.image?.caption ??
             message.video?.caption ??
-            message.document?.caption,
-          media: buildMediaPayload(message)
+            message.document?.caption ??
+            "",
+          attachments: buildMediaPayload(message)
         };
       case "interactive":
         return {
@@ -101,6 +114,10 @@ export const whatsappAdapter = {
           ...base,
           messageType: "reaction",
           text: message.reaction?.emoji,
+          reaction: {
+            emoji: message.reaction?.emoji,
+            targetExternalMessageId: message.reaction?.message_id
+          },
           metadata: {
             ...base.metadata,
             targetMessageId: message.reaction?.message_id
@@ -121,7 +138,10 @@ export const whatsappAdapter = {
     input: {
       text: string;
       to: string;
-      media?: { url: string; mimeType: string; fileName?: string };
+      attachment?: { url: string; mimeType: string; fileName?: string };
+      contextMessageId?: string;
+      reactionEmoji?: string;
+      reactionMessageId?: string;
     },
     context: {
       config: ResolvedChannelConfig;
@@ -137,32 +157,51 @@ export const whatsappAdapter = {
 
     let requestBody: Record<string, unknown>;
 
-    if (input.media) {
-      const mediaType = resolveWhatsAppMediaType(input.media.mimeType);
+    if (input.reactionEmoji && input.reactionMessageId) {
+      requestBody = {
+        messaging_product: "whatsapp",
+        to: input.to,
+        type: "reaction",
+        reaction: {
+          message_id: input.reactionMessageId,
+          emoji: input.reactionEmoji
+        }
+      };
+    } else if (input.attachment) {
+      const mediaType = resolveWhatsAppMediaType(input.attachment.mimeType, input.attachment.fileName);
       // Ensure absolute URL for WhatsApp Cloud API (it needs a publicly accessible URL)
-      const mediaUrl = input.media.url.startsWith("http")
-        ? input.media.url
-        : `${process.env.PUBLIC_API_URL ?? "http://localhost:3000"}${input.media.url}`;
+      const mediaUrl = input.attachment.url.startsWith("http")
+        ? input.attachment.url
+        : `${process.env.PUBLIC_API_URL ?? "http://localhost:3000"}${input.attachment.url}`;
 
-      if (mediaType === "image") {
+      if (mediaType === "sticker") {
+        requestBody = {
+          messaging_product: "whatsapp", to: input.to, type: "sticker",
+          sticker: { link: mediaUrl }
+        };
+      } else if (mediaType === "image") {
         requestBody = {
           messaging_product: "whatsapp", to: input.to, type: "image",
-          image: { link: mediaUrl, caption: input.text || undefined }
+          image: { link: mediaUrl, caption: input.text || undefined },
+          context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       } else if (mediaType === "video") {
         requestBody = {
           messaging_product: "whatsapp", to: input.to, type: "video",
-          video: { link: mediaUrl, caption: input.text || undefined }
+          video: { link: mediaUrl, caption: input.text || undefined },
+          context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       } else if (mediaType === "audio") {
         requestBody = {
           messaging_product: "whatsapp", to: input.to, type: "audio",
-          audio: { link: mediaUrl }
+          audio: { link: mediaUrl },
+          context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       } else {
         requestBody = {
           messaging_product: "whatsapp", to: input.to, type: "document",
-          document: { link: mediaUrl, caption: input.text || undefined, filename: input.media.fileName }
+          document: { link: mediaUrl, caption: input.text || undefined, filename: input.attachment.fileName },
+          context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       }
     } else {
@@ -170,7 +209,8 @@ export const whatsappAdapter = {
         messaging_product: "whatsapp",
         to: input.to,
         type: "text",
-        text: { body: input.text }
+        text: { body: input.text },
+        context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
       };
     }
 
@@ -199,13 +239,13 @@ export const whatsappAdapter = {
 };
 
 function buildMediaPayload(message: WhatsAppRawMessage) {
-  const payload = message.image ?? message.audio ?? message.video ?? message.document;
+  const payload = message.image ?? message.audio ?? message.video ?? message.document ?? message.sticker;
   return payload
-    ? {
+    ? [{
         mediaId: payload.id,
         mimeType: payload.mime_type,
         fileName: "filename" in payload && typeof payload.filename === "string" ? payload.filename : undefined
-      }
+      }]
     : undefined;
 }
 
@@ -247,7 +287,11 @@ function resolveTimestamp(timestamp: string | undefined) {
   return Number.isNaN(numeric) ? new Date(timestamp) : new Date(numeric * 1000);
 }
 
-function resolveWhatsAppMediaType(mimeType: string): "image" | "video" | "audio" | "document" {
+function resolveWhatsAppMediaType(
+  mimeType: string,
+  fileName?: string
+): "image" | "video" | "audio" | "document" | "sticker" {
+  if (mimeType === "image/webp" || fileName?.toLowerCase().endsWith(".webp")) return "sticker";
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType.startsWith("audio/")) return "audio";

@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { QUICK_PHRASES } from "../constants";
-import type { AgentColleague, ConversationDetail, MessageItem, Ticket } from "../types";
+import { resolveApiUrl } from "../api";
+import { getChannelCapability, QUICK_PHRASES, validateUploadForChannel } from "../constants";
+import type { AgentColleague, ConversationDetail, MessageAttachment, MessageItem, Ticket } from "../types";
 import { fullTimestamp, messageDateSeparator } from "../utils";
 
 type TimelinePanelProps = {
   detail: ConversationDetail | null;
   messages: MessageItem[];
   reply: string;
-  pendingMedia: { url: string; mimeType: string; fileName: string } | null;
+  pendingAttachments: MessageAttachment[];
+  replyTargetMessageId: string | null;
   viewHint: string;
   aiSuggestions: string[];
   recommendedSkills: string[];
@@ -17,8 +19,17 @@ type TimelinePanelProps = {
   colleagues: AgentColleague[];
   onReplyChange: (v: string) => void;
   onSendReply: () => Promise<void>;
-  onUploadFile: (file: File) => Promise<void>;
-  onClearMedia: () => void;
+  onSendReaction: (targetMessageId: string, emoji: string) => Promise<void>;
+  onUploadFiles: (
+    files: File[],
+    options?: {
+      onProgress?: (fileKey: string, progress: number) => void;
+      onError?: (fileKey: string, error: string) => void;
+    }
+  ) => Promise<void>;
+  onClearAttachments: () => void;
+  onRemoveAttachment: (index: number) => void;
+  onSetReplyTarget: (messageId: string | null) => void;
   onAssign: () => Promise<void>;
   onHandoff: () => Promise<void>;
   onTransfer: (targetAgentId: string, reason?: string) => Promise<void>;
@@ -30,6 +41,15 @@ type RenderItem =
   | { kind: "sep"; label: string; id: string }
   | { kind: "msg"; msg: MessageItem; showTime: boolean };
 
+type UploadItem = {
+  key: string;
+  file: File;
+  progress: number;
+  status: "uploading" | "failed";
+  error?: string;
+  mode: "attachment" | "sticker";
+};
+
 // ── Multimedia bubble content renderer ─────────────────────────────────────────
 
 function fileIcon(fileName: string | undefined): string {
@@ -37,62 +57,109 @@ function fileIcon(fileName: string | undefined): string {
   if (ext === "pdf") return "📄";
   if (["xlsx", "xls", "csv"].includes(ext)) return "📊";
   if (["doc", "docx"].includes(ext)) return "📝";
+  if (["ppt", "pptx"].includes(ext)) return "📽️";
   if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "📦";
   return "📎";
 }
 
-function renderBubbleContent(m: MessageItem): React.ReactNode {
+function resolveAttachmentUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  return resolveApiUrl(url);
+}
+
+function getAttachments(content: MessageItem["content"]): Array<{ url?: string; mimeType?: string; fileName?: string; mediaId?: string }> {
+  return Array.isArray(content.attachments) ? content.attachments : [];
+}
+
+function renderAttachment(
+  attachment: { url?: string; mimeType?: string; fileName?: string },
+  key: string,
+  text: string | undefined,
+  onPreviewImage: (url: string, alt: string) => void
+) {
+  const url = resolveAttachmentUrl(attachment.url);
+  const mimeType = attachment.mimeType ?? "";
+
+  if (mimeType.startsWith("image/")) {
+    return (
+      <div key={key} className="media-bubble">
+        {url ? (
+          <img
+            src={url}
+            alt={attachment.fileName ?? "image"}
+            className={mimeType === "image/webp" ? "bubble-img bubble-sticker" : "bubble-img"}
+            loading="lazy"
+            onClick={() => onPreviewImage(url, attachment.fileName ?? "image")}
+          />
+        ) : null}
+        {text ? <div className="media-caption">{text}</div> : null}
+      </div>
+    );
+  }
+
+  if (mimeType.startsWith("video/")) {
+    return (
+      <div key={key} className="media-bubble">
+        {url ? <video src={url} controls className="bubble-video" preload="metadata" /> : null}
+        {text ? <div className="media-caption">{text}</div> : null}
+      </div>
+    );
+  }
+
+  if (mimeType.startsWith("audio/")) {
+    return (
+      <div key={key} className="media-bubble">
+        {url ? <audio src={url} controls className="bubble-audio" preload="metadata" /> : null}
+        {text ? <div className="media-caption">{text}</div> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div key={key} className="file-bubble">
+      <span className="file-icon">{fileIcon(attachment.fileName)}</span>
+      <div className="file-info">
+        <span className="file-name">{attachment.fileName ?? "附件"}</span>
+        <span className="file-type">{mimeType}</span>
+        {text ? <span className="file-caption">{text}</span> : null}
+      </div>
+      <div className="file-actions">
+        {url && mimeType === "application/pdf" ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="file-action-btn"
+          >
+            预览
+          </a>
+        ) : null}
+        {url ? (
+          <a href={url} download={attachment.fileName} className="file-download">下载</a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function renderBubbleContent(
+  m: MessageItem,
+  onPreviewImage: (url: string, alt: string) => void
+): React.ReactNode {
   const c = m.content;
   const mt = m.message_type;
+  const attachments = getAttachments(c);
 
-  // ── Image ────────────────────────────────────────────────────
-  if (mt === "media" && c.media?.mimeType?.startsWith("image/")) {
+  if (mt === "media" && attachments.length > 0) {
     return (
-      <div className="media-bubble">
-        <img
-          src={c.media.url}
-          alt={c.media.fileName ?? "image"}
-          className="bubble-img"
-          loading="lazy"
-          onClick={() => c.media?.url && window.open(c.media.url, "_blank")}
-        />
-        {c.text && <div className="media-caption">{c.text}</div>}
-      </div>
-    );
-  }
-
-  // ── Video ────────────────────────────────────────────────────
-  if (mt === "media" && c.media?.mimeType?.startsWith("video/")) {
-    return (
-      <div className="media-bubble">
-        <video src={c.media.url} controls className="bubble-video" preload="metadata" />
-        {c.text && <div className="media-caption">{c.text}</div>}
-      </div>
-    );
-  }
-
-  // ── Audio ────────────────────────────────────────────────────
-  if (mt === "media" && c.media?.mimeType?.startsWith("audio/")) {
-    return (
-      <div className="media-bubble">
-        <audio src={c.media.url} controls className="bubble-audio" preload="metadata" />
-      </div>
-    );
-  }
-
-  // ── Document / File ──────────────────────────────────────────
-  if (mt === "media" && c.media) {
-    const icon = fileIcon(c.media.fileName);
-    return (
-      <div className="file-bubble">
-        <span className="file-icon">{icon}</span>
-        <div className="file-info">
-          <span className="file-name">{c.media.fileName ?? "附件"}</span>
-          <span className="file-type">{c.media.mimeType ?? ""}</span>
-        </div>
-        {c.media.url && (
-          <a href={c.media.url} target="_blank" rel="noreferrer" className="file-download">下载</a>
-        )}
+      <div>
+        {attachments.map((attachment, index) => renderAttachment(
+          attachment,
+          `${m.message_id}-${index}`,
+          attachments.length === 1 && index === 0 ? c.text : undefined,
+          onPreviewImage
+        ))}
+        {attachments.length > 1 && c.text ? <div className="media-caption">{c.text}</div> : null}
       </div>
     );
   }
@@ -150,12 +217,42 @@ function renderBubbleContent(m: MessageItem): React.ReactNode {
   return c.text ?? "[非文本消息]";
 }
 
+function messagePreview(m: MessageItem | null | undefined): string {
+  if (!m) return "";
+  if (m.status_deleted_at) return "[已删除]";
+  if (m.reaction_emoji) return m.reaction_emoji;
+  if (m.content?.text) return m.content.text;
+  const attachments = getAttachments(m.content);
+  if (attachments.length > 0) {
+    return attachments[0]?.fileName ?? "[附件]";
+  }
+  return "[消息]";
+}
+
+function statusLabel(m: MessageItem): string | null {
+  if (m.direction !== "outbound") return null;
+  if (m.status_deleted_at) return "已删除";
+  switch (m.message_status) {
+    case "read":
+      return "已读";
+    case "delivered":
+      return "已送达";
+    case "sent":
+      return "已发送";
+    case "failed":
+      return "失败";
+    default:
+      return null;
+  }
+}
+
 export function TimelinePanel(props: TimelinePanelProps) {
   const {
     detail,
     messages,
     reply,
-    pendingMedia,
+    pendingAttachments,
+    replyTargetMessageId,
     viewHint,
     aiSuggestions,
     recommendedSkills,
@@ -165,8 +262,11 @@ export function TimelinePanel(props: TimelinePanelProps) {
     colleagues,
     onReplyChange,
     onSendReply,
-    onUploadFile,
-    onClearMedia,
+    onSendReaction,
+    onUploadFiles,
+    onClearAttachments,
+    onRemoveAttachment,
+    onSetReplyTarget,
     onAssign,
     onHandoff,
     onTransfer,
@@ -188,15 +288,25 @@ export function TimelinePanel(props: TimelinePanelProps) {
   //   • the conversation is resolved (backend auto-reactivates on send)
   // Blocked only when another agent has it locked in human_active state.
   const canSend = Boolean(
-    detail && !isLockedByAnotherAgent && (reply.trim() || pendingMedia) && (isAssignedToMe || isResolved)
+    detail && !isLockedByAnotherAgent && (reply.trim() || pendingAttachments.length > 0) && (isAssignedToMe || isResolved)
   );
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const stickerInputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [reactionTargetId, setReactionTargetId] = useState<string | null>(null);
+  const [composerError, setComposerError] = useState<string>("");
+  const [imagePreview, setImagePreview] = useState<{ url: string; alt: string } | null>(null);
+  const replyTarget = useMemo(
+    () => messages.find((message) => message.message_id === replyTargetMessageId) ?? null,
+    [messages, replyTargetMessageId]
+  );
+  const capability = useMemo(() => getChannelCapability(detail?.channelType), [detail?.channelType]);
+  const uploading = uploadItems.some((item) => item.status === "uploading");
 
   // Auto-resize textarea
   const resizeTextarea = () => {
@@ -234,6 +344,9 @@ export function TimelinePanel(props: TimelinePanelProps) {
     setShowTransfer(false);
     setTransferTargetId("");
     setTransferReason("");
+    setUploadItems([]);
+    setComposerError("");
+    setImagePreview(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.conversationId]);
 
@@ -262,21 +375,88 @@ export function TimelinePanel(props: TimelinePanelProps) {
     void onSendReply();
   };
 
-  const handleFileSelect = async (file: File) => {
-    if (uploading) return;
-    setUploading(true);
-    try {
-      await onUploadFile(file);
-    } finally {
-      setUploading(false);
+  const startUpload = async (files: File[], mode: "attachment" | "sticker") => {
+    if (files.length === 0 || uploading) return;
+    const uniqueFiles = files
+      .filter((file, index, current) => (
+        current.findIndex((item) => (
+          item.name === file.name &&
+          item.size === file.size &&
+          item.lastModified === file.lastModified
+        )) === index
+      ))
+      .slice(0, capability.maxAttachmentsPerSend);
+
+    const validFiles: File[] = [];
+    for (const file of uniqueFiles) {
+      const validationError = validateUploadForChannel(detail?.channelType, file, mode);
+      if (validationError) {
+        setComposerError(validationError);
+        continue;
+      }
+      validFiles.push(file);
     }
+    if (validFiles.length === 0) return;
+
+    const nextItems = validFiles.map((file) => ({
+      key: `${file.name}-${file.size}-${file.lastModified}`,
+      file,
+      progress: 0,
+      status: "uploading" as const,
+      mode
+    }));
+    setComposerError("");
+    setUploadItems((current) => [...current, ...nextItems]);
+    const failedKeys = new Set<string>();
+    try {
+      await onUploadFiles(validFiles, {
+        onProgress: (fileKey, progress) => {
+          setUploadItems((current) => current.map((item) => (
+            item.key === fileKey ? { ...item, progress } : item
+          )));
+        },
+        onError: (fileKey, error) => {
+          failedKeys.add(fileKey);
+          setUploadItems((current) => current.map((item) => (
+            item.key === fileKey ? { ...item, status: "failed", error } : item
+          )));
+        }
+      });
+      setUploadItems((current) => current.filter((item) => (
+        !nextItems.some((next) => next.key === item.key) || failedKeys.has(item.key)
+      )));
+    } catch {
+      // upload errors are handled per file via onError callbacks
+    }
+  };
+
+  const retryUpload = (key: string) => {
+    const target = uploadItems.find((item) => item.key === key);
+    if (!target) return;
+    setUploadItems((current) => current.filter((item) => item.key !== key));
+    void startUpload([target.file], target.mode);
+  };
+
+  const handleFiles = async (files: File[]) => {
+    await startUpload(files, "attachment");
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) void handleFileSelect(file);
+    void handleFiles(Array.from(e.dataTransfer.files));
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const clipboardFiles = Array.from(e.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file instanceof File);
+
+    if (clipboardFiles.length === 0) return;
+
+    e.preventDefault();
+    void handleFiles(clipboardFiles);
   };
 
   const handleResolveClick = () => {
@@ -306,6 +486,10 @@ export function TimelinePanel(props: TimelinePanelProps) {
       return (a.displayName ?? "").localeCompare(b.displayName ?? "");
     });
   }, [colleagues]);
+
+  const openImagePreview = (url: string, alt: string) => {
+    setImagePreview({ url, alt });
+  };
 
   return (
     <section className="timeline-panel">
@@ -446,7 +630,7 @@ export function TimelinePanel(props: TimelinePanelProps) {
           </div>
         )}
 
-        {renderItems.map((item) => {
+        {renderItems.map((item, renderIndex) => {
           if (item.kind === "sep") {
             return (
               <div key={item.id} className="msg-date-sep">
@@ -460,6 +644,12 @@ export function TimelinePanel(props: TimelinePanelProps) {
           const isSystem = m.sender_type === "system";
           const isAI = m.sender_type === "bot" && isOut;
           const isAgent = m.sender_type === "agent" && isOut;
+          const prevItem = renderItems[renderIndex - 1];
+          const prevMsg = prevItem?.kind === "msg" ? prevItem.msg : null;
+          const isMediaCluster = m.message_type === "media" &&
+            prevMsg?.message_type === "media" &&
+            prevMsg.direction === m.direction &&
+            prevMsg.sender_id === m.sender_id;
           const rowClass = isSystem ? "system" : isOut ? "out" : "in";
           const bubbleClass = isSystem ? "system" : isAI ? "bot" : isOut ? "out" : "in";
 
@@ -476,22 +666,80 @@ export function TimelinePanel(props: TimelinePanelProps) {
           const attrLabel = aiLabel ?? agentLabel;
 
           return (
-            <div key={m.message_id} className={`msg-row ${rowClass}`}>
+            <div key={m.message_id} className={`msg-row ${rowClass}${isMediaCluster ? " media-cluster" : ""}`}>
               {/* Attribution label above outbound messages (human agent or AI) */}
               {attrLabel && (
                 <div className={`msg-agent-attr${isAI ? " ai-attr" : ""}`}>{attrLabel}</div>
               )}
               <div className={`msg-bubble ${bubbleClass}`}>
-                {renderBubbleContent(m)}
+                {m.reply_to_message_id && (
+                  <div className="reply-preview">
+                    <span className="reply-label">回复</span>
+                    <span className="reply-text">{messagePreview(messages.find((msg) => msg.message_id === m.reply_to_message_id) ?? null)}</span>
+                  </div>
+                )}
+                {renderBubbleContent(m, openImagePreview)}
               </div>
+              {capability.supportsReply && !isSystem && (
+                <div className="msg-actions">
+                  <button type="button" className="msg-action-btn" onClick={() => onSetReplyTarget(m.message_id)}>回复</button>
+                  {capability.supportsReaction && (
+                    <button type="button" className="msg-action-btn" onClick={() => setReactionTargetId((current) => current === m.message_id ? null : m.message_id)}>表情</button>
+                  )}
+                  {capability.supportsReaction && reactionTargetId === m.message_id && (
+                    <div className="reaction-picker">
+                      {["👍", "❤️", "🙏", "😂"].map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className="reaction-choice"
+                          onClick={() => {
+                            setReactionTargetId(null);
+                            void onSendReaction(m.message_id, emoji);
+                          }}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {/* Always show full timestamp for every message */}
-              <div className="msg-time msg-time--full">{fullTimestamp(m.created_at)}</div>
+              <div className="msg-time msg-time--full">
+                {fullTimestamp(m.created_at)}
+                {statusLabel(m) ? ` · ${statusLabel(m)}` : ""}
+              </div>
             </div>
           );
         })}
 
         <div ref={bottomRef} />
       </div>
+
+      {imagePreview ? (
+        <div
+          className="image-preview-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setImagePreview(null)}
+        >
+          <button
+            type="button"
+            className="image-preview-close"
+            aria-label="关闭图片预览"
+            onClick={() => setImagePreview(null)}
+          >
+            ×
+          </button>
+          <img
+            src={imagePreview.url}
+            alt={imagePreview.alt}
+            className="image-preview-content"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      ) : null}
 
       {/* Composer */}
       <div className="composer">
@@ -567,21 +815,47 @@ export function TimelinePanel(props: TimelinePanelProps) {
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
         >
-          {/* Attachment preview bar */}
-          {pendingMedia && (
+          {replyTarget && (
             <div className="attachment-preview">
-              {pendingMedia.mimeType.startsWith("image/")
-                ? <img src={`http://localhost:3000${pendingMedia.url}`} alt={pendingMedia.fileName} className="attach-thumb" />
-                : <span className="attach-file-icon">{fileIcon(pendingMedia.fileName)} {pendingMedia.fileName}</span>
-              }
-              <button type="button" onClick={onClearMedia} className="attach-remove" title="移除附件">✕</button>
+              <span className="attach-file-icon">回复: {messagePreview(replyTarget)}</span>
+              <button type="button" onClick={() => onSetReplyTarget(null)} className="attach-remove" title="取消回复">✕</button>
             </div>
           )}
-          {uploading && <div className="attachment-preview"><span className="attach-file-icon">上传中…</span></div>}
+          {/* Attachment preview bar */}
+          {pendingAttachments.length > 0 && (
+            <div className="attachment-preview">
+              {pendingAttachments.map((attachment, index) => (
+                <div key={`${attachment.fileName}-${index}`} className="attach-chip">
+                  {attachment.mimeType.startsWith("image/")
+                    ? <img src={resolveAttachmentUrl(attachment.url)} alt={attachment.fileName} className="attach-thumb" />
+                    : <span className="attach-file-icon">{fileIcon(attachment.fileName)} {attachment.fileName}</span>
+                  }
+                  <button type="button" onClick={() => onRemoveAttachment(index)} className="attach-remove" title="移除此附件">✕</button>
+                </div>
+              ))}
+              <button type="button" onClick={onClearAttachments} className="attach-remove" title="清空附件">清空</button>
+            </div>
+          )}
+          {uploadItems.length > 0 && (
+            <div className="attachment-preview">
+              {uploadItems.map((item) => (
+                <div key={item.key} className="attach-chip">
+                  <span className="attach-file-icon">
+                    {item.file.name} {item.status === "uploading" ? `${item.progress}%` : `失败: ${item.error ?? ""}`}
+                  </span>
+                  {item.status === "failed" ? (
+                    <button type="button" onClick={() => retryUpload(item.key)} className="attach-remove" title="重试上传">重试</button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+          {composerError && <div className="composer-error">{composerError}</div>}
           <textarea
             ref={textareaRef}
             value={reply}
             onChange={(e) => { onReplyChange(e.target.value); resizeTextarea(); }}
+            onPaste={handlePaste}
             placeholder={
               isLockedByAnotherAgent
                 ? "该会话已分配给其他客服，无法回复"
@@ -604,10 +878,10 @@ export function TimelinePanel(props: TimelinePanelProps) {
             ref={fileInputRef}
             type="file"
             style={{ display: "none" }}
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.zip,.rar,.7z"
+            multiple
+            accept={capability.accepts}
             onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void handleFileSelect(file);
+              void handleFiles(Array.from(e.target.files ?? []));
               e.target.value = "";
             }}
           />
@@ -620,12 +894,34 @@ export function TimelinePanel(props: TimelinePanelProps) {
               type="button"
               className="attach-btn"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isLockedByAnotherAgent || uploading}
+              disabled={isLockedByAnotherAgent || uploading || !capability.supportsAttachments}
               title="添加附件"
             >
               📎
             </button>
-            <button type="button" className="subtle-btn" onClick={() => { onReplyChange(""); onClearMedia(); }} disabled={!reply && !pendingMedia}>
+            {capability.supportsSticker && (
+              <button
+                type="button"
+                className="attach-btn"
+                onClick={() => stickerInputRef.current?.click()}
+                disabled={isLockedByAnotherAgent || uploading}
+                title="发送贴纸"
+              >
+                🟩
+              </button>
+            )}
+            <button
+              type="button"
+              className="subtle-btn"
+              onClick={() => {
+                onReplyChange("");
+                onClearAttachments();
+                onSetReplyTarget(null);
+                setComposerError("");
+                setUploadItems([]);
+              }}
+              disabled={!reply && pendingAttachments.length === 0 && !replyTarget && uploadItems.length === 0}
+            >
               清空
             </button>
             <button type="button" className="send-btn" onClick={sendNow} disabled={!canSend}>
@@ -633,6 +929,16 @@ export function TimelinePanel(props: TimelinePanelProps) {
             </button>
           </div>
         </div>
+        <input
+          ref={stickerInputRef}
+          type="file"
+          style={{ display: "none" }}
+          accept=".webp,image/webp"
+          onChange={(e) => {
+            void startUpload(Array.from(e.target.files ?? []), "sticker");
+            e.target.value = "";
+          }}
+        />
       </div>
     </section>
   );

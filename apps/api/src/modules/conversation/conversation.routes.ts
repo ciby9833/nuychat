@@ -523,7 +523,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           .join("conversations as c", function joinConversation() {
             this.on("c.conversation_id", "=", "cc.conversation_id").andOn("c.tenant_id", "=", "cc.tenant_id");
           })
-          .leftJoin("conversation_intelligence as ci", function joinSummary() {
+          .leftJoin("conversation_memory_snapshots as ci", function joinSummary() {
             this.on("ci.case_id", "=", "cc.case_id").andOn("ci.tenant_id", "=", "cc.tenant_id");
           })
           .where({ "cc.tenant_id": tenantId, "cc.customer_id": base.customer_id })
@@ -536,18 +536,18 @@ export async function conversationRoutes(app: FastifyInstance) {
             "c.channel_type",
             "cc.last_activity_at",
             "ci.summary",
-            "ci.last_intent",
-            "ci.last_sentiment"
+            "ci.intent as last_intent",
+            "ci.sentiment as last_sentiment"
           )
           .orderBy("cc.last_activity_at", "desc")
           .limit(8),
         trx("conversation_cases as cc")
-          .leftJoin("conversation_intelligence as ci", function joinSummary() {
+          .leftJoin("conversation_memory_snapshots as ci", function joinSummary() {
             this.on("ci.case_id", "=", "cc.case_id").andOn("ci.tenant_id", "=", "cc.tenant_id");
           })
           .where({ "cc.tenant_id": tenantId, "cc.customer_id": base.customer_id })
-          .whereNotNull("ci.last_sentiment")
-          .select("cc.case_id", "cc.last_activity_at", "ci.last_sentiment")
+          .whereNotNull("ci.sentiment")
+          .select("cc.case_id", "cc.last_activity_at", "ci.sentiment as last_sentiment")
           .orderBy("cc.last_activity_at", "desc")
           .limit(10),
         trx("tickets as t")
@@ -558,7 +558,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           .select("t.ticket_id", "t.case_id", "t.title", "t.status", "t.priority", "t.created_at")
           .orderBy("t.created_at", "desc")
           .limit(8),
-        trx("customer_memory_items")
+        trx("customer_memory_units")
           .where({ tenant_id: tenantId, customer_id: base.customer_id, status: "active" })
           .where((builder) => {
             builder.whereNull("expires_at").orWhere("expires_at", ">", trx.fn.now());
@@ -566,7 +566,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           .select("memory_type", "title", "summary", "salience", "updated_at")
           .orderBy([{ column: "salience", order: "desc" }, { column: "updated_at", order: "desc" }])
           .limit(8),
-        trx("customer_state_snapshots")
+        trx("customer_memory_states")
           .where({ tenant_id: tenantId, customer_id: base.customer_id, status: "active" })
           .select("state_type", "state_payload", "updated_at")
           .orderBy("updated_at", "desc")
@@ -695,13 +695,27 @@ export async function conversationRoutes(app: FastifyInstance) {
     const { conversationId } = req.params as { conversationId: string };
     const body = req.body as {
       text?: string;
-      media?: { url: string; mimeType: string; fileName?: string };
+      attachments?: Array<{ url?: string; mimeType?: string; fileName?: string }>;
+      replyToMessageId?: string;
+      reactionEmoji?: string;
+      reactionToMessageId?: string;
       channelId?: string;
       channelType?: string;
     };
 
-    if (!body?.text?.trim() && !body?.media?.url) {
-      throw app.httpErrors.badRequest("Reply text or media is required");
+    const attachments = normalizeReplyAttachments(body);
+    const replyText = (body.text ?? "").trim();
+    const outboundMessages = buildReplyMessages({
+      text: replyText,
+      attachments,
+      agentId,
+      replyToMessageId: body.replyToMessageId,
+      reactionEmoji: body.reactionEmoji,
+      reactionToMessageId: body.reactionToMessageId
+    });
+
+    if (outboundMessages.length === 0) {
+      throw app.httpErrors.badRequest("Reply text, reaction, or attachments are required");
     }
 
     const summary = await withTenantTransaction(tenantId, async () => {
@@ -718,21 +732,30 @@ export async function conversationRoutes(app: FastifyInstance) {
       }
     }
 
-    await outboundQueue.add(
-      "send-outbound",
-      {
-        tenantId,
-        conversationId,
-        channelId: body.channelId ?? (summary.channel_id as string),
-        channelType: body.channelType ?? (summary.channel_type as string),
-        message: {
-          text: (body.text ?? "").trim(),
-          agentId,
-          media: body.media ?? undefined
-        }
-      },
-      { removeOnComplete: 100, removeOnFail: 50 }
-    );
+    const [replyContext, reactionContext] = await Promise.all([
+      resolveReplyContext(tenantId, body.replyToMessageId),
+      resolveReplyContext(tenantId, body.reactionToMessageId)
+    ]);
+
+    for (const message of outboundMessages) {
+      await outboundQueue.add(
+        "send-outbound",
+        {
+          tenantId,
+          conversationId,
+          channelId: body.channelId ?? (summary.channel_id as string),
+          channelType: body.channelType ?? (summary.channel_type as string),
+          message: {
+            ...message,
+            replyToMessageId: message.replyToMessageId ?? replyContext.replyToMessageId ?? undefined,
+            replyToExternalId: message.replyToMessageId ? replyContext.replyToExternalId ?? undefined : undefined,
+            reactionMessageId: message.reactionMessageId ? reactionContext.replyToMessageId ?? undefined : undefined,
+            reactionExternalId: message.reactionMessageId ? reactionContext.replyToExternalId ?? undefined : undefined
+          }
+        },
+        { removeOnComplete: 100, removeOnFail: 50 }
+      );
+    }
 
     await withTenantTransaction(tenantId, async (trx) => {
       await recordAgentPresenceActivity(trx, tenantId, agentId);
@@ -1907,6 +1930,73 @@ async function recordAgentPresenceActivity(
 ) {
   if (!agentId) return;
   await presenceService.recordActivity(trx, { tenantId, agentId });
+}
+
+function normalizeReplyAttachments(body: {
+  attachments?: Array<{ url?: string; mimeType?: string; fileName?: string }>;
+}) {
+  const attachmentRows = Array.isArray(body.attachments) ? body.attachments : [];
+
+  return attachmentRows
+    .map((attachment) => ({
+      url: typeof attachment.url === "string" ? attachment.url.trim() : "",
+      mimeType: typeof attachment.mimeType === "string" ? attachment.mimeType.trim() : "application/octet-stream",
+      fileName: typeof attachment.fileName === "string" && attachment.fileName.trim() ? attachment.fileName.trim() : undefined
+    }))
+    .filter((attachment) => attachment.url.length > 0);
+}
+
+async function resolveReplyContext(
+  tenantId: string,
+  replyToMessageId: string | undefined
+) {
+  if (!replyToMessageId) {
+    return { replyToMessageId: null, replyToExternalId: null };
+  }
+
+  const row = await db("messages")
+    .select("message_id", "external_id")
+    .where({ tenant_id: tenantId, message_id: replyToMessageId })
+    .first<{ message_id: string; external_id: string | null } | undefined>();
+
+  return {
+    replyToMessageId: row?.message_id ?? null,
+    replyToExternalId: row?.external_id ?? null
+  };
+}
+
+function buildReplyMessages(input: {
+  text: string;
+  attachments: Array<{ url: string; mimeType: string; fileName?: string }>;
+  agentId?: string;
+  replyToMessageId?: string;
+  reactionEmoji?: string;
+  reactionToMessageId?: string;
+}) {
+  if (input.reactionEmoji && input.reactionToMessageId) {
+    return [{
+      text: "",
+      agentId: input.agentId,
+      replyToMessageId: null,
+      reactionEmoji: input.reactionEmoji,
+      reactionMessageId: input.reactionToMessageId
+    }];
+  }
+
+  if (input.attachments.length === 0) {
+    return input.text ? [{
+      text: input.text,
+      agentId: input.agentId,
+      replyToMessageId: input.replyToMessageId
+    }] : [];
+  }
+
+  return input.attachments.map((attachment, index) => ({
+    text: index === 0 ? input.text : "",
+    agentId: input.agentId,
+    replyToMessageId: index === 0 ? input.replyToMessageId : undefined,
+    attachment
+  }));
 }
 
 async function enqueueAsyncAgentSkillExecution(input: {

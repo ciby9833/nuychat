@@ -307,6 +307,18 @@ export class OrchestratorService {
             keyEntities: entities
           }
         }).catch(() => null);
+
+        void scheduleConversationMemoryEncoding({
+          tenantId: input.tenantId,
+          customerId: input.customerId,
+          conversationId: input.conversationId,
+          caseId: input.caseId ?? null,
+          chatHistory,
+          conversationSummary: finalContent.slice(0, 400),
+          lastIntent: intent,
+          lastSentiment: sentiment,
+          finalResponse: finalContent
+        }).catch(() => null);
       }
 
       void scheduleExecutionArchive({
@@ -410,6 +422,40 @@ async function scheduleExecutionArchive(input: {
         })),
         handoffReason: input.handoffReason
       }
+    }
+  });
+}
+
+async function scheduleConversationMemoryEncoding(input: {
+  tenantId: string;
+  customerId: string;
+  conversationId: string;
+  caseId?: string | null;
+  chatHistory: ChatMessage[];
+  conversationSummary: string;
+  lastIntent: string;
+  lastSentiment: string;
+  finalResponse: string;
+}) {
+  await scheduleLongTask({
+    tenantId: input.tenantId,
+    customerId: input.customerId,
+    conversationId: input.conversationId,
+    caseId: input.caseId ?? null,
+    taskType: "memory_encode_conversation_event",
+    title: "Conversation memory encoding",
+    source: "ai",
+    priority: 88,
+    schedulerKey: `memory-conversation:${input.conversationId}:${Date.now()}`,
+    payload: {
+      conversationSummary: input.conversationSummary,
+      lastIntent: input.lastIntent,
+      lastSentiment: input.lastSentiment,
+      finalResponse: input.finalResponse,
+      messages: input.chatHistory.slice(-12).map((message) => ({
+        role: message.role,
+        content: message.content
+      }))
     }
   });
 }

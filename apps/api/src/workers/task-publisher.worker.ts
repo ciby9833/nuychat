@@ -33,7 +33,14 @@ export function createTaskPublisherWorker() {
         return { skipped: true, reason: "task_not_ready" };
       }
 
-      const shouldWriteConversationMessage = row.task_type !== "ai_execution_archive";
+      const shouldWriteConversationMessage = ![
+        "ai_execution_archive",
+        "vector_customer_profile_reindex",
+        "vector_batch_reindex",
+        "vector_memory_unit_reindex",
+        "memory_encode_conversation_event",
+        "memory_encode_task_event"
+      ].includes(row.task_type);
 
       if (row.conversation_id && shouldWriteConversationMessage) {
         await withTenantTransaction(tenantId, async (trx) => {

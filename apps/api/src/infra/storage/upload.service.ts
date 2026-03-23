@@ -6,7 +6,7 @@ const UPLOADS_DIR = process.env.UPLOADS_DIR
   ? path.resolve(process.env.UPLOADS_DIR)
   : path.resolve(process.cwd(), "data/uploads");
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /** Allowed MIME prefixes — reject unknown types */
 const ALLOWED_MIME_PREFIXES = [
@@ -17,8 +17,10 @@ const ALLOWED_MIME_PREFIXES = [
   "application/msword",
   "application/vnd.openxmlformats-officedocument",
   "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
   "text/csv",
   "text/plain",
+  "application/json",
   "application/zip",
   "application/x-rar-compressed",
   "application/x-7z-compressed"
@@ -46,6 +48,7 @@ function mimeTypeToExt(mimeType: string): string {
     "application/pdf": ".pdf",
     "text/csv": ".csv",
     "text/plain": ".txt",
+    "application/vnd.ms-powerpoint": ".ppt",
     "application/zip": ".zip"
   };
   return map[mimeType] ?? "";

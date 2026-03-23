@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { ClipboardEvent, FormEvent, useState } from "react";
 import type { WebchatAttachment } from "../types";
 
 export function ChatComposer(props: {
@@ -7,6 +7,7 @@ export function ChatComposer(props: {
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<WebchatAttachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -23,17 +24,48 @@ export function ChatComposer(props: {
     setFiles([]);
   };
 
+  const appendFiles = async (items: File[]) => {
+    if (items.length === 0) return;
+    const next = await Promise.all(items.slice(0, 3).map(toAttachment));
+    setFiles((current) => [...current, ...(next.filter(Boolean) as WebchatAttachment[])].slice(0, 10));
+  };
+
   const onSelectFile = async (items: FileList | null) => {
     if (!items || items.length === 0) return;
-    const next = await Promise.all(Array.from(items).slice(0, 3).map(toAttachment));
-    setFiles(next.filter(Boolean) as WebchatAttachment[]);
+    await appendFiles(Array.from(items));
+  };
+
+  const onPaste = (event: ClipboardEvent<HTMLInputElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file instanceof File);
+
+    if (files.length === 0) return;
+    event.preventDefault();
+    void appendFiles(files);
+  };
+
+  const removeFile = (index: number) => {
+    setFiles((current) => current.filter((_, currentIndex) => currentIndex !== index));
   };
 
   return (
-    <form className="chat-composer" onSubmit={onSubmit}>
+    <form
+      className={`chat-composer${dragOver ? " drag-over" : ""}`}
+      onSubmit={onSubmit}
+      onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragOver(false);
+        void onSelectFile(event.dataTransfer.files);
+      }}
+    >
       <input
         value={text}
         onChange={(event) => setText(event.target.value)}
+        onPaste={onPaste}
         placeholder="输入你的问题..."
         disabled={props.disabled}
       />
@@ -51,8 +83,11 @@ export function ChatComposer(props: {
       </button>
       {files.length > 0 ? (
         <div className="composer-files">
-          {files.map((file) => (
-            <span key={file.name}>{file.name}</span>
+          {files.map((file, index) => (
+            <span key={`${file.name}-${index}`}>
+              {file.name}
+              <button type="button" onClick={() => removeFile(index)} aria-label={`移除 ${file.name}`}>✕</button>
+            </span>
           ))}
         </div>
       ) : null}

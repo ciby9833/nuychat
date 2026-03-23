@@ -76,22 +76,49 @@ export type MessageItem = {
   direction: string;
   sender_type: string | null;
   sender_id: string | null;
+  channel_message_type?: string | null;
+  message_status?: string | null;
   message_type: string;
   content: {
     text?: string;
     aiAgentName?: string | null;
-    // Inbound multimedia (from UnifiedMessage JSONB stored in DB)
-    media?: { url?: string; mimeType?: string; fileName?: string; mediaId?: string };
+    attachments?: Array<{ url?: string; mimeType?: string; fileName?: string; mediaId?: string }>;
     location?: { latitude: number; longitude: number; name?: string; address?: string };
     contacts?: Array<{ name?: string; phones?: string[] }>;
     // Skill execution results
     skillName?: string;
     result?: Record<string, unknown>;
   };
+  reply_to_message_id?: string | null;
+  reply_to_external_id?: string | null;
+  reply_to_content?: {
+    text?: string;
+    attachments?: Array<{ url?: string; mimeType?: string; fileName?: string; mediaId?: string }>;
+  } | null;
+  reaction_target_message_id?: string | null;
+  reaction_target_external_id?: string | null;
+  reaction_emoji?: string | null;
+  is_forwarded?: boolean;
+  is_frequently_forwarded?: boolean;
+  is_voice_message?: boolean;
+  status_sent_at?: string | null;
+  status_delivered_at?: string | null;
+  status_read_at?: string | null;
+  status_failed_at?: string | null;
+  status_deleted_at?: string | null;
+  status_error_code?: string | null;
+  status_error_title?: string | null;
   created_at: string;
   /** Populated when sender_type === "agent" via server-side join */
   sender_name?: string | null;
   sender_employee_no?: string | null;
+};
+
+export type MessageAttachment = {
+  url: string;
+  mimeType: string;
+  fileName: string;
+  fileSize?: number;
 };
 
 export type CopilotData = {
@@ -122,7 +149,7 @@ export type PaginatedConversationsResponse = {
 
 export type RealtimeReplayEvent = {
   eventId: string;
-  event: "conversation.created" | "conversation.updated" | "message.received" | "message.sent" | "ticket.sla_warning" | "ticket.sla_breached" | "task.updated";
+  event: "conversation.created" | "conversation.updated" | "message.received" | "message.sent" | "message.updated" | "ticket.sla_warning" | "ticket.sla_breached" | "task.updated";
   payload: Record<string, unknown>;
 };
 

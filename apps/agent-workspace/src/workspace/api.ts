@@ -15,7 +15,13 @@
  */
 
 import { apiHeaders, writeSession } from "./session";
-import type { RealtimeReplayEvent, Session } from "./types";
+import type { MessageAttachment, RealtimeReplayEvent, Session } from "./types";
+
+export const API_BASE_URL = "http://localhost:3000";
+
+export function resolveApiUrl(path: string): string {
+  return /^(?:https?:|data:|blob:)/i.test(path) ? path : `${API_BASE_URL}${path}`;
+}
 
 // ─── Session-update registry ──────────────────────────────────────────────────
 // DashboardPage registers its setSession() here so the refresh interceptor
@@ -241,39 +247,54 @@ export async function apiPatchJson<T>(
 
 // ─── File upload ──────────────────────────────────────────────────────────────
 
-export type UploadResult = {
-  url: string;
-  mimeType: string;
-  fileName: string;
-  fileSize: number;
-};
+export type UploadResult = MessageAttachment;
 
-export async function uploadFile(session: Session, file: File): Promise<UploadResult> {
+export async function uploadFile(
+  session: Session,
+  file: File,
+  options?: { onProgress?: (progress: number) => void }
+): Promise<UploadResult> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const makeRequest = (s: Session) =>
-    fetch("http://localhost:3000/api/upload", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${s.accessToken}` },
-      body: formData
-    });
+  const makeRequest = (s: Session) => new Promise<UploadResult>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", resolveApiUrl("/api/upload"));
+    xhr.setRequestHeader("Authorization", `Bearer ${s.accessToken}`);
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      options?.onProgress?.(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onerror = () => reject(new Error("Upload failed: network error"));
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        reject(new Error("UPLOAD_401"));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText) as UploadResult);
+      } catch {
+        reject(new Error("Upload failed: invalid response"));
+      }
+    };
+    xhr.send(formData);
+  });
 
-  let res = await makeRequest(session);
-
-  if (res.status === 401) {
+  try {
+    return await makeRequest(session);
+  } catch (error) {
+    if ((error as Error).message !== "UPLOAD_401") throw error;
     const next = await tryRefreshSession(session);
     if (next) {
-      res = await makeRequest(next);
-      if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
-      return res.json() as Promise<UploadResult>;
+      return makeRequest(next);
     }
     goToLogin();
     throw new Error("Session expired");
   }
-
-  if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
-  return res.json() as Promise<UploadResult>;
 }
 
 // ─── Auth helpers (bypass refresh interceptor) ────────────────────────────────

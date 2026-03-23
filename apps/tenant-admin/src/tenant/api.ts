@@ -32,6 +32,12 @@ import type {
   DispatchExecutionListItem,
   DispatchOpsSuggestion,
   DispatchOpsSuggestionGroup,
+  MemoryEncoderTraceDetail,
+  MemoryEncoderTraceListItem,
+  MemoryEvalDatasetItem,
+  MemoryEvalDatasetRowInput,
+  MemoryEvalReportDetail,
+  MemoryEvalReportItem,
   SupervisorAgentStatus,
   SupervisorConversationWorkbenchItem,
   SupervisorConversationWorkbenchResponse,
@@ -272,6 +278,59 @@ export function listDispatchExecutions(input?: {
 
 export function getDispatchExecutionDetail(executionId: string) {
   return api<DispatchExecutionDetail>(`/api/admin/dispatch-executions/${executionId}`);
+}
+
+export function listMemoryEncoderTraces(input?: {
+  conversationId?: string;
+  customerId?: string;
+  sourceKind?: string;
+  status?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (input?.conversationId) params.set("conversationId", input.conversationId);
+  if (input?.customerId) params.set("customerId", input.customerId);
+  if (input?.sourceKind) params.set("sourceKind", input.sourceKind);
+  if (input?.status) params.set("status", input.status);
+  if (typeof input?.limit === "number") params.set("limit", String(input.limit));
+  const query = params.toString();
+  return api<{ summary: { recent7dCount: number }; items: MemoryEncoderTraceListItem[] }>(
+    `/api/admin/memory/encoder-traces${query ? `?${query}` : ""}`
+  );
+}
+
+export function getMemoryEncoderTraceDetail(traceId: string) {
+  return api<MemoryEncoderTraceDetail>(`/api/admin/memory/encoder-traces/${traceId}`);
+}
+
+export function listMemoryEvalDatasets() {
+  return api<{ items: MemoryEvalDatasetItem[] }>("/api/admin/memory/eval-datasets");
+}
+
+export function createMemoryEvalDataset(input: {
+  name: string;
+  description?: string | null;
+  rows: MemoryEvalDatasetRowInput[];
+}) {
+  return api<MemoryEvalDatasetItem>("/api/admin/memory/eval-datasets", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function listMemoryEvalReports() {
+  return api<{ items: MemoryEvalReportItem[] }>("/api/admin/memory/eval-reports");
+}
+
+export function getMemoryEvalReportDetail(reportId: string) {
+  return api<MemoryEvalReportDetail>(`/api/admin/memory/eval-reports/${reportId}`);
+}
+
+export function runMemoryEvalDataset(datasetId: string, input?: { name?: string }) {
+  return api<MemoryEvalReportItem>(`/api/admin/memory/eval-datasets/${datasetId}/run`, {
+    method: "POST",
+    body: JSON.stringify(input ?? {})
+  });
 }
 
 export function listDispatchOpsSuggestions(input?: { from?: string; to?: string }) {

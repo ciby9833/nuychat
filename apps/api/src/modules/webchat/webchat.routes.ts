@@ -355,13 +355,20 @@ function serializeWebchatMessageRow(message: {
     ? (message.content as Record<string, unknown>)
     : {};
   const text = typeof payload.text === "string" ? payload.text : "";
-  const media = payload.media && typeof payload.media === "object"
-    ? (payload.media as { url?: string; mimeType?: string; fileName?: string })
-    : null;
+  const payloadAttachments = Array.isArray(payload.attachments)
+    ? (payload.attachments as Array<{ url?: string; mimeType?: string; fileName?: string }>)
+    : [];
   const metadata = payload.metadata && typeof payload.metadata === "object"
     ? (payload.metadata as Record<string, unknown>)
     : {};
-  const attachments = Array.isArray(metadata.attachments)
+  const attachments = payloadAttachments.length > 0
+    ? payloadAttachments.map((item) => ({
+        name: String(item.fileName ?? "file"),
+        mimeType: String(item.mimeType ?? "application/octet-stream"),
+        size: 0,
+        url: typeof item.url === "string" ? item.url : undefined
+      }))
+    : Array.isArray(metadata.attachments)
     ? (metadata.attachments as Array<{ name?: string; mimeType?: string; size?: number; dataUrl?: string; url?: string }>)
       .map((item) => ({
         name: String(item.name ?? "file"),
@@ -378,7 +385,6 @@ function serializeWebchatMessageRow(message: {
     sender_type: message.sender_type ?? null,
     type: message.message_type,
     text,
-    media,
     attachments,
     createdAt: new Date(message.created_at).toISOString()
   };

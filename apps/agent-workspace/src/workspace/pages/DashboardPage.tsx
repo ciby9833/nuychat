@@ -46,7 +46,8 @@ export function DashboardPage() {
         detail={vm.detail}
         messages={vm.messages}
         reply={vm.reply}
-        pendingMedia={vm.pendingMedia}
+        pendingAttachments={vm.pendingAttachments}
+        replyTargetMessageId={vm.replyTargetMessageId}
         viewHint={vm.viewHint}
         aiSuggestions={vm.copilot?.suggestions ?? []}
         recommendedSkills={(vm.skillRecommendation?.recommendations ?? []).map((r) => r.skillName)}
@@ -56,8 +57,11 @@ export function DashboardPage() {
         colleagues={vm.colleagues}
         onReplyChange={vm.setReply}
         onSendReply={async () => { await vm.sendReply(); }}
-        onUploadFile={vm.handleUploadFile}
-        onClearMedia={() => vm.setPendingMedia(null)}
+        onSendReaction={vm.sendReaction}
+        onUploadFiles={vm.handleUploadFiles}
+        onClearAttachments={() => vm.setPendingAttachments([])}
+        onRemoveAttachment={vm.removePendingAttachment}
+        onSetReplyTarget={vm.setReplyTargetMessageId}
         onAssign={vm.doAssign}
         onHandoff={vm.doHandoff}
         onTransfer={vm.doTransfer}

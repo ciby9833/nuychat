@@ -1,8 +1,19 @@
 import type { WebchatMessage } from "../types";
 import { useEffect, useMemo, useState } from "react";
+import { resolveApiBase } from "../config";
+
+const API_BASE = resolveApiBase();
+
+function resolveAttachmentUrl(url?: string, dataUrl?: string) {
+  if (dataUrl) return dataUrl;
+  if (!url) return undefined;
+  if (/^(?:https?:|data:|blob:)/i.test(url)) return url;
+  return new URL(url, API_BASE).toString();
+}
 
 export function ChatMessages(props: { messages: WebchatMessage[]; loading: boolean }) {
   const [typedContent, setTypedContent] = useState<Record<string, string>>({});
+  const [imagePreview, setImagePreview] = useState<{ url: string; alt: string } | null>(null);
 
   const newestOutbound = useMemo(() => {
     const rows = [...props.messages].reverse();
@@ -42,20 +53,30 @@ export function ChatMessages(props: { messages: WebchatMessage[]; loading: boole
               <p>{text || "[非文本消息]"}</p>
               {message.attachments?.length ? (
                 <div className="bubble-attachments">
-                  {message.attachments.map((file, idx) => (
-                    <a
-                      key={`${message.id}-${idx}`}
-                      className="bubble-file"
-                      href={file.url || file.dataUrl || "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {file.mimeType.startsWith("image/") && (file.url || file.dataUrl) ? (
-                        <img src={file.url || file.dataUrl} alt={file.name} />
-                      ) : null}
-                      <span>{file.name}</span>
-                    </a>
-                  ))}
+                  {message.attachments.map((file, idx) => {
+                    const fileUrl = resolveAttachmentUrl(file.url, file.dataUrl);
+                    const isImage = file.mimeType.startsWith("image/");
+
+                    return (
+                      <a
+                        key={`${message.id}-${idx}`}
+                        className="bubble-file"
+                        href={fileUrl ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(event) => {
+                          if (!isImage || !fileUrl) return;
+                          event.preventDefault();
+                          setImagePreview({ url: fileUrl, alt: file.name });
+                        }}
+                      >
+                        {isImage && fileUrl ? (
+                          <img src={fileUrl} alt={file.name} />
+                        ) : null}
+                        <span>{file.name}</span>
+                      </a>
+                    );
+                  })}
                 </div>
               ) : null}
               <time>{new Date(message.createdAt).toLocaleString()}</time>
@@ -63,6 +84,29 @@ export function ChatMessages(props: { messages: WebchatMessage[]; loading: boole
           </div>
         );
       })}
+      {imagePreview ? (
+        <div
+          className="image-preview-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setImagePreview(null)}
+        >
+          <button
+            type="button"
+            className="image-preview-close"
+            aria-label="关闭图片预览"
+            onClick={() => setImagePreview(null)}
+          >
+            ×
+          </button>
+          <img
+            src={imagePreview.url}
+            alt={imagePreview.alt}
+            className="image-preview-content"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      ) : null}
     </main>
   );
 }

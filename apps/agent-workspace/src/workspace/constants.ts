@@ -10,3 +10,100 @@ export const AVAILABLE_SKILLS = [
   { code: "search_knowledge_base", title: "知识库检索", desc: "检索政策、退款、物流FAQ" },
   { code: "get_customer_info", title: "客户画像", desc: "读取客户标签、等级和历史会话" }
 ];
+
+export type ChannelCapability = {
+  supportsReply: boolean;
+  supportsReaction: boolean;
+  supportsSticker: boolean;
+  supportsAttachments: boolean;
+  accepts: string;
+  maxAttachmentsPerSend: number;
+};
+
+const DEFAULT_CAPABILITY: ChannelCapability = {
+  supportsReply: false,
+  supportsReaction: false,
+  supportsSticker: false,
+  supportsAttachments: true,
+  accepts: "image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx,.zip,.rar,.7z",
+  maxAttachmentsPerSend: 10
+};
+
+const CHANNEL_CAPABILITIES: Record<string, ChannelCapability> = {
+  whatsapp: {
+    supportsReply: true,
+    supportsReaction: true,
+    supportsSticker: true,
+    supportsAttachments: true,
+    accepts: "image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx,.zip,.rar,.7z,.webp",
+    maxAttachmentsPerSend: 10
+  },
+  web: DEFAULT_CAPABILITY,
+  webhook: DEFAULT_CAPABILITY
+};
+
+export function getChannelCapability(channelType: string | null | undefined): ChannelCapability {
+  if (!channelType) return DEFAULT_CAPABILITY;
+  return CHANNEL_CAPABILITIES[channelType] ?? DEFAULT_CAPABILITY;
+}
+
+export type UploadValidationRule = {
+  maxSizeBytes: number;
+  mimePrefixes: string[];
+  extensions?: string[];
+};
+
+const MB = 1024 * 1024;
+
+export const WHATSAPP_UPLOAD_RULES = {
+  sticker: { maxSizeBytes: 500 * 1024, mimePrefixes: ["image/webp"], extensions: [".webp"] },
+  image: { maxSizeBytes: 5 * MB, mimePrefixes: ["image/"] },
+  video: { maxSizeBytes: 16 * MB, mimePrefixes: ["video/"] },
+  audio: { maxSizeBytes: 16 * MB, mimePrefixes: ["audio/"] },
+  document: {
+    maxSizeBytes: 100 * MB,
+    mimePrefixes: [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument",
+      "application/vnd.ms-excel",
+      "application/vnd.ms-powerpoint",
+      "text/csv",
+      "text/plain",
+      "application/zip",
+      "application/x-rar-compressed",
+      "application/x-7z-compressed"
+    ],
+    extensions: [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".txt", ".zip", ".rar", ".7z"]
+  }
+} satisfies Record<string, UploadValidationRule>;
+
+export function validateUploadForChannel(
+  channelType: string | null | undefined,
+  file: File,
+  mode: "attachment" | "sticker" = "attachment"
+): string | null {
+  if (channelType !== "whatsapp") return null;
+  const lowerName = file.name.toLowerCase();
+  const rule: UploadValidationRule = mode === "sticker"
+    ? WHATSAPP_UPLOAD_RULES.sticker
+    : file.type.startsWith("image/")
+      ? WHATSAPP_UPLOAD_RULES.image
+      : file.type.startsWith("video/")
+        ? WHATSAPP_UPLOAD_RULES.video
+        : file.type.startsWith("audio/")
+          ? WHATSAPP_UPLOAD_RULES.audio
+          : WHATSAPP_UPLOAD_RULES.document;
+
+  const prefixAllowed = rule.mimePrefixes.some((prefix) => file.type.startsWith(prefix));
+  const extAllowed = !rule.extensions || rule.extensions.some((ext) => lowerName.endsWith(ext));
+  if (!prefixAllowed && !extAllowed) {
+    return mode === "sticker"
+      ? "WhatsApp 贴纸仅支持 WEBP。"
+      : "当前文件类型不在 WhatsApp 支持范围内。";
+  }
+  if (file.size > rule.maxSizeBytes) {
+    return `文件超过 WhatsApp 限制：最大 ${Math.round(rule.maxSizeBytes / 1024 / 1024 * 10) / 10}MB。`;
+  }
+  return null;
+}

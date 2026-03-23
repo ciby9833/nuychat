@@ -9,6 +9,8 @@
     "db:check": "tsx --env-file=.env src/scripts/db-check.ts",
     "db:backfill:conversation-segments": "tsx --env-file=.env src/scripts/backfill-conversation-segments.ts",
     "db:backfill:conversation-cases": "tsx --env-file=.env src/scripts/backfill-conversation-cases.ts",
+    "memory:eval:export": "tsx --env-file=.env src/scripts/memory-eval-export.ts",
+    "memory:eval:run": "tsx --env-file=.env src/scripts/memory-eval-run.ts",
     "db:migrate": "tsx --env-file=.env ./node_modules/knex/bin/cli.js migrate:latest --knexfile src/infra/db/knexfile.ts",
     "db:rollback": "tsx --env-file=.env ./node_modules/knex/bin/cli.js migrate:rollback --knexfile src/infra/db/knexfile.ts"
   },

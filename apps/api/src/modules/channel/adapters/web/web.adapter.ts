@@ -33,7 +33,6 @@ export const webAdapter = {
     const displayName = message.displayName?.trim();
     const text = message.text?.trim() ?? "";
     const attachments = Array.isArray(message.attachments) ? message.attachments.slice(0, 3) : [];
-    const firstAttachment = attachments[0];
     const messageType = attachments.length > 0 ? "media" : "text";
 
     return {
@@ -46,13 +45,11 @@ export const webAdapter = {
       messageType,
       senderExternalRef: customerRef,
       text,
-      media: firstAttachment
-        ? {
-            url: firstAttachment.url || firstAttachment.dataUrl,
-            mimeType: firstAttachment.mimeType,
-            fileName: firstAttachment.name
-          }
-        : undefined,
+      attachments: attachments.map((attachment) => ({
+        url: attachment.url || attachment.dataUrl,
+        mimeType: attachment.mimeType,
+        fileName: attachment.name
+      })),
       metadata: {
         displayName,
         rawType: "web_text",
@@ -66,7 +63,10 @@ export const webAdapter = {
     input: {
       text: string;
       to: string;
-      media?: { url: string; mimeType: string; fileName?: string };
+      attachment?: { url: string; mimeType: string; fileName?: string };
+      contextMessageId?: string;
+      reactionEmoji?: string;
+      reactionMessageId?: string;
     },
     _context: {
       config: ResolvedChannelConfig;

@@ -7,6 +7,24 @@ export type UnifiedMessageType =
   | "reaction"
   | "system_event";
 
+export type UnifiedAttachment = {
+  url?: string;
+  mimeType?: string;
+  fileName?: string;
+  mediaId?: string;
+};
+
+export type UnifiedMessageContext = {
+  externalMessageId?: string;
+  forwarded?: boolean;
+  frequentlyForwarded?: boolean;
+};
+
+export type UnifiedReaction = {
+  emoji?: string;
+  targetExternalMessageId?: string;
+};
+
 export type UnifiedMessage = {
   id: string;
   externalId: string;
@@ -18,12 +36,9 @@ export type UnifiedMessage = {
   senderExternalRef: string;
   recipientExternalRef?: string;
   text?: string;
-  media?: {
-    url?: string;
-    mimeType?: string;
-    fileName?: string;
-    mediaId?: string;
-  };
+  attachments?: UnifiedAttachment[];
+  context?: UnifiedMessageContext;
+  reaction?: UnifiedReaction;
   actions?: Array<{
     type: "button" | "list" | "postback";
     label: string;

@@ -55,7 +55,14 @@ export const webhookAdapter = {
   },
 
   async sendMessage(
-    input: { text: string; to: string; media?: { url: string; mimeType: string; fileName?: string } },
+    input: {
+      text: string;
+      to: string;
+      attachment?: { url: string; mimeType: string; fileName?: string };
+      contextMessageId?: string;
+      reactionEmoji?: string;
+      reactionMessageId?: string;
+    },
     context: { config: ResolvedChannelConfig }
   ) {
     const outboundWebhookUrl = readString(context.config.rawConfig, ["outboundWebhookUrl"]);
@@ -68,7 +75,10 @@ export const webhookAdapter = {
       event: "message.outbound",
       to: input.to,
       text: input.text,
-      media: input.media ?? undefined,
+      attachment: input.attachment ?? undefined,
+      contextMessageId: input.contextMessageId ?? undefined,
+      reactionEmoji: input.reactionEmoji ?? undefined,
+      reactionMessageId: input.reactionMessageId ?? undefined,
       timestamp: new Date().toISOString()
     });
 

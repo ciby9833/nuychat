@@ -23,9 +23,24 @@ import { tenantCustomerSegmentRoutes } from "./modules/tenant/tenant-customer-se
 import { tenantContextPlugin } from "./modules/tenant/tenant.middleware.js";
 import { tenantOrgMemberRoutes } from "./modules/tenant/tenant-org-member.routes.js";
 import { tenantQualityRoutes } from "./modules/tenant/tenant-quality.routes.js";
+import { tenantMemoryObservabilityRoutes } from "./modules/tenant/tenant-memory-observability.routes.js";
 import { ticketRoutes } from "./modules/ticket/ticket.routes.js";
 import { uploadRoutes } from "./modules/upload/upload.routes.js";
 import { webchatRoutes } from "./modules/webchat/webchat.routes.js";
+
+type CrossOriginResourcePolicyValue = "same-origin" | "same-site" | "cross-origin";
+
+function resolveHelmetCrossOriginResourcePolicy() {
+  const value = process.env.HELMET_CROSS_ORIGIN_RESOURCE_POLICY?.trim();
+  if (!value) return undefined;
+  if (value === "false") {
+    return false;
+  }
+  if (value === "same-origin" || value === "same-site" || value === "cross-origin") {
+    return { policy: value as CrossOriginResourcePolicyValue };
+  }
+  return undefined;
+}
 
 export async function buildApp() {
   const app = Fastify({
@@ -40,7 +55,9 @@ export async function buildApp() {
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
   });
-  await app.register(helmet);
+  await app.register(helmet, {
+    crossOriginResourcePolicy: resolveHelmetCrossOriginResourcePolicy()
+  });
   await app.register(sensible);
   await app.register(jwt, {
     secret: process.env.JWT_SECRET ?? "dev-secret-change-me"
@@ -77,6 +94,7 @@ export async function buildApp() {
   await app.register(tenantCustomerIntelligenceRoutes);
   await app.register(tenantOrgMemberRoutes);
   await app.register(tenantQualityRoutes);
+  await app.register(tenantMemoryObservabilityRoutes);
   await app.register(tenantCustomerSegmentRoutes);
   await app.register(tenantAdminRoutes);
 

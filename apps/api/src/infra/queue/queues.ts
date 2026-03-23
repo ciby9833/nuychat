@@ -37,8 +37,13 @@ export type OutboundJobPayload = {
     agentId?: string;
     /** Populated for AI-generated replies; causes sender_type="bot" in DB */
     aiAgentName?: string;
-    /** Optional media attachment sent by agent */
-    media?: OutboundMediaPayload;
+    /** Optional attachment sent by agent */
+    attachment?: OutboundMediaPayload;
+    replyToMessageId?: string;
+    replyToExternalId?: string;
+    reactionEmoji?: string;
+    reactionMessageId?: string;
+    reactionExternalId?: string;
   };
 };
 

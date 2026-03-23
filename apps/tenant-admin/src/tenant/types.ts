@@ -889,6 +889,7 @@ export type Tab =
   | "agents"
   | "ai-seats"
   | "ai-conversations"
+  | "memory-qa"
   | "dispatch-audit"
   | "ai"
   | "kb"
@@ -948,4 +949,69 @@ export type ConversationCaseListResponse = {
   pageSize: number;
   total: number;
   items: ConversationCaseItem[];
+};
+
+export type MemoryEncoderTraceListItem = {
+  traceId: string;
+  customerId: string | null;
+  conversationId: string | null;
+  caseId: string | null;
+  taskId: string | null;
+  sourceKind: string;
+  status: string;
+  metrics: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type MemoryEncoderTraceDetail = MemoryEncoderTraceListItem & {
+  inputContext: Record<string, unknown>;
+  eventFrame: Record<string, unknown>;
+  candidateItems: Array<Record<string, unknown>>;
+  reviewedItems: Array<Record<string, unknown>>;
+  finalItems: Array<Record<string, unknown>>;
+};
+
+export type MemoryEvalDatasetItem = {
+  datasetId: string;
+  name: string;
+  description: string | null;
+  sampleCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MemoryEvalReportItem = {
+  reportId: string;
+  datasetId: string | null;
+  datasetName: string | null;
+  name: string;
+  status: string;
+  sampleCount: number;
+  metrics: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type MemoryEvalReportDetail = {
+  reportId: string;
+  datasetId: string | null;
+  name: string;
+  status: string;
+  sampleCount: number;
+  metrics: Record<string, unknown>;
+  report: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type MemoryEvalDatasetRowInput = {
+  tenantId: string;
+  customerId: string;
+  conversationId: string;
+  caseId?: string | null;
+  conversationSummary: string;
+  lastIntent: string;
+  lastSentiment: string;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  goldActiveMemories: Array<{ type: string; title?: string; summary: string; detail?: string }>;
+  goldStaleMemories?: Array<{ type: string; title?: string; summary: string; detail?: string }>;
+  notes?: string;
 };

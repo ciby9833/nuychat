@@ -37,7 +37,6 @@ export type WebchatMessage = {
   type: string;
   text: string;
   attachments?: WebchatAttachment[];
-  media?: { url?: string; mimeType?: string; fileName?: string } | null;
   createdAt: string;
 };
 

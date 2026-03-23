@@ -7,6 +7,10 @@ import {
   findActiveWhatsAppChannelByPhoneNumberId
 } from "./channel.repository.js";
 import { assertWhatsAppWebhookConfigured } from "./whatsapp-platform-config.js";
+import { withTenantTransaction } from "../../infra/db/client.js";
+import { updateMessageStatusByExternalId } from "../message/message.repository.js";
+import { realtimeEventBus } from "../realtime/realtime.events.js";
+import { emitConversationUpdatedSnapshot } from "../conversation/conversation-realtime.service.js";
 
 export async function channelGateway(app: FastifyInstance) {
   app.get("/webhook/whatsapp", async (req, reply) => {
@@ -60,6 +64,11 @@ export async function channelGateway(app: FastifyInstance) {
           rawMessage: msg,
           jobPrefix: "wa"
         });
+      }
+
+      const statuses = extractWhatsAppStatuses(payload);
+      for (const status of statuses) {
+        await applyWhatsAppStatus(channelConfig.tenantId, status);
       }
 
       return reply.send("EVENT_RECEIVED");
@@ -145,6 +154,11 @@ export async function channelGateway(app: FastifyInstance) {
         });
       }
 
+      const statuses = extractWhatsAppStatuses(payload);
+      for (const status of statuses) {
+        await applyWhatsAppStatus(channelConfig.tenantId, status);
+      }
+
       return reply.send("EVENT_RECEIVED");
     }
   );
@@ -213,6 +227,13 @@ type InboundMessage = {
   [key: string]: unknown;
 };
 
+type WhatsAppStatus = {
+  id?: string;
+  status?: string;
+  timestamp?: string;
+  errors?: Array<{ code?: number | string; title?: string }>;
+};
+
 function extractWhatsAppMessages(payload: Record<string, unknown>): InboundMessage[] {
   const entry = Array.isArray(payload.entry) ? payload.entry[0] : undefined;
   const changes =
@@ -222,6 +243,18 @@ function extractWhatsAppMessages(payload: Record<string, unknown>): InboundMessa
   const value = changes && typeof changes === "object" ? (changes as { value?: unknown }).value : undefined;
   return value && typeof value === "object" && Array.isArray((value as { messages?: unknown[] }).messages)
     ? ((value as { messages: InboundMessage[] }).messages ?? [])
+    : [];
+}
+
+function extractWhatsAppStatuses(payload: Record<string, unknown>): WhatsAppStatus[] {
+  const entry = Array.isArray(payload.entry) ? payload.entry[0] : undefined;
+  const changes =
+    entry && typeof entry === "object" && Array.isArray((entry as { changes?: unknown[] }).changes)
+      ? (entry as { changes: unknown[] }).changes[0]
+      : undefined;
+  const value = changes && typeof changes === "object" ? (changes as { value?: unknown }).value : undefined;
+  return value && typeof value === "object" && Array.isArray((value as { statuses?: unknown[] }).statuses)
+    ? ((value as { statuses: WhatsAppStatus[] }).statuses ?? [])
     : [];
 }
 
@@ -253,4 +286,56 @@ function readString(source: Record<string, unknown>, keys: string[]) {
 
 function normalizeDigits(value: string) {
   return value.replace(/[^0-9]/g, "");
+}
+
+async function applyWhatsAppStatus(tenantId: string, status: WhatsAppStatus) {
+  const externalId = typeof status.id === "string" ? status.id : "";
+  const normalizedStatus = normalizeWhatsAppStatus(status.status);
+  if (!externalId || !normalizedStatus) return;
+
+  const occurredAt = resolveStatusTimestamp(status.timestamp);
+  const error = Array.isArray(status.errors) ? status.errors[0] : undefined;
+
+  const updated = await withTenantTransaction(tenantId, async (trx) => {
+    return updateMessageStatusByExternalId(
+      tenantId,
+      externalId,
+      {
+        status: normalizedStatus,
+        occurredAt,
+        errorCode: error?.code != null ? String(error.code) : null,
+        errorTitle: typeof error?.title === "string" ? error.title : null
+      },
+      trx
+    );
+  });
+
+  if (!updated) return;
+
+  realtimeEventBus.emitEvent("message.updated", {
+    tenantId,
+    conversationId: updated.conversationId,
+    messageId: updated.messageId,
+    messageStatus: updated.messageStatus,
+    occurredAt: occurredAt.toISOString()
+  });
+
+  await withTenantTransaction(tenantId, async (trx) => {
+    await emitConversationUpdatedSnapshot(trx, tenantId, updated.conversationId, {
+      occurredAt: occurredAt.toISOString()
+    });
+  }).catch(() => null);
+}
+
+function normalizeWhatsAppStatus(status: string | undefined) {
+  if (status === "sent" || status === "delivered" || status === "read" || status === "failed" || status === "deleted") {
+    return status;
+  }
+  return null;
+}
+
+function resolveStatusTimestamp(timestamp: string | undefined) {
+  if (!timestamp) return new Date();
+  const numeric = Number(timestamp);
+  return Number.isNaN(numeric) ? new Date(timestamp) : new Date(numeric * 1000);
 }

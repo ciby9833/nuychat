@@ -63,7 +63,10 @@ export function createOutboundWorker() {
         {
           text: job.data.message.text,
           to: conversation.external_ref as string,
-          media: job.data.message.media ?? undefined
+          attachment: job.data.message.attachment ?? undefined,
+          contextMessageId: job.data.message.replyToExternalId ?? undefined,
+          reactionEmoji: job.data.message.reactionEmoji ?? undefined,
+          reactionMessageId: job.data.message.reactionExternalId ?? undefined
         },
         { config: channelConfig }
       );
@@ -103,14 +106,22 @@ export function createOutboundWorker() {
           text: job.data.message.text,
           senderId: job.data.message.agentId ?? null,
           aiAgentName: job.data.message.aiAgentName ?? null,
-          media: job.data.message.media ?? undefined
+          attachment: job.data.message.attachment ?? undefined,
+          replyToMessageId: job.data.message.replyToMessageId ?? null,
+          replyToExternalId: job.data.message.replyToExternalId ?? null,
+          reactionEmoji: job.data.message.reactionEmoji ?? null,
+          reactionTargetMessageId: job.data.message.reactionMessageId ?? null,
+          reactionTargetExternalId: job.data.message.reactionExternalId ?? null
         });
 
         await trx("conversations")
           .where({ conversation_id: job.data.conversationId })
           .update({
             last_message_at: trx.fn.now(),
-            last_message_preview: job.data.message.text || (job.data.message.media ? `[${job.data.message.media.fileName ?? "附件"}]` : ""),
+            last_message_preview:
+              job.data.message.reactionEmoji ||
+              job.data.message.text ||
+              (job.data.message.attachment ? `[${job.data.message.attachment.fileName ?? "附件"}]` : ""),
             updated_at: new Date()
           });
 
@@ -225,7 +236,14 @@ async function resolveCurrentCaseId(trx: Knex.Transaction, conversationId: strin
 
 async function sendOutboundByChannel(
   channelType: string,
-  input: { text: string; to: string; media?: { url: string; mimeType: string; fileName?: string } },
+  input: {
+    text: string;
+    to: string;
+    attachment?: { url: string; mimeType: string; fileName?: string };
+    contextMessageId?: string;
+    reactionEmoji?: string;
+    reactionMessageId?: string;
+  },
   context: { config: ResolvedChannelConfig }
 ) {
   return resolveChannelAdapter(channelType).sendMessage(input, context);

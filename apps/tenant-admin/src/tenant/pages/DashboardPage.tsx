@@ -44,6 +44,7 @@ const ShiftsTab          = lazy(() => import("../components/tabs/ShiftsTab").the
 const AgentsTab          = lazy(() => import("../components/tabs/AgentsTab").then(m => ({ default: m.AgentsTab })));
 const AISeatsTab         = lazy(() => import("../components/tabs/AISeatsTab").then(m => ({ default: m.AISeatsTab })));
 const AIConversationsTab = lazy(() => import("../components/tabs/AIConversationsTab").then(m => ({ default: m.AIConversationsTab })));
+const MemoryQaTab        = lazy(() => import("../components/tabs/MemoryQaTab").then(m => ({ default: m.MemoryQaTab })));
 const DispatchAuditTab   = lazy(() => import("../components/tabs/DispatchAuditTab").then(m => ({ default: m.DispatchAuditTab })));
 const AIConfigTab        = lazy(() => import("../components/tabs/AIConfigTab").then(m => ({ default: m.AIConfigTab })));
 const KnowledgeBaseTab   = lazy(() => import("../components/tabs/KnowledgeBaseTab").then(m => ({ default: m.KnowledgeBaseTab })));
@@ -69,6 +70,7 @@ const TAB_LABELS: Record<Tab, string> = {
   agents:             "坐席管理",
   "ai-seats":         "AI 座席",
   "ai-conversations": "AI 会话",
+  "memory-qa":       "Memory QA",
   "dispatch-audit":   "调度依据",
   ai:                 "AI 配置",
   kb:                 "知识库",
@@ -94,6 +96,7 @@ const TAB_COMPONENTS: Record<Tab, ComponentType> = {
   agents:             AgentsTab,
   "ai-seats":         AISeatsTab,
   "ai-conversations": AIConversationsTab,
+  "memory-qa":        MemoryQaTab,
   "dispatch-audit":   DispatchAuditTab,
   ai:                 AIConfigTab,
   kb:                 KnowledgeBaseTab,
@@ -126,6 +129,7 @@ const MENU_ITEMS: MenuProps["items"] = [
       { key: "agents",            icon: <TeamOutlined />,               label: TAB_LABELS.agents },
       { key: "ai-seats",          icon: <RobotOutlined />,              label: TAB_LABELS["ai-seats"] },
       { key: "ai-conversations",  icon: <MessageOutlined />,            label: TAB_LABELS["ai-conversations"] },
+      { key: "memory-qa",         icon: <ReadOutlined />,               label: TAB_LABELS["memory-qa"] },
       { key: "dispatch-audit",    icon: <ForkOutlined />,               label: TAB_LABELS["dispatch-audit"] },
       { key: "routing",           icon: <ForkOutlined />,               label: TAB_LABELS.routing }
     ]

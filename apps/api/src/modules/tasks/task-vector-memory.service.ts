@@ -1,10 +1,14 @@
 import type { Knex } from "knex";
 
 import { scheduleLongTask } from "./task-scheduler.service.js";
-import { upsertCustomerProfile } from "../memory/vector-memory.service.js";
+import {
+  syncCustomerMemoryUnitVector,
+  syncCustomerProfileVector
+} from "../memory/vector-memory.service.js";
 
-function toIso(value: unknown) {
-  return new Date(String(value)).toISOString();
+function computeNextRetry(attemptCount: number) {
+  const baseMinutes = Math.min(12 * 60, 2 ** Math.max(0, attemptCount - 1) * 5);
+  return new Date(Date.now() + baseMinutes * 60 * 1000);
 }
 
 function extractProfileKeywords(summary: string) {
@@ -22,148 +26,149 @@ function extractProfileKeywords(summary: string) {
     .join(" ");
 }
 
+export async function scheduleCustomerProfileVectorSync(input: {
+  tenantId: string;
+  customerId: string;
+  expectedSourceVersion?: number;
+  priority?: number;
+}) {
+  await scheduleLongTask({
+    tenantId: input.tenantId,
+    customerId: input.customerId,
+    conversationId: null,
+    taskType: "vector_customer_profile_reindex",
+    title: `Vector reindex ${input.customerId}`,
+    source: "workflow",
+    priority: input.priority ?? 70,
+    schedulerKey: input.expectedSourceVersion
+      ? `customer-memory-profile:${input.customerId}:${input.expectedSourceVersion}`
+      : undefined,
+    payload: {
+      customerId: input.customerId,
+      expectedSourceVersion: input.expectedSourceVersion
+    }
+  });
+}
+
+export async function scheduleMemoryUnitVectorSync(input: {
+  tenantId: string;
+  customerId: string;
+  memoryUnitId: string;
+  priority?: number;
+}) {
+  await scheduleLongTask({
+    tenantId: input.tenantId,
+    customerId: input.customerId,
+    conversationId: null,
+    taskType: "vector_memory_unit_reindex",
+    title: `Vector memory ${input.memoryUnitId}`,
+    source: "workflow",
+    priority: input.priority ?? 72,
+    schedulerKey: `customer-memory-unit:${input.memoryUnitId}`,
+    payload: {
+      customerId: input.customerId,
+      memoryUnitId: input.memoryUnitId
+    }
+  });
+}
+
 export async function buildCustomerProfileSummary(
   db: Knex,
-  input: { tenantId: string; customerId: string; maxConversations?: number }
+  input: { tenantId: string; customerId: string }
 ) {
-  const [profile, rows, memoryRows] = await Promise.all([
-    db("customer_profiles")
-      .where({ tenant_id: input.tenantId, customer_id: input.customerId })
-      .select("profile_summary", "soul_profile", "state_snapshot", "last_intent", "last_sentiment")
-      .first<Record<string, unknown> | undefined>(),
-    db("conversations as c")
-      .leftJoin("conversation_intelligence as ci", function joinSummary() {
-        this.on("ci.conversation_id", "=", "c.conversation_id").andOn("ci.tenant_id", "=", "c.tenant_id");
-      })
-      .where({ "c.tenant_id": input.tenantId, "c.customer_id": input.customerId })
-      .whereNotNull("ci.summary")
-      .select("c.conversation_id", "c.channel_type", "c.updated_at", "ci.summary", "ci.last_intent", "ci.last_sentiment")
-      .orderBy("c.updated_at", "desc")
-      .limit(input.maxConversations ?? 8),
-    db("customer_memory_items")
-      .where({ tenant_id: input.tenantId, customer_id: input.customerId, status: "active" })
-      .select("memory_type", "summary", "salience", "updated_at")
-      .orderBy([{ column: "salience", order: "desc" }, { column: "updated_at", order: "desc" }])
-      .limit(10)
-  ]);
-
-  const conversationSummary = rows
-    .map((row) => {
-      const parts = [
-        `[${toIso(row.updated_at)}]`,
-        `channel=${String(row.channel_type)}`,
-        row.last_intent ? `intent=${String(row.last_intent)}` : null,
-        row.last_sentiment ? `sentiment=${String(row.last_sentiment)}` : null,
-        typeof row.summary === "string" ? row.summary : null
-      ].filter(Boolean);
-      return parts.join(" | ");
-    })
-    .join("\n");
-
-  const memorySummary = memoryRows
-    .map((row) => `[${String(row.memory_type)}] ${String(row.summary ?? "").slice(0, 180)}`)
-    .join("\n");
-
-  const profileSummary = typeof profile?.profile_summary === "string" ? profile.profile_summary : "";
-  const summary = [profileSummary, conversationSummary, memorySummary].filter(Boolean).join("\n\n");
-
+  const profile = await db("customer_memory_profiles")
+    .where({ tenant_id: input.tenantId, customer_id: input.customerId })
+    .select("profile_summary", "conversation_count", "last_intent", "last_sentiment")
+    .first<{
+      profile_summary: string | null;
+      conversation_count: number | null;
+      last_intent: string | null;
+      last_sentiment: string | null;
+    } | undefined>();
   return {
-    summary,
-    conversationCount: rows.length,
-    latestIntent: typeof profile?.last_intent === "string" ? profile.last_intent : "general_inquiry",
-    latestSentiment: typeof profile?.last_sentiment === "string" ? profile.last_sentiment : "neutral"
+    summary: String(profile?.profile_summary ?? ""),
+    conversationCount: Number(profile?.conversation_count ?? 0),
+    latestIntent: String(profile?.last_intent ?? "general_inquiry"),
+    latestSentiment: String(profile?.last_sentiment ?? "neutral")
   };
+}
+
+async function markProfileIndexed(
+  db: Knex,
+  input: { tenantId: string; customerId: string; reason: string; indexed: boolean }
+) {
+  await db("customer_memory_profiles")
+    .where({ tenant_id: input.tenantId, customer_id: input.customerId })
+    .update({
+      indexed_version: db.raw("GREATEST(indexed_version, source_version)"),
+      dirty: false,
+      dirty_reason: input.indexed ? null : input.reason,
+      index_status: input.indexed ? "indexed" : "failed",
+      index_last_error: input.indexed ? null : input.reason,
+      next_retry_at: input.indexed ? null : computeNextRetry(1),
+      last_indexed_at: db.fn.now(),
+      claimed_at: null,
+      claimed_by: null,
+      updated_at: db.fn.now()
+    });
 }
 
 export async function runVectorCustomerProfileReindex(
   db: Knex,
   input: { tenantId: string; customerId: string; expectedSourceVersion?: number }
 ) {
-  const built = await buildCustomerProfileSummary(db, input);
-  if (!built.summary.trim()) {
-    await db("customer_profiles")
-      .insert({
-        tenant_id: input.tenantId,
-        customer_id: input.customerId,
-        soul_profile: "{}",
-        operating_notes: "{}",
-        state_snapshot: "{}",
-        profile_summary: "",
-        profile_keywords: "",
-        conversation_count: built.conversationCount,
-        last_intent: built.latestIntent,
-        last_sentiment: built.latestSentiment,
-        dirty: false,
-        dirty_reason: "no_customer_intelligence",
-        last_indexed_at: db.fn.now()
-      })
-      .onConflict(["tenant_id", "customer_id"])
-      .merge({
-        profile_summary: "",
-        profile_keywords: "",
-        conversation_count: built.conversationCount,
-        last_intent: built.latestIntent,
-        last_sentiment: built.latestSentiment,
-        dirty: false,
-        dirty_reason: "no_customer_intelligence",
-        last_indexed_at: db.fn.now()
-      });
+  const profileRow = await db("customer_memory_profiles")
+    .where({ tenant_id: input.tenantId, customer_id: input.customerId })
+    .select("source_version", "index_attempt_count")
+    .first<{ source_version: number; index_attempt_count: number } | undefined>();
 
+  if (!profileRow) {
     return {
       customerId: input.customerId,
       indexed: false,
-      reason: "no_customer_intelligence",
-      conversationCount: built.conversationCount
+      reason: "profile_not_found"
     };
   }
 
-  const profileKeywords = extractProfileKeywords(built.summary);
+  if (
+    typeof input.expectedSourceVersion === "number" &&
+    profileRow.source_version !== input.expectedSourceVersion
+  ) {
+    return {
+      customerId: input.customerId,
+      indexed: false,
+      skipped: true,
+      reason: "stale_source_version",
+      sourceVersion: profileRow.source_version
+    };
+  }
 
-  await db("customer_profiles")
-    .insert({
-      tenant_id: input.tenantId,
-      customer_id: input.customerId,
-      soul_profile: "{}",
-      operating_notes: "{}",
-      state_snapshot: "{}",
-      profile_summary: built.summary,
+  const built = await buildCustomerProfileSummary(db, input);
+  const summary = built.summary.trim();
+  const profileKeywords = summary ? extractProfileKeywords(summary) : "";
+
+  await db("customer_memory_profiles")
+    .where({ tenant_id: input.tenantId, customer_id: input.customerId })
+    .update({
       profile_keywords: profileKeywords,
-      conversation_count: built.conversationCount,
-      last_intent: built.latestIntent,
-      last_sentiment: built.latestSentiment,
-      dirty: true,
-      dirty_reason: "vector_reindex_requested",
-      last_indexed_at: db.fn.now(),
-      indexed_version: 0
-    })
-    .onConflict(["tenant_id", "customer_id"])
-    .merge({
-      profile_summary: built.summary,
-      profile_keywords: profileKeywords,
-      conversation_count: built.conversationCount,
-      last_intent: built.latestIntent,
-      last_sentiment: built.latestSentiment,
-      dirty: true,
-      dirty_reason: "vector_reindex_requested",
-      last_indexed_at: db.fn.now(),
+      index_status: "indexing",
+      index_attempt_count: db.raw("index_attempt_count + 1"),
+      index_last_error: null,
+      next_retry_at: null,
       updated_at: db.fn.now()
     });
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    const current = await db("customer_profiles")
-      .where({ tenant_id: input.tenantId, customer_id: input.customerId })
-      .select("source_version")
-      .first<{ source_version: number } | undefined>();
-
-    const expected = Number(input.expectedSourceVersion ?? current?.source_version ?? 0);
-
-    await db("customer_profiles")
+  if (!summary) {
+    await db("customer_memory_profiles")
       .where({ tenant_id: input.tenantId, customer_id: input.customerId })
       .update({
-        indexed_version: db.raw("GREATEST(indexed_version, ?)", [expected]),
-        dirty: db.raw("source_version > ?", [expected]),
-        dirty_reason: db.raw("CASE WHEN source_version > ? THEN dirty_reason ELSE NULL END", [expected]),
+        indexed_version: db.raw("GREATEST(indexed_version, source_version)"),
+        dirty: false,
+        dirty_reason: "no_customer_memory",
+        index_status: "indexed",
+        index_last_error: null,
+        next_retry_at: null,
+        last_indexed_at: db.fn.now(),
         claimed_at: null,
         claimed_by: null,
         updated_at: db.fn.now()
@@ -172,40 +177,195 @@ export async function runVectorCustomerProfileReindex(
     return {
       customerId: input.customerId,
       indexed: false,
-      reason: "missing_api_key",
-      conversationCount: built.conversationCount,
-      summaryPreview: built.summary.slice(0, 300)
+      reason: "no_customer_memory",
+      conversationCount: built.conversationCount
     };
   }
 
-  await upsertCustomerProfile({
-    customerId: input.customerId,
-    tenantId: input.tenantId,
-    summary: built.summary,
-    apiKey
-  });
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    await markProfileIndexed(db, {
+      tenantId: input.tenantId,
+      customerId: input.customerId,
+      reason: "missing_api_key",
+      indexed: false
+    });
+    return {
+      customerId: input.customerId,
+      indexed: false,
+      reason: "missing_api_key",
+      conversationCount: built.conversationCount,
+      summaryPreview: summary.slice(0, 300)
+    };
+  }
 
-  const expected = Number(input.expectedSourceVersion ?? 0);
-  await db("customer_profiles")
-    .where({ tenant_id: input.tenantId, customer_id: input.customerId })
+  try {
+    const indexed = await syncCustomerProfileVector({
+      tenantId: input.tenantId,
+      customerId: input.customerId,
+      profileText: summary,
+      apiKey
+    });
+
+    if (!indexed) {
+      const attemptCount = Number(profileRow.index_attempt_count ?? 0) + 1;
+      await db("customer_memory_profiles")
+        .where({ tenant_id: input.tenantId, customer_id: input.customerId })
+        .update({
+          index_status: "failed",
+          index_last_error: "vector_index_failed",
+          next_retry_at: computeNextRetry(attemptCount),
+          claimed_at: null,
+          claimed_by: null,
+          updated_at: db.fn.now()
+        });
+    } else {
+      await db("customer_memory_profiles")
+        .where({ tenant_id: input.tenantId, customer_id: input.customerId })
+        .update({
+          indexed_version: db.raw("GREATEST(indexed_version, source_version)"),
+          dirty: false,
+          dirty_reason: null,
+          index_status: "indexed",
+          index_last_error: null,
+          next_retry_at: null,
+          last_indexed_at: db.fn.now(),
+          claimed_at: null,
+          claimed_by: null,
+          updated_at: db.fn.now()
+        });
+    }
+
+    return {
+      customerId: input.customerId,
+      indexed,
+      conversationCount: built.conversationCount,
+      summaryPreview: summary.slice(0, 300)
+    };
+  } catch (error) {
+    const attemptCount = Number(profileRow.index_attempt_count ?? 0) + 1;
+    await db("customer_memory_profiles")
+      .where({ tenant_id: input.tenantId, customer_id: input.customerId })
+      .update({
+        index_status: "failed",
+        index_last_error: (error as Error).message.slice(0, 1000),
+        next_retry_at: computeNextRetry(attemptCount),
+        claimed_at: null,
+        claimed_by: null,
+        updated_at: db.fn.now()
+      });
+    throw error;
+  }
+}
+
+export async function runVectorMemoryUnitReindex(
+  db: Knex,
+  input: { tenantId: string; memoryUnitId: string }
+) {
+  const row = await db("customer_memory_units")
+    .where({ tenant_id: input.tenantId, memory_unit_id: input.memoryUnitId })
+    .select("customer_id", "memory_type", "embedding_input", "index_attempt_count")
+    .first<{
+      customer_id: string;
+      memory_type: string;
+      embedding_input: string | null;
+      index_attempt_count: number | null;
+    } | undefined>();
+
+  if (!row) {
+    return {
+      memoryUnitId: input.memoryUnitId,
+      indexed: false,
+      reason: "memory_unit_not_found"
+    };
+  }
+
+  const memoryText = String(row.embedding_input ?? "").trim();
+  await db("customer_memory_units")
+    .where({ tenant_id: input.tenantId, memory_unit_id: input.memoryUnitId })
     .update({
-      last_indexed_at: db.fn.now(),
-      indexed_version: db.raw("GREATEST(indexed_version, ?)", [expected > 0 ? expected : 0]),
-      dirty: expected > 0 ? db.raw("source_version > ?", [expected]) : false,
-      dirty_reason: expected > 0
-        ? db.raw("CASE WHEN source_version > ? THEN dirty_reason ELSE NULL END", [expected])
-        : null,
-      claimed_at: null,
-      claimed_by: null,
+      index_status: "indexing",
+      index_attempt_count: db.raw("index_attempt_count + 1"),
+      index_last_error: null,
+      next_retry_at: null,
       updated_at: db.fn.now()
     });
 
-  return {
-    customerId: input.customerId,
-    indexed: true,
-    conversationCount: built.conversationCount,
-    summaryPreview: built.summary.slice(0, 300)
-  };
+  if (!memoryText) {
+    await db("customer_memory_units")
+      .where({ tenant_id: input.tenantId, memory_unit_id: input.memoryUnitId })
+      .update({
+        index_status: "failed",
+        index_last_error: "missing_embedding_input",
+        next_retry_at: computeNextRetry(Number(row.index_attempt_count ?? 0) + 1),
+        updated_at: db.fn.now()
+      });
+    return {
+      memoryUnitId: input.memoryUnitId,
+      indexed: false,
+      reason: "missing_embedding_input"
+    };
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    await db("customer_memory_units")
+      .where({ tenant_id: input.tenantId, memory_unit_id: input.memoryUnitId })
+      .update({
+        index_status: "failed",
+        index_last_error: "missing_api_key",
+        next_retry_at: computeNextRetry(Number(row.index_attempt_count ?? 0) + 1),
+        updated_at: db.fn.now()
+      });
+    return {
+      memoryUnitId: input.memoryUnitId,
+      indexed: false,
+      reason: "missing_api_key"
+    };
+  }
+
+  try {
+    const indexed = await syncCustomerMemoryUnitVector({
+      tenantId: input.tenantId,
+      customerId: String(row.customer_id),
+      memoryUnitId: input.memoryUnitId,
+      memoryText,
+      memoryType: String(row.memory_type),
+      apiKey
+    });
+
+    await db("customer_memory_units")
+      .where({ tenant_id: input.tenantId, memory_unit_id: input.memoryUnitId })
+      .update(indexed
+        ? {
+            index_status: "indexed",
+            index_last_error: null,
+            next_retry_at: null,
+            indexed_at: db.fn.now(),
+            updated_at: db.fn.now()
+          }
+        : {
+            index_status: "failed",
+            index_last_error: "vector_index_failed",
+            next_retry_at: computeNextRetry(Number(row.index_attempt_count ?? 0) + 1),
+            updated_at: db.fn.now()
+          });
+
+    return {
+      memoryUnitId: input.memoryUnitId,
+      indexed
+    };
+  } catch (error) {
+    await db("customer_memory_units")
+      .where({ tenant_id: input.tenantId, memory_unit_id: input.memoryUnitId })
+      .update({
+        index_status: "failed",
+        index_last_error: (error as Error).message.slice(0, 1000),
+        next_retry_at: computeNextRetry(Number(row.index_attempt_count ?? 0) + 1),
+        updated_at: db.fn.now()
+      });
+    throw error;
+  }
 }
 
 export async function runVectorBatchReindex(
@@ -216,34 +376,50 @@ export async function runVectorBatchReindex(
     ? Array.from(new Set(input.customerIds.map((item) => String(item).trim()).filter(Boolean)))
     : [];
 
-  const customerRows = ids.length > 0
-    ? await db("customers")
-        .where({ tenant_id: input.tenantId })
-        .whereIn("customer_id", ids)
-        .select("customer_id")
-        .orderBy("updated_at", "desc")
-    : await db("customers")
-        .where({ tenant_id: input.tenantId })
-        .select("customer_id")
-        .orderBy("updated_at", "desc")
-        .limit(Math.max(1, Math.min(input.limit ?? 100, 500)));
+  const [customerRows, memoryRows] = await Promise.all([
+    ids.length > 0
+      ? db("customers")
+          .where({ tenant_id: input.tenantId })
+          .whereIn("customer_id", ids)
+          .select("customer_id")
+      : db("customer_memory_profiles")
+          .where({ tenant_id: input.tenantId })
+          .select("customer_id")
+          .orderBy("source_updated_at", "desc")
+          .limit(Math.max(1, Math.min(input.limit ?? 100, 500))),
+    ids.length > 0
+      ? db("customer_memory_units")
+          .where({ tenant_id: input.tenantId, status: "active" })
+          .whereIn("customer_id", ids)
+          .select("memory_unit_id", "customer_id")
+          .orderBy("updated_at", "desc")
+          .limit(Math.max(1, Math.min((input.limit ?? 100) * 4, 2000)))
+      : db("customer_memory_units")
+          .where({ tenant_id: input.tenantId, status: "active" })
+          .select("memory_unit_id", "customer_id")
+          .orderBy("updated_at", "desc")
+          .limit(Math.max(1, Math.min((input.limit ?? 100) * 4, 2000)))
+  ]);
 
   const customerIds = customerRows.map((row) => String(row.customer_id));
   for (const customerId of customerIds) {
-    await scheduleLongTask({
+    await scheduleCustomerProfileVectorSync({
       tenantId: input.tenantId,
-      customerId,
-      conversationId: null,
-      taskType: "vector_customer_profile_reindex",
-      title: `Vector reindex ${customerId}`,
-      source: "workflow",
-      priority: 70,
-      payload: { customerId }
+      customerId
+    });
+  }
+
+  for (const row of memoryRows) {
+    await scheduleMemoryUnitVectorSync({
+      tenantId: input.tenantId,
+      customerId: String(row.customer_id),
+      memoryUnitId: String(row.memory_unit_id)
     });
   }
 
   return {
     queuedCustomerIds: customerIds,
-    queuedCount: customerIds.length
+    queuedMemoryUnitIds: memoryRows.map((row) => String(row.memory_unit_id)),
+    queuedCount: customerIds.length + memoryRows.length
   };
 }

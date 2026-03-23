@@ -33,6 +33,7 @@ import type {
   ConversationSkillRecommendationResponse,
   CopilotData,
   MessageItem,
+  MessageAttachment,
   RightTab,
   SideView,
   Session,
@@ -82,7 +83,8 @@ export function useWorkspaceDashboard() {
   const [copilot, setCopilot] = useState<CopilotData | null>(null);
   const [skillRecommendation, setSkillRecommendation] = useState<ConversationSkillRecommendationResponse | null>(null);
   const [reply, setReply] = useState("");
-  const [pendingMedia, setPendingMedia] = useState<{ url: string; mimeType: string; fileName: string } | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
+  const [replyTargetMessageId, setReplyTargetMessageId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [viewHint, setViewHint] = useState<string>("");
 
@@ -356,6 +358,13 @@ export function useWorkspaceDashboard() {
     }
   }, [clearConversationUnreadLocal, loadAiTraces, loadMessages, rememberRealtimeEventId]);
 
+  const handleMessageUpdatedEvent = useCallback((ev: { eventId?: string; conversationId: string }) => {
+    rememberRealtimeEventId(ev.eventId);
+    if (ev.conversationId === selectedIdRef.current) {
+      void loadMessages(ev.conversationId);
+    }
+  }, [loadMessages, rememberRealtimeEventId]);
+
   const replayRealtimeGap = useCallback(async () => {
     const currentSession = sessionRef.current;
     if (!currentSession) return;
@@ -375,12 +384,14 @@ export function useWorkspaceDashboard() {
           handleMessageReceivedEvent(item.payload as { eventId?: string; conversationId: string });
         } else if (item.event === "message.sent") {
           handleMessageSentEvent(item.payload as { eventId?: string; conversationId: string });
+        } else if (item.event === "message.updated") {
+          handleMessageUpdatedEvent(item.payload as { eventId?: string; conversationId: string });
         }
       }
     } catch {
       // noop
     }
-  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent]);
+  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent]);
 
   // ── Keep selectedIdRef in sync — NEVER put selectedId in socket effect deps ──
   useEffect(() => {
@@ -450,6 +461,7 @@ export function useWorkspaceDashboard() {
     socket.on("conversation.updated", handleConversationUpdatedEvent);
     socket.on("message.received", handleMessageReceivedEvent);
     socket.on("message.sent", handleMessageSentEvent);
+    socket.on("message.updated", handleMessageUpdatedEvent);
 
     socket.on("ticket.sla_warning", (ev: { ticketId: string; title: string; slaDeadlineAt: string }) => {
       setViewHint(`⚠️ SLA 预警：工单「${ev.title}」即将超时！`);
@@ -467,7 +479,7 @@ export function useWorkspaceDashboard() {
     // selectedId intentionally NOT in deps — use selectedIdRef.current instead.
     // loadConversations intentionally NOT in deps — has its own effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, loadAiTraces, loadCopilot, loadDetail, loadMessages, loadSkillRecommendation, replayRealtimeGap, session]);
+  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent, loadAiTraces, loadCopilot, loadDetail, loadMessages, loadSkillRecommendation, replayRealtimeGap, session]);
 
   useEffect(() => {
     if (!session) return;
@@ -649,28 +661,68 @@ export function useWorkspaceDashboard() {
 
   const sendReply = useCallback(async (textOverride?: string) => {
     const payload = (textOverride ?? reply).trim();
-    const media = pendingMedia;
-    if (!session || !selectedId || (!payload && !media)) return;
+    if (!session || !selectedId || (!payload && pendingAttachments.length === 0)) return;
     await postAgentActivity("reply", true);
     await apiPost(
       `/api/conversations/${selectedId}/reply`,
       {
         text: payload || undefined,
-        media: media ? { url: media.url, mimeType: media.mimeType, fileName: media.fileName } : undefined
+        attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
+        replyToMessageId: replyTargetMessageId ?? undefined
       },
       session
     );
     setReply("");
-    setPendingMedia(null);
+    setPendingAttachments([]);
+    setReplyTargetMessageId(null);
     clearConversationUnreadLocal(selectedId);
     await loadMessages(selectedId);
-  }, [clearConversationUnreadLocal, loadMessages, pendingMedia, postAgentActivity, reply, selectedId, session]);
+  }, [clearConversationUnreadLocal, loadMessages, pendingAttachments, postAgentActivity, reply, replyTargetMessageId, selectedId, session]);
 
-  const handleUploadFile = useCallback(async (file: File) => {
+  const sendReaction = useCallback(async (targetMessageId: string, emoji: string) => {
+    if (!session || !selectedId) return;
+    await postAgentActivity("reply", true);
+    await apiPost(
+      `/api/conversations/${selectedId}/reply`,
+      {
+        reactionEmoji: emoji,
+        reactionToMessageId: targetMessageId
+      },
+      session
+    );
+    await loadMessages(selectedId);
+  }, [loadMessages, postAgentActivity, selectedId, session]);
+
+  const handleUploadFiles = useCallback(async (
+    files: File[],
+    options?: {
+      onProgress?: (fileKey: string, progress: number) => void;
+      onError?: (fileKey: string, error: string) => void;
+    }
+  ) => {
     if (!session) return;
-    const result = await uploadFile(session, file);
-    setPendingMedia({ url: result.url, mimeType: result.mimeType, fileName: result.fileName });
+    const uploaded = await Promise.allSettled(files.map(async (file) => {
+      const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+      try {
+        return await uploadFile(session, file, {
+          onProgress: (progress) => options?.onProgress?.(fileKey, progress)
+        });
+      } catch (error) {
+        options?.onError?.(fileKey, (error as Error).message);
+        throw error;
+      }
+    }));
+    const succeeded = uploaded
+      .filter((result): result is PromiseFulfilledResult<MessageAttachment> => result.status === "fulfilled")
+      .map((result) => result.value);
+    if (succeeded.length > 0) {
+      setPendingAttachments((current) => [...current, ...succeeded]);
+    }
   }, [session]);
+
+  const removePendingAttachment = useCallback((index: number) => {
+    setPendingAttachments((current) => current.filter((_, currentIndex) => currentIndex !== index));
+  }, []);
 
   const doHandoff = useCallback(async () => {
     if (!session || !selectedId) return;
@@ -742,6 +794,8 @@ export function useWorkspaceDashboard() {
     setMessages([]);
     setCopilot(null);
     setSkillRecommendation(null);
+    setPendingAttachments([]);
+    setReplyTargetMessageId(null);
     setView("all");
   }, [session]);
 
@@ -853,7 +907,8 @@ export function useWorkspaceDashboard() {
     copilot,
     skillRecommendation,
     reply,
-    pendingMedia,
+    pendingAttachments,
+    replyTargetMessageId,
     actionLoading,
     viewHint,
     isAssignedToMe,
@@ -864,10 +919,13 @@ export function useWorkspaceDashboard() {
     setSelectedId,
     openConversation,
     setReply,
-    setPendingMedia,
+    setPendingAttachments,
+    setReplyTargetMessageId,
+    removePendingAttachment,
     handleViewChange,
     sendReply,
-    handleUploadFile,
+    sendReaction,
+    handleUploadFiles,
     updatePreferredSkills,
     applyTopRecommendedSkills,
     doAssign,

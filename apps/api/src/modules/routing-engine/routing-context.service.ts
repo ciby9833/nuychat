@@ -44,13 +44,13 @@ export class RoutingContextService {
           priority: number | null;
           status: string | null;
         } | undefined>(),
-      db("conversation_intelligence")
+      db("conversation_memory_snapshots")
         .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
-        .select("summary", "last_intent", "last_sentiment")
+        .select("summary", "intent", "sentiment")
         .first<{
           summary: string | null;
-          last_intent: string | null;
-          last_sentiment: string | null;
+          intent: string | null;
+          sentiment: string | null;
         } | undefined>()
     ]);
 
@@ -97,8 +97,8 @@ export class RoutingContextService {
         caseTitle: currentCase.title ?? null,
         lastMessagePreview: conversation.last_message_preview ?? null,
         latestSummary: currentCase.summary ?? intelligence?.summary ?? null,
-        lastIntent: intelligence?.last_intent ?? null,
-        lastSentiment: intelligence?.last_sentiment ?? null,
+        lastIntent: intelligence?.intent ?? null,
+        lastSentiment: intelligence?.sentiment ?? null,
         customerTags: parseStringArray(customer?.tags)
       },
       conversationStatus: conversation.status,

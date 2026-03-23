@@ -2,8 +2,17 @@ import type { Knex } from "knex";
 
 import { writeTaskArtifacts, type TaskArtifactInput } from "./task-storage.service.js";
 import { runExternalOrderLookup, runExternalShipmentTracking } from "./task-external.service.js";
-import { runVectorBatchReindex, runVectorCustomerProfileReindex } from "./task-vector-memory.service.js";
+import {
+  runVectorBatchReindex,
+  runVectorCustomerProfileReindex,
+  runVectorMemoryUnitReindex
+} from "./task-vector-memory.service.js";
+import { scheduleLongTask } from "./task-scheduler.service.js";
 import { recordCustomerMemoryItem, upsertCustomerStateSnapshot } from "../memory/customer-intelligence.service.js";
+import {
+  encodeConversationMemories,
+  encodeTaskOutcomeMemories
+} from "../memory/memory-encoder.service.js";
 
 type AsyncTaskRow = {
   task_id: string;
@@ -82,6 +91,23 @@ function summarizeTask(row: AsyncTaskRow, payload: Record<string, unknown>) {
     ].filter(Boolean).join(" | ");
   }
 
+  if (row.task_type === "vector_memory_unit_reindex") {
+    return [
+      `Vector memory reindex completed`,
+      typeof payload.memoryUnitId === "string" ? `memory=${payload.memoryUnitId}` : null,
+      typeof payload.indexed === "boolean" ? `indexed=${payload.indexed}` : null
+    ].filter(Boolean).join(" | ");
+  }
+
+  if (row.task_type === "memory_encode_conversation_event" || row.task_type === "memory_encode_task_event") {
+    return [
+      `Memory encoding completed`,
+      typeof payload.encoded === "number" ? `encoded=${payload.encoded}` : null,
+      typeof payload.skipped === "boolean" ? `skipped=${payload.skipped}` : null,
+      typeof payload.reason === "string" ? `reason=${payload.reason}` : null
+    ].filter(Boolean).join(" | ");
+  }
+
   const note = typeof payload.note === "string" ? payload.note.trim() : "";
   return note ? note.slice(0, 1000) : `${row.title} completed`;
 }
@@ -134,7 +160,13 @@ function buildArtifacts(row: AsyncTaskRow, payload: Record<string, unknown>): Ta
     });
   }
 
-  if (row.task_type === "vector_customer_profile_reindex" || row.task_type === "vector_batch_reindex") {
+  if (
+    row.task_type === "vector_customer_profile_reindex" ||
+    row.task_type === "vector_batch_reindex" ||
+    row.task_type === "vector_memory_unit_reindex" ||
+    row.task_type === "memory_encode_conversation_event" ||
+    row.task_type === "memory_encode_task_event"
+  ) {
     artifacts.push({
       kind: "vector-result",
       fileName: "vector-result.json",
@@ -213,7 +245,17 @@ export async function executeLongTask(db: Knex, taskId: string) {
     source: row.source
   };
 
-  if (row.customer_id && resultSummary) {
+  if (
+    row.customer_id &&
+    resultSummary &&
+    ![
+      "vector_customer_profile_reindex",
+      "vector_batch_reindex",
+      "vector_memory_unit_reindex",
+      "memory_encode_conversation_event",
+      "memory_encode_task_event"
+    ].includes(row.task_type)
+  ) {
     await recordCustomerMemoryItem(db, {
       tenantId: row.tenant_id,
       customerId: row.customer_id,
@@ -239,6 +281,25 @@ export async function executeLongTask(db: Knex, taskId: string) {
         customerId: row.customer_id,
         stateType: row.task_type === "lookup_order_external" ? "order_status" : "shipment_status",
         statePayload: executionPayload
+      });
+    }
+
+    if (row.task_type !== "ai_execution_archive") {
+      await scheduleLongTask({
+        tenantId: row.tenant_id,
+        customerId: row.customer_id,
+        conversationId: row.conversation_id,
+        caseId: row.case_id,
+        taskType: "memory_encode_task_event",
+        title: `Memory encode ${row.title}`,
+        source: "workflow",
+        priority: 76,
+        schedulerKey: `memory-task:${row.task_id}`,
+        payload: {
+          taskType: row.task_type,
+          resultSummary,
+          payload: executionPayload
+        }
       });
     }
   }
@@ -297,6 +358,63 @@ async function enrichExecutionPayload(
       tenantId: row.tenant_id,
       customerIds,
       limit
+    });
+    return { ...payload, ...result };
+  }
+
+  if (row.task_type === "vector_memory_unit_reindex") {
+    const memoryUnitId = typeof payload.memoryUnitId === "string" ? payload.memoryUnitId.trim() : "";
+    if (!memoryUnitId) throw new Error("vector_memory_unit_reindex missing memoryUnitId");
+    const result = await runVectorMemoryUnitReindex(db, {
+      tenantId: row.tenant_id,
+      memoryUnitId
+    });
+    return { ...payload, ...result };
+  }
+
+  if (row.task_type === "memory_encode_conversation_event") {
+    if (!row.customer_id) throw new Error("memory_encode_conversation_event missing customer");
+    const messages = Array.isArray(payload.messages)
+      ? payload.messages
+          .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+          .map((item) => {
+            const record = item as Record<string, unknown>;
+            return {
+              role: record.role === "assistant" ? "assistant" : "user",
+              content: typeof record.content === "string" ? record.content : ""
+            } as const;
+          })
+          .filter((item) => item.content.trim())
+      : [];
+    const result = await encodeConversationMemories(db, {
+      tenantId: row.tenant_id,
+      customerId: row.customer_id,
+      conversationId: row.conversation_id ?? "",
+      caseId: row.case_id,
+      messages,
+      conversationSummary: typeof payload.conversationSummary === "string" ? payload.conversationSummary : "",
+      lastIntent: typeof payload.lastIntent === "string" ? payload.lastIntent : "general_inquiry",
+      lastSentiment: typeof payload.lastSentiment === "string" ? payload.lastSentiment : "neutral",
+      finalResponse: typeof payload.finalResponse === "string" ? payload.finalResponse : null
+    });
+    return { ...payload, ...result };
+  }
+
+  if (row.task_type === "memory_encode_task_event") {
+    if (!row.customer_id) throw new Error("memory_encode_task_event missing customer");
+    const taskPayload = payload.payload && typeof payload.payload === "object" && !Array.isArray(payload.payload)
+      ? payload.payload as Record<string, unknown>
+      : payload;
+    const result = await encodeTaskOutcomeMemories(db, {
+      tenantId: row.tenant_id,
+      customerId: row.customer_id,
+      conversationId: row.conversation_id,
+      caseId: row.case_id,
+      taskId: row.task_id,
+      taskType: typeof payload.taskType === "string" ? payload.taskType : row.task_type,
+      title: row.title,
+      resultSummary: typeof payload.resultSummary === "string" ? payload.resultSummary : summarizeTask(row, payload),
+      payload: taskPayload
     });
     return { ...payload, ...result };
   }
