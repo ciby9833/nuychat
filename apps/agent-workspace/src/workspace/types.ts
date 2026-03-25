@@ -129,7 +129,7 @@ export type CopilotData = {
   suggestions: string[];
 };
 
-export type SideView = "all" | "mine" | "pending" | "monitor" | "follow_up";
+export type SideView = "all" | "mine" | "follow_up";
 
 /** A colleague agent available for transfer */
 export type AgentColleague = {

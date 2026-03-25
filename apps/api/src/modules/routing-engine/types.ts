@@ -17,7 +17,7 @@ export type RoutingPlan = {
   caseId: string | null;
   segmentId: string | null;
   parentPlanId?: string | null;
-  triggerType: "inbound_message" | "reopen" | "ai_handoff" | "manual_assign" | "manual_transfer" | "supervisor_transfer";
+  triggerType: "inbound_message" | "reopen" | "ai_handoff" | "agent_handoff" | "manual_assign" | "manual_transfer" | "supervisor_transfer";
   mode: RoutingPlanMode;
   action: RoutingPlanAction;
   currentOwner: {

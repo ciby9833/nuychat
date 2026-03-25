@@ -49,7 +49,7 @@ export type RoutingJobPayload = {
   planId: string;
   conversationId: string;
   customerId: string;
-  messageId: string;
+  messageId?: string | null;
   channelType: string;
 };
 

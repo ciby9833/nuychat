@@ -152,6 +152,109 @@ export class RoutingDecisionService {
       }
     };
   }
+
+  async createAgentHandoffPlan(
+    db: Knex | Knex.Transaction,
+    context: RoutingContext
+  ): Promise<RoutingPlan> {
+    const matchedRule = await findMatchedRule(db, context);
+    const normalized = normalizeRoutingRuleActions(matchedRule?.actions ?? {});
+
+    const [humanDecision, aiSelection, fallbackDecision] = await Promise.all([
+      humanDispatchService.decideForTarget(db, {
+        tenantId: context.tenantId,
+        target: normalized.humanTarget,
+        priority: matchedRule?.priority ?? 100,
+        reason: "agent_handoff_human_fallback",
+        auditSource: buildAuditSource(matchedRule)
+      }),
+      aiDispatchService.selectForTarget(db, {
+        tenantId: context.tenantId,
+        customerId: context.customerId,
+        aiTarget: normalized.aiTarget
+      }),
+      buildFallbackDecision(db, context, normalized, matchedRule)
+    ]);
+
+    const selectedOwnerType: RoutingOwnerSide = aiSelection.aiAgentId ? "ai" : "human";
+    const selectedHumanAgentId = humanDecision.assignedAgentId;
+    const action: RoutingPlanAction = selectedOwnerType === "ai"
+      ? "assign_ai_owner"
+      : selectedHumanAgentId
+        ? "assign_specific_owner"
+        : "enqueue_for_human";
+
+    const decisionReason = selectedOwnerType === "ai"
+      ? `agent_handoff:${aiSelection.selectionReason}`
+      : `agent_handoff:${selectedHumanAgentId ? "human_assigned" : "human_queue"}`;
+
+    return {
+      tenantId: context.tenantId,
+      conversationId: context.conversationId,
+      customerId: context.customerId,
+      caseId: context.caseId,
+      segmentId: context.segmentId,
+      triggerType: "agent_handoff",
+      mode: "ai_first",
+      action,
+      currentOwner: {
+        ownerType: context.currentHandlerType === "human" ? "agent" : context.currentHandlerType === "ai" ? "ai" : "system",
+        ownerId: context.currentHandlerId ?? null
+      },
+      target: {
+        moduleId: humanDecision.moduleId,
+        skillGroupId: humanDecision.skillGroupId,
+        departmentId: humanDecision.departmentId,
+        teamId: humanDecision.teamId,
+        agentId: selectedOwnerType === "human" ? selectedHumanAgentId : null,
+        aiAgentId: selectedOwnerType === "ai" ? aiSelection.aiAgentId : null,
+        aiAgentName: selectedOwnerType === "ai" ? aiSelection.aiAgentName : null,
+        strategy: humanDecision.strategy,
+        priority: humanDecision.priority
+      },
+      fallback: fallbackDecision,
+      statusPlan: {
+        conversationStatus: selectedOwnerType === "ai" ? "open" : "queued",
+        queueStatus: selectedOwnerType === "ai" ? "pending" : (selectedHumanAgentId ? "assigned" : "pending"),
+        handoffRequired: selectedOwnerType !== "ai",
+        selectedOwnerType
+      },
+      trace: {
+        issueSummary: context.issueSummary,
+        decision: {
+          routingRuleId: matchedRule?.rule_id ?? null,
+          routingRuleName: matchedRule?.name ?? null,
+          planAction: action,
+          matchedConditions: matchedRule?.conditions ?? {},
+          selectedOwnerType,
+          reason: decisionReason,
+          overrideReason: selectedOwnerType === "ai" ? "agent_handoff_forced_ai_attempt" : null,
+          capacity: {
+            humanLoadPct: null,
+            humanAvailableAgents: 0,
+            aiLoadPct: null,
+            aiAvailableAgents: aiSelection.aiAgentId ? 1 : 0
+          }
+        },
+        humanDispatch: {
+          routingRuleId: matchedRule?.rule_id ?? null,
+          routingRuleName: matchedRule?.name ?? null,
+          matchedConditions: matchedRule?.conditions ?? {},
+          reason: humanDecision.reason,
+          candidates: humanDecision.audit.candidates
+        },
+        aiSelection: {
+          routingRuleId: matchedRule?.rule_id ?? null,
+          routingRuleName: matchedRule?.name ?? null,
+          matchedConditions: matchedRule?.conditions ?? {},
+          reason: aiSelection.selectionReason,
+          selectionMode: matchedRule ? "rule" : "fallback",
+          strategy: aiSelection.strategy,
+          candidates: aiSelection.candidates
+        }
+      }
+    };
+  }
 }
 
 async function findMatchedRule(

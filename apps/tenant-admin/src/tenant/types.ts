@@ -311,6 +311,77 @@ export type AIConversationDetail = {
   }>;
 };
 
+export type HumanConversationListItem = {
+  assignmentId: string | null;
+  conversationId: string;
+  caseId: string | null;
+  caseTitle: string | null;
+  conversationStatus: string | null;
+  queueStatus: string | null;
+  channelType: string | null;
+  customerName: string | null;
+  customerRef: string | null;
+  departmentId: string | null;
+  departmentName: string | null;
+  teamId: string | null;
+  teamName: string | null;
+  lastMessagePreview: string | null;
+  lastMessageAt: string | null;
+  lastCustomerMessageAt: string | null;
+  lastServiceMessageAt: string | null;
+  waitingFrom: string | null;
+  waitingSeconds: number;
+  ownerBucket: string | null;
+  hasFirstResponse: boolean;
+  reassignCount: number;
+  currentResponsibleType: string | null;
+  currentResponsibleId: string | null;
+  currentResponsibleName: string | null;
+  reservedResponsibleType: string | null;
+  reservedResponsibleId: string | null;
+  reservedResponsibleName: string | null;
+  currentExceptionReason: string | null;
+};
+
+export type HumanConversationDetail = {
+  conversation: {
+    conversationId: string;
+    caseId: string | null;
+    caseTitle: string | null;
+    caseSummary: string | null;
+    caseStatus: string | null;
+    caseOpenedAt: string | null;
+    caseLastActivityAt: string | null;
+    status: string;
+    queueStatus: string | null;
+    channelType: string;
+    currentHandlerType: string | null;
+    customerName: string | null;
+    customerRef: string | null;
+    customerTier: string | null;
+    customerLanguage: string | null;
+    currentOwnerType: string | null;
+    currentOwnerId: string | null;
+    currentOwnerName: string | null;
+    assignedAgentId: string | null;
+    assignedAgentName: string | null;
+    assignedAiAgentId: string | null;
+    assignedAiAgentName: string | null;
+    lastMessagePreview: string | null;
+    lastMessageAt: string | null;
+  };
+  messages: Array<{
+    messageId: string;
+    direction: string;
+    senderType: string;
+    senderName: string | null;
+    messageType: string;
+    content: unknown;
+    preview: string;
+    createdAt: string;
+  }>;
+};
+
 export type AgentSkillGroup = {
   skill_group_id: string;
   code: string;
@@ -903,6 +974,7 @@ export type DispatchOpsSuggestionGroup = {
 export type Tab =
   | "overview"
   | "cases"
+  | "human-conversations"
   | "sla"
   | "qa"
   | "csat"

@@ -1,19 +1,13 @@
-// 用于主管监控工作台，展示会话和坐席的实时状态，并提供介入、转接、强制关闭等操作
-// 菜单路径：客户中心 -> 主管监控
-// 作者：吴川
 import { Button, Card, Col, Input, Modal, Row, Select, Space, Statistic, Table, Tag, Tooltip, Typography, message } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   broadcastToOnlineAgents,
-  forceCloseConversation,
   getSupervisorOverview,
-  interveneConversation,
   listDepartments,
   listSupervisorAgents,
   listSupervisorConversations,
-  listTeams,
-  transferConversation
+  listTeams
 } from "../../api";
 import type {
   DepartmentItem,
@@ -36,15 +30,20 @@ export function SupervisorTab() {
   const [agentFilter, setAgentFilter] = useState<string | undefined>(undefined);
   const [scopeFilter, setScopeFilter] = useState<"all" | "waiting" | "exception" | "active" | "resolved">("all");
   const [page, setPage] = useState(1);
-  const [interveneOpen, setInterveneOpen] = useState(false);
-  const [transferOpen, setTransferOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
-  const [selectedConversationId, setSelectedConversationId] = useState<string>("");
-  const [selectedConversation, setSelectedConversation] = useState<SupervisorConversationWorkbenchItem | null>(null);
-  const [interveneText, setInterveneText] = useState("");
-  const [transferAgentId, setTransferAgentId] = useState<string>("");
   const [broadcastText, setBroadcastText] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const openHumanConversations = useCallback((row: SupervisorConversationWorkbenchItem) => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem("tenant-admin.human-conversations.intent", JSON.stringify({
+      conversationId: row.conversationId,
+      scope: row.conversationStatus === "resolved" || row.conversationStatus === "closed" ? "resolved" : "all"
+    }));
+    window.dispatchEvent(new CustomEvent("tenant-admin:navigate", {
+      detail: { tab: "human-conversations" }
+    }));
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -73,7 +72,7 @@ export function SupervisorTab() {
     } finally {
       setLoading(false);
     }
-  }, [agentFilter, departmentFilter, teamFilter, scopeFilter, page]);
+  }, [agentFilter, departmentFilter, page, scopeFilter, teamFilter]);
 
   useEffect(() => {
     void load();
@@ -85,18 +84,6 @@ export function SupervisorTab() {
     }, 15000);
     return () => window.clearInterval(timer);
   }, [load]);
-
-  const transferAgentOptions = useMemo(
-    () => agents.map((agent) => {
-      const isAssignable = agent.status === "online" || agent.status === "busy";
-      return {
-        value: agent.agentId,
-        label: `${agent.displayName} (${agent.status} / ${agent.activeConversations})`,
-        disabled: !isAssignable || agent.agentId === selectedConversation?.currentResponsibleId
-      };
-    }),
-    [agents, selectedConversation]
-  );
 
   const conversationColumns = useMemo(
     () => [
@@ -170,78 +157,23 @@ export function SupervisorTab() {
       },
       {
         title: "操作",
-        render: (_: unknown, row: SupervisorConversationWorkbenchItem) => {
-          const isClosed = row.conversationStatus === "resolved" || row.conversationStatus === "closed";
-          const canIntervene = !isClosed;
-          const canTransfer = !isClosed;
-          const canForceClose = !isClosed;
-
-          return (
+        render: (_: unknown, row: SupervisorConversationWorkbenchItem) => (
           <Space>
-            <Tooltip title={canIntervene ? "主管发送消息介入当前会话" : "已结束会话不能再介入"}>
-              <Button
-                size="small"
-                disabled={!canIntervene}
-                onClick={() => {
-                  setSelectedConversationId(row.conversationId);
-                  setSelectedConversation(row);
-                  setInterveneText("");
-                  setInterveneOpen(true);
-                }}
-              >
-                介入
+            <Tooltip title="打开人工会话页查看详情与处理动作">
+              <Button type="primary" size="small" onClick={() => openHumanConversations(row)}>
+                查看会话
               </Button>
             </Tooltip>
-            <Tooltip title={canTransfer ? "改派给其他人工坐席" : "已结束会话不能转接"}>
-              <Button
-                size="small"
-                disabled={!canTransfer}
-                onClick={() => {
-                  setSelectedConversationId(row.conversationId);
-                  setSelectedConversation(row);
-                  setTransferAgentId("");
-                  setTransferOpen(true);
-                }}
-              >
-                转接
-              </Button>
-            </Tooltip>
-            <Tooltip title={canForceClose ? "强制结束当前会话" : "已结束会话无需重复关闭"}>
-              <Button
-                size="small"
-                danger
-                disabled={!canForceClose}
-                onClick={() => {
-                  Modal.confirm({
-                    title: "确认强制关闭会话？",
-                    content: `会话 ${row.conversationId.slice(0, 8)} 将被直接结束，这会影响当前处理链路。`,
-                    okText: "确认关闭",
-                    cancelText: "取消",
-                    okButtonProps: { danger: true, loading: saving },
-                    onOk: async () => {
-                      setSaving(true);
-                      try {
-                        await forceCloseConversation(row.conversationId, "supervisor force close");
-                        message.success("会话已强制关闭");
-                        await load();
-                      } catch (err) {
-                        message.error(`关闭失败: ${(err as Error).message}`);
-                      } finally {
-                        setSaving(false);
-                      }
-                    }
-                  });
-                }}
-              >
-                强制关闭
+            <Tooltip title="主管工作台用于发现问题，具体介入/转接/关闭请在人工会话页处理">
+              <Button size="small" onClick={() => openHumanConversations(row)}>
+                去处理
               </Button>
             </Tooltip>
           </Space>
-          );
-        }
+        )
       }
     ],
-    [load, saving]
+    [openHumanConversations]
   );
 
   const agentColumns = useMemo(
@@ -290,8 +222,8 @@ export function SupervisorTab() {
         </Row>
       </Card>
 
-	      <Card title="筛选">
-	        <Space wrap>
+      <Card title="筛选">
+        <Space wrap>
           <Select
             allowClear
             placeholder="部门"
@@ -315,9 +247,9 @@ export function SupervisorTab() {
             }}
             options={teams.map((item) => ({ value: item.teamId, label: item.name }))}
           />
-	          <Select
-	            allowClear
-	            showSearch
+          <Select
+            allowClear
+            showSearch
             placeholder="坐席"
             style={{ width: 200 }}
             value={agentFilter}
@@ -325,41 +257,48 @@ export function SupervisorTab() {
               setAgentFilter(value);
               setPage(1);
             }}
-	            options={agents.map((item) => ({ value: item.agentId, label: item.displayName }))}
-	          />
-	          <Select
-	            style={{ width: 180 }}
-	            value={scopeFilter}
-	            onChange={(value) => {
-	              setScopeFilter(value);
-	              setPage(1);
-	            }}
-	            options={[
-	              { value: "all", label: "全部会话" },
-	              { value: "waiting", label: "等待中" },
-	              { value: "exception", label: "异常会话" },
-	              { value: "active", label: "处理中" },
-	              { value: "resolved", label: "已结束" }
-	            ]}
-	          />
-	          <Button onClick={() => void load()} loading={loading}>应用筛选</Button>
-	        </Space>
-	      </Card>
+            options={agents.map((item) => ({ value: item.agentId, label: item.displayName }))}
+          />
+          <Select
+            style={{ width: 180 }}
+            value={scopeFilter}
+            onChange={(value) => {
+              setScopeFilter(value);
+              setPage(1);
+            }}
+            options={[
+              { value: "all", label: "全部会话" },
+              { value: "waiting", label: "等待中" },
+              { value: "exception", label: "异常会话" },
+              { value: "active", label: "处理中" },
+              { value: "resolved", label: "已结束" }
+            ]}
+          />
+          <Button onClick={() => void load()} loading={loading}>应用筛选</Button>
+        </Space>
+      </Card>
 
-	      <Card title="会话工作台">
-	        <Table<SupervisorConversationWorkbenchItem>
-	          rowKey="conversationId"
-	          loading={loading}
-	          columns={conversationColumns}
-	          dataSource={conversations?.items ?? []}
-	          pagination={{
-	            current: conversations?.page ?? 1,
-	            pageSize: conversations?.pageSize ?? 20,
-	            total: conversations?.total ?? 0,
-	            onChange: (nextPage) => setPage(nextPage)
-	          }}
-	        />
-	      </Card>
+      <Card
+        title="会话监控"
+        extra={
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            用于定位等待/异常/已解决会话，具体处理请进入“人工会话”
+          </Typography.Text>
+        }
+      >
+        <Table<SupervisorConversationWorkbenchItem>
+          rowKey="conversationId"
+          loading={loading}
+          columns={conversationColumns}
+          dataSource={conversations?.items ?? []}
+          pagination={{
+            current: conversations?.page ?? 1,
+            pageSize: conversations?.pageSize ?? 20,
+            total: conversations?.total ?? 0,
+            onChange: (nextPage) => setPage(nextPage)
+          }}
+        />
+      </Card>
 
       <Card title="坐席状态">
         <Table<SupervisorAgentStatus>
@@ -370,79 +309,6 @@ export function SupervisorTab() {
           pagination={{ pageSize: 10 }}
         />
       </Card>
-
-      <Modal
-        title="主管介入"
-        open={interveneOpen}
-        onCancel={() => {
-          setInterveneOpen(false);
-          setSelectedConversation(null);
-        }}
-        onOk={() => {
-          void (async () => {
-            if (!selectedConversationId || !interveneText.trim()) {
-              message.warning("请输入介入消息");
-              return;
-            }
-            setSaving(true);
-            try {
-              await interveneConversation(selectedConversationId, interveneText.trim());
-              message.success("介入消息已入队");
-              setInterveneOpen(false);
-              setSelectedConversation(null);
-            } catch (err) {
-              message.error(`介入失败: ${(err as Error).message}`);
-            } finally {
-              setSaving(false);
-            }
-          })();
-        }}
-        okButtonProps={{ loading: saving }}
-        destroyOnHidden
-      >
-        <Typography.Text type="secondary">会话：{selectedConversationId}</Typography.Text>
-        <Input.TextArea rows={4} value={interveneText} onChange={(e) => setInterveneText(e.target.value)} />
-      </Modal>
-
-      <Modal
-        title="转接会话"
-        open={transferOpen}
-        onCancel={() => {
-          setTransferOpen(false);
-          setSelectedConversation(null);
-        }}
-        onOk={() => {
-          void (async () => {
-            if (!selectedConversationId || !transferAgentId) {
-              message.warning("请选择目标坐席");
-              return;
-            }
-            setSaving(true);
-            try {
-              await transferConversation(selectedConversationId, transferAgentId);
-              message.success("转接成功");
-              setTransferOpen(false);
-              setSelectedConversation(null);
-              await load();
-            } catch (err) {
-              message.error(`转接失败: ${(err as Error).message}`);
-            } finally {
-              setSaving(false);
-            }
-          })();
-        }}
-        okButtonProps={{ loading: saving }}
-        destroyOnHidden
-      >
-        <Select
-          showSearch
-          style={{ width: "100%" }}
-          placeholder="选择目标坐席"
-          value={transferAgentId || undefined}
-          onChange={(value) => setTransferAgentId(value)}
-          options={transferAgentOptions}
-        />
-      </Modal>
 
       <Modal
         title="广播通知"

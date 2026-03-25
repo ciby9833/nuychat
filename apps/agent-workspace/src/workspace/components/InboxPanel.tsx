@@ -71,7 +71,6 @@ export function InboxPanel(props: InboxPanelProps) {
     return () => observer.disconnect();
   }, []);
 
-  const isMonitorView = view === "monitor";
   const isFollowUpView = view === "follow_up";
 
   // Build flat list with date group headers using useMemo
@@ -96,7 +95,7 @@ export function InboxPanel(props: InboxPanelProps) {
       {/* View switch + filters */}
       <div className="inbox-head">
         <div className="inbox-view-switch">
-          {(["all", "mine", "pending", "follow_up", "monitor"] as const).map((v) => (
+          {(["all", "mine", "follow_up"] as const).map((v) => (
             <button
               key={v}
               className={view === v ? "active" : ""}
@@ -104,9 +103,7 @@ export function InboxPanel(props: InboxPanelProps) {
             >
               {v === "all" ? "全部"
                 : v === "mine" ? "我的"
-                : v === "pending" ? "队列"
-                : v === "follow_up" ? "跟进"
-                : "监控"}
+                : "跟进"}
             </button>
           ))}
         </div>
@@ -119,7 +116,7 @@ export function InboxPanel(props: InboxPanelProps) {
         />
 
         {/* Tier filter hidden in monitor/follow_up views (not relevant) */}
-        {!isMonitorView && !isFollowUpView && (
+        {!isFollowUpView && (
           <div className="inbox-tier-row">
             {(["all", "vip", "premium", "standard"] as const).map((tag) => (
               <button
@@ -130,12 +127,6 @@ export function InboxPanel(props: InboxPanelProps) {
                 {TIER_LABELS[tag]}
               </button>
             ))}
-          </div>
-        )}
-
-        {isMonitorView && (
-          <div className="inbox-monitor-hint">
-            👁️ 只读 — 显示其他客服正在处理的会话
           </div>
         )}
 
@@ -150,7 +141,7 @@ export function InboxPanel(props: InboxPanelProps) {
       <div className="inbox-list">
         {filteredConversations.length === 0 && !isLoading && (
           <p className="inbox-empty">
-            {isMonitorView ? "暂无其他客服处理中的会话" : "暂无会话"}
+            {"暂无会话"}
           </p>
         )}
 
@@ -169,46 +160,6 @@ export function InboxPanel(props: InboxPanelProps) {
           const firstLetter = displayName.slice(0, 1).toUpperCase();
           const isSelected = selectedId === c.conversationId;
           const isAssigned = c.queueStatus === "assigned";
-
-          if (isMonitorView) {
-            // Monitor view: read-only row — no click, shows who it's assigned to
-            const agentLabel = c.assignedAgentName
-              ? `${c.assignedAgentName}${c.assignedAgentEmployeeNo ? ` #${c.assignedAgentEmployeeNo}` : ""}`
-              : "已分配";
-            const summaryTags = (c.customerTags ?? []).slice(0, 3);
-
-            return (
-              <div
-                key={c.conversationId}
-                className="inbox-item inbox-item--monitor"
-                title="该会话已由其他客服接管，无法操作"
-              >
-                <div className="inbox-avatar-wrap">
-                  <div className={`inbox-avatar ${avatarTierClass(c.customerTier)}`}>
-                    {firstLetter}
-                  </div>
-                  <span className="inbox-avatar-status assigned" />
-                </div>
-
-                <div className="inbox-item-body">
-                  <div className="inbox-item-row1">
-                    <span className="inbox-item-name">{displayName}</span>
-                    <span className="inbox-item-time">{listTimestamp(c.lastMessageAt ?? c.occurredAt)}</span>
-                  </div>
-                  <div className="inbox-item-row2">
-                    <span className="inbox-monitor-agent">🔒 {agentLabel}</span>
-                  </div>
-                  {summaryTags.length > 0 && (
-                    <div className="inbox-monitor-tags" aria-label="客户标签摘要">
-                      {summaryTags.map((tag) => (
-                        <span key={tag} className="inbox-monitor-tag">{tag}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          }
 
           return (
             <button
@@ -246,7 +197,7 @@ export function InboxPanel(props: InboxPanelProps) {
         })}
 
         {/* Infinite scroll sentinel (not needed in monitor view since list is bounded) */}
-        {!isMonitorView && hasMore && (
+        {hasMore && (
           <div ref={sentinelRef} className="inbox-sentinel" />
         )}
 

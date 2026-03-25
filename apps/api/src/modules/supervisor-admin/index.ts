@@ -14,8 +14,11 @@ import { toIsoString } from "../tenant/tenant-admin.shared.js";
 import {
   buildSupervisorConversationWorkbenchRows,
   buildSupervisorWaitingConversationIdsQuery,
+  extractMessagePreview,
   filterSupervisorConversationWorkbenchRows,
-  normalizeSupervisorWorkbenchScope
+  normalizeSupervisorWorkbenchScope,
+  parseJsonValue,
+  resolveDateRange
 } from "../admin-core/admin-route.shared.js";
 
 export async function supervisorAdminRoutes(app: FastifyInstance) {
@@ -199,6 +202,225 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
       const filteredRows = filterSupervisorConversationWorkbenchRows(rows, scope);
       const start = (page - 1) * pageSize;
       return { page, pageSize, total: filteredRows.length, scope, items: filteredRows.slice(start, start + pageSize) };
+    });
+  });
+
+  app.get("/api/admin/human-conversations", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const query = req.query as {
+      agentId?: string;
+      scope?: string;
+      datePreset?: string;
+      from?: string;
+      to?: string;
+      page?: string;
+      pageSize?: string;
+    };
+    const page = Math.max(1, Number(query.page ?? 1));
+    const pageSize = Math.min(100, Math.max(10, Number(query.pageSize ?? 20)));
+    const scope = normalizeSupervisorWorkbenchScope(query.scope);
+    const dateRange = resolveDateRange({
+      preset: query.datePreset,
+      from: query.from,
+      to: query.to,
+      timezone: "Asia/Jakarta"
+    });
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const rows = await buildSupervisorConversationWorkbenchRows(trx, tenantId, {
+        departmentId: null,
+        teamId: null,
+        agentId: query.agentId?.trim() || null
+      });
+      const filteredRows = filterSupervisorConversationWorkbenchRows(rows, scope).filter((row) => {
+        const activityAt = row.lastMessageAt ?? row.lastCustomerMessageAt ?? row.lastServiceMessageAt ?? row.waitingFrom;
+        if (!activityAt) return false;
+        return activityAt >= dateRange.startIso && activityAt <= dateRange.endIso;
+      });
+      const missingCaseConversationIds = filteredRows
+        .filter((row) => !row.caseId)
+        .map((row) => row.conversationId);
+      const latestCases = missingCaseConversationIds.length > 0
+        ? await trx("conversation_cases as cc")
+            .select("cc.conversation_id", "cc.case_id", "cc.title")
+            .where("cc.tenant_id", tenantId)
+            .whereIn("cc.conversation_id", missingCaseConversationIds)
+            .orderBy("cc.last_activity_at", "desc")
+        : [];
+      const latestCaseByConversation = new Map<string, { caseId: string; caseTitle: string | null }>();
+      for (const row of latestCases) {
+        const conversationId = row.conversation_id as string;
+        if (!latestCaseByConversation.has(conversationId)) {
+          latestCaseByConversation.set(conversationId, {
+            caseId: row.case_id as string,
+            caseTitle: (row.title as string | null) ?? null
+          });
+        }
+      }
+      const start = (page - 1) * pageSize;
+      return {
+        page,
+        pageSize,
+        total: filteredRows.length,
+        scope,
+        items: filteredRows.slice(start, start + pageSize).map((row) => {
+          const latestCase = !row.caseId ? latestCaseByConversation.get(row.conversationId) : null;
+          return {
+            ...row,
+            caseId: row.caseId ?? latestCase?.caseId ?? null,
+            caseTitle: row.caseTitle ?? latestCase?.caseTitle ?? null
+          };
+        })
+      };
+    });
+  });
+
+  app.get("/api/admin/human-conversations/:conversationId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { conversationId } = req.params as { conversationId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const latestCaseQuery = trx("conversation_cases as cc_latest")
+        .select(
+          trx.raw("distinct on (cc_latest.conversation_id) cc_latest.tenant_id"),
+          "cc_latest.conversation_id",
+          "cc_latest.case_id",
+          "cc_latest.title",
+          "cc_latest.summary",
+          "cc_latest.status",
+          "cc_latest.opened_at",
+          "cc_latest.last_activity_at"
+        )
+        .where("cc_latest.tenant_id", tenantId)
+        .orderBy("cc_latest.conversation_id", "asc")
+        .orderBy("cc_latest.last_activity_at", "desc")
+        .as("cc_latest");
+      const conversation = await trx("conversations as c")
+        .leftJoin("queue_assignments as qa", function joinQueueAssignment() {
+          this.on("qa.conversation_id", "=", "c.conversation_id").andOn("qa.tenant_id", "=", "c.tenant_id");
+        })
+        .leftJoin("conversation_cases as cc", function joinCurrentCase() {
+          this.on("cc.case_id", "=", "c.current_case_id").andOn("cc.tenant_id", "=", "c.tenant_id");
+        })
+        .leftJoin(latestCaseQuery, function joinLatestCase() {
+          this.on("cc_latest.conversation_id", "=", "c.conversation_id").andOn("cc_latest.tenant_id", "=", "c.tenant_id");
+        })
+        .leftJoin("customers as cu", function joinCustomer() {
+          this.on("cu.customer_id", "=", "c.customer_id").andOn("cu.tenant_id", "=", "c.tenant_id");
+        })
+        .leftJoin("agent_profiles as current_ap", function joinCurrentAgent() {
+          this.on("current_ap.agent_id", "=", "cc.current_owner_id").andOn("current_ap.tenant_id", "=", "cc.tenant_id");
+        })
+        .leftJoin("tenant_memberships as current_tm", "current_tm.membership_id", "current_ap.membership_id")
+        .leftJoin("tenant_ai_agents as current_ai", function joinCurrentAi() {
+          this.on("current_ai.ai_agent_id", "=", "cc.current_owner_id").andOn("current_ai.tenant_id", "=", "cc.tenant_id");
+        })
+        .leftJoin("agent_profiles as reserved_ap", function joinReservedAgent() {
+          this.on("reserved_ap.agent_id", "=", "qa.assigned_agent_id").andOn("reserved_ap.tenant_id", "=", "qa.tenant_id");
+        })
+        .leftJoin("tenant_memberships as reserved_tm", "reserved_tm.membership_id", "reserved_ap.membership_id")
+        .leftJoin("tenant_ai_agents as reserved_ai", function joinReservedAi() {
+          this.on("reserved_ai.ai_agent_id", "=", "qa.assigned_ai_agent_id").andOn("reserved_ai.tenant_id", "=", "qa.tenant_id");
+        })
+        .where({ "c.tenant_id": tenantId, "c.conversation_id": conversationId })
+        .select(
+          "c.conversation_id",
+          "c.status",
+          "c.channel_type",
+          "c.current_handler_type",
+          "c.last_message_preview",
+          "c.last_message_at",
+          "cu.display_name as customer_name",
+          "cu.external_ref as customer_ref",
+          "cu.tier as customer_tier",
+          "cu.language as customer_language",
+          trx.raw("coalesce(cc.case_id, cc_latest.case_id) as case_id"),
+          trx.raw("coalesce(cc.title, cc_latest.title) as case_title"),
+          trx.raw("coalesce(cc.summary, cc_latest.summary) as case_summary"),
+          trx.raw("coalesce(cc.status, cc_latest.status) as case_status"),
+          trx.raw("coalesce(cc.opened_at, cc_latest.opened_at) as case_opened_at"),
+          trx.raw("coalesce(cc.last_activity_at, cc_latest.last_activity_at) as case_last_activity_at"),
+          "qa.status as queue_status",
+          "qa.assigned_agent_id",
+          "reserved_tm.display_name as assigned_agent_name",
+          "qa.assigned_ai_agent_id",
+          "reserved_ai.name as assigned_ai_agent_name",
+          "cc.current_owner_type",
+          "cc.current_owner_id",
+          "current_tm.display_name as current_owner_name",
+          "current_ai.name as current_owner_ai_name"
+        )
+        .first<Record<string, unknown>>();
+
+      if (!conversation) throw app.httpErrors.notFound("Conversation not found");
+
+      const messages = await trx("messages as m")
+        .leftJoin("agent_profiles as ap", function joinAgent() {
+          this.on("ap.agent_id", "=", "m.sender_id").andOn("ap.tenant_id", "=", "m.tenant_id");
+        })
+        .leftJoin("tenant_memberships as tm", "tm.membership_id", "ap.membership_id")
+        .leftJoin("tenant_ai_agents as ai", function joinAiAgent() {
+          this.on("ai.ai_agent_id", "=", "m.sender_id").andOn("ai.tenant_id", "=", "m.tenant_id");
+        })
+        .where({ "m.tenant_id": tenantId, "m.conversation_id": conversationId })
+        .select(
+          "m.message_id",
+          "m.direction",
+          "m.sender_type",
+          "m.message_type",
+          "m.content",
+          "m.created_at",
+          "tm.display_name as sender_name",
+          "ai.name as ai_agent_name"
+        )
+        .orderBy("m.created_at", "asc")
+        .limit(200);
+
+      const currentOwnerType = (conversation.current_owner_type as string | null) ?? null;
+      const currentOwnerName = currentOwnerType === "ai"
+        ? (conversation.current_owner_ai_name as string | null) ?? null
+        : (conversation.current_owner_name as string | null) ?? null;
+
+      return {
+        conversation: {
+          conversationId: conversation.conversation_id,
+          caseId: (conversation.case_id as string | null) ?? null,
+          caseTitle: (conversation.case_title as string | null) ?? null,
+          caseSummary: (conversation.case_summary as string | null) ?? null,
+          caseStatus: (conversation.case_status as string | null) ?? null,
+          caseOpenedAt: conversation.case_opened_at ? toIsoString(conversation.case_opened_at as string) : null,
+          caseLastActivityAt: conversation.case_last_activity_at ? toIsoString(conversation.case_last_activity_at as string) : null,
+          status: conversation.status,
+          queueStatus: (conversation.queue_status as string | null) ?? null,
+          channelType: conversation.channel_type,
+          currentHandlerType: (conversation.current_handler_type as string | null) ?? null,
+          customerName: (conversation.customer_name as string | null) ?? null,
+          customerRef: (conversation.customer_ref as string | null) ?? null,
+          customerTier: (conversation.customer_tier as string | null) ?? null,
+          customerLanguage: (conversation.customer_language as string | null) ?? null,
+          currentOwnerType,
+          currentOwnerId: (conversation.current_owner_id as string | null) ?? null,
+          currentOwnerName,
+          assignedAgentId: (conversation.assigned_agent_id as string | null) ?? null,
+          assignedAgentName: (conversation.assigned_agent_name as string | null) ?? null,
+          assignedAiAgentId: (conversation.assigned_ai_agent_id as string | null) ?? null,
+          assignedAiAgentName: (conversation.assigned_ai_agent_name as string | null) ?? null,
+          lastMessagePreview: (conversation.last_message_preview as string | null) ?? null,
+          lastMessageAt: conversation.last_message_at ? toIsoString(conversation.last_message_at as string) : null
+        },
+        messages: messages.map((row) => ({
+          messageId: row.message_id,
+          direction: row.direction,
+          senderType: row.sender_type,
+          senderName: (row.sender_name as string | null) ?? (row.ai_agent_name as string | null) ?? null,
+          messageType: row.message_type,
+          content: parseJsonValue(row.content),
+          preview: extractMessagePreview(parseJsonValue(row.content)),
+          createdAt: toIsoString(row.created_at as string)
+        }))
+      };
     });
   });
 

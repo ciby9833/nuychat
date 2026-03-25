@@ -12,4 +12,11 @@ export class UnifiedRoutingEngineService {
   ): Promise<RoutingPlan> {
     return routingDecisionService.createPlan(db, context);
   }
+
+  async createAgentHandoffPlan(
+    db: Knex | Knex.Transaction,
+    context: RoutingContext
+  ): Promise<RoutingPlan> {
+    return routingDecisionService.createAgentHandoffPlan(db, context);
+  }
 }

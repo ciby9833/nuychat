@@ -8,6 +8,8 @@ import type {
   AIConfigProfile,
   AIConversationDetail,
   AIConversationListItem,
+  HumanConversationDetail,
+  HumanConversationListItem,
   TenantAIAgent,
   TenantAIAgentListResponse,
   AgentProfile,
@@ -257,6 +259,33 @@ export function listAIConversations(input?: {
 
 export function getAIConversationDetail(conversationId: string) {
   return api<AIConversationDetail>(`/api/admin/ai-conversations/${conversationId}`);
+}
+
+export function listHumanConversations(input?: {
+  agentId?: string;
+  scope?: "all" | "waiting" | "exception" | "active" | "resolved";
+  datePreset?: "today" | "yesterday" | "last7d" | "custom";
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const params = new URLSearchParams();
+  if (input?.agentId) params.set("agentId", input.agentId);
+  if (input?.scope) params.set("scope", input.scope);
+  if (input?.datePreset) params.set("datePreset", input.datePreset);
+  if (input?.from) params.set("from", input.from);
+  if (input?.to) params.set("to", input.to);
+  if (input?.page) params.set("page", String(input.page));
+  if (input?.pageSize) params.set("pageSize", String(input.pageSize));
+  const query = params.toString();
+  return api<{ page: number; pageSize: number; total: number; scope: string; items: HumanConversationListItem[] }>(
+    `/api/admin/human-conversations${query ? `?${query}` : ""}`
+  );
+}
+
+export function getHumanConversationDetail(conversationId: string) {
+  return api<HumanConversationDetail>(`/api/admin/human-conversations/${conversationId}`);
 }
 
 export function listDispatchExecutions(input?: {

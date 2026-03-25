@@ -615,11 +615,6 @@ export function useWorkspaceDashboard() {
   }, [conversations, searchText, tierFilter]);
 
   useEffect(() => {
-    if (effectiveView === "monitor") {
-      if (selectedId !== null) setSelectedId(null);
-      return;
-    }
-
     if (selectedId && !filteredConversations.some((c) => c.conversationId === selectedId)) {
       setSelectedId(filteredConversations[0]?.conversationId ?? null);
       return;
@@ -971,19 +966,6 @@ function shouldIncludeConversationInView(
 ): boolean {
   if (view === "mine") {
     return !!agentId && conversation.assignedAgentId === agentId;
-  }
-
-  if (view === "pending") {
-    return conversation.queueStatus === "pending" || !conversation.queueStatus;
-  }
-
-  if (view === "monitor") {
-    return (
-      !!agentId &&
-      !!conversation.assignedAgentId &&
-      conversation.assignedAgentId !== agentId &&
-      ["human_active", "open", "queued"].includes(conversation.status)
-    );
   }
 
   if (view === "follow_up") {

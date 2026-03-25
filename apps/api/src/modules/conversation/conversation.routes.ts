@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { Knex } from "knex";
 
 import { db, withTenantTransaction } from "../../infra/db/client.js";
-import { conversationTimeoutQueue, outboundQueue } from "../../infra/queue/queues.js";
+import { conversationTimeoutQueue, outboundQueue, routingQueue } from "../../infra/queue/queues.js";
 import { PresenceService } from "../agent/presence.service.js";
 import { ConversationCaseService } from "./conversation-case.service.js";
 import { OwnershipService } from "./ownership.service.js";
@@ -18,6 +18,10 @@ import { CopilotService } from "../copilot/copilot.service.js";
 import { DispatchAuditService } from "../dispatch/dispatch-audit.service.js";
 import { realtimeEventBus } from "../realtime/realtime.events.js";
 import { getPrimaryTeamContext } from "../routing-engine/human-dispatch.service.js";
+import { RoutingContextService } from "../routing-engine/routing-context.service.js";
+import { UnifiedRoutingEngineService } from "../routing-engine/unified-routing-engine.service.js";
+import { RoutingPlanRepository } from "../routing-engine/routing-plan.repository.js";
+import { RoutingPlanStepService } from "../routing-engine/routing-plan-step.service.js";
 import { SkillGatewayService } from "../skills/skill-gateway.service.js";
 import { skillRegistry } from "../skills/skill.registry.js";
 import {
@@ -31,7 +35,7 @@ import {
   getConversationInsightRecord,
   getCustomerProfileRecord
 } from "../memory/customer-intelligence.service.js";
-import { cancelAssignmentAcceptTimeout } from "../sla/conversation-sla.service.js";
+import { cancelAssignmentAcceptTimeout, cancelFollowUpTimeout, scheduleAssignmentAcceptTimeout } from "../sla/conversation-sla.service.js";
 
 const copilotService = new CopilotService();
 const skillGateway = new SkillGatewayService();
@@ -40,6 +44,10 @@ const conversationSegmentService = new ConversationSegmentService();
 const ownershipService = new OwnershipService();
 const presenceService = new PresenceService();
 const dispatchAuditService = new DispatchAuditService();
+const routingContextService = new RoutingContextService();
+const unifiedRoutingEngineService = new UnifiedRoutingEngineService();
+const routingPlanRepository = new RoutingPlanRepository();
+const routingPlanStepService = new RoutingPlanStepService();
 
 export async function conversationRoutes(app: FastifyInstance) {
   app.addHook("preHandler", async (req) => {
@@ -744,51 +752,172 @@ export async function conversationRoutes(app: FastifyInstance) {
     const body = (req.body as { reason?: string }) ?? {};
     const reason = body.reason?.trim() || "Agent requested handoff";
 
-    await withTenantTransaction(tenantId, async (trx) => {
+    const handoffResult = await withTenantTransaction(tenantId, async (trx) => {
       const before = await trx("conversations")
         .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .select("customer_id", "current_handler_type", "current_handler_id", "current_segment_id")
-        .first<{ customer_id: string; current_handler_type: string | null; current_handler_id: string | null; current_segment_id: string | null } | undefined>();
+        .select("customer_id", "channel_id", "channel_type", "current_handler_type", "current_handler_id", "current_segment_id", "current_case_id")
+        .first<{
+          customer_id: string;
+          channel_id: string;
+          channel_type: string;
+          current_handler_type: string | null;
+          current_handler_id: string | null;
+          current_segment_id: string | null;
+          current_case_id: string | null;
+        } | undefined>();
       if (!before) throw app.httpErrors.notFound("Conversation not found");
+      await recordAgentPresenceActivity(trx, tenantId, agentId);
+
+      const routingContext = await routingContextService.build(trx, {
+        tenantId,
+        conversationId,
+        customerId: before.customer_id,
+        channelType: before.channel_type,
+        channelId: before.channel_id
+      });
+      const routingPlan = await unifiedRoutingEngineService.createAgentHandoffPlan(trx, routingContext);
+      const planId = await routingPlanRepository.create(trx, routingPlan);
+      await routingPlanStepService.record(trx, {
+        tenantId,
+        planId,
+        stepType: "agent_handoff_plan_created",
+        status: "completed",
+        payload: {
+          mode: routingPlan.mode,
+          action: routingPlan.action,
+          selectedOwnerType: routingPlan.statusPlan.selectedOwnerType,
+          aiAgentId: routingPlan.target.aiAgentId,
+          fallbackAgentId: routingPlan.fallback?.agentId ?? null
+        }
+      });
+
       const executionId = await dispatchAuditService.recordExecution(trx, {
         tenantId,
         conversationId,
+        caseId: before.current_case_id,
         customerId: before.customer_id,
         segmentId: before.current_segment_id,
         triggerType: "agent_handoff",
         triggerActorType: agentId ? "agent" : "system",
         triggerActorId: agentId ?? null,
-        decisionType: "manual_transition",
-        decisionSummary: { toOwnerType: "system", reason },
-        decisionReason: reason
+        decisionType: "routing_plan",
+        channelType: before.channel_type,
+        channelId: before.channel_id,
+        routingRuleId: routingPlan.trace.aiSelection.routingRuleId,
+        routingRuleName: routingPlan.trace.aiSelection.routingRuleName,
+        matchedConditions: routingPlan.trace.aiSelection.matchedConditions,
+        inputSnapshot: {
+          currentHandlerType: before.current_handler_type ?? null,
+          currentHandlerId: before.current_handler_id ?? null,
+          reason
+        },
+        decisionSummary: {
+          planId,
+          selectedOwnerType: routingPlan.statusPlan.selectedOwnerType,
+          aiAgentId: routingPlan.target.aiAgentId,
+          aiAgentName: routingPlan.target.aiAgentName,
+          fallbackAgentId: routingPlan.fallback?.agentId ?? null,
+          fallbackSkillGroupId: routingPlan.fallback?.skillGroupId ?? null
+        },
+        decisionReason: routingPlan.trace.decision.reason,
+        candidates: [
+          ...routingPlan.trace.aiSelection.candidates,
+          ...routingPlan.trace.humanDispatch.candidates
+        ]
       });
-      await recordAgentPresenceActivity(trx, tenantId, agentId);
-      const conversation = await trx("conversations")
-        .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .select("customer_id", "current_case_id")
-        .first<{ customer_id: string; current_case_id: string | null } | undefined>();
-      if (!conversation) throw app.httpErrors.notFound("Conversation not found");
 
-      await ownershipService.applyTransition(trx, {
-        type: "release_to_queue",
-        tenantId,
-        conversationId,
-        customerId: conversation.customer_id,
-        caseId: conversation.current_case_id,
-        reason,
-        assignedAgentId: null,
-        conversationStatus: "queued"
-      });
+      let transitionType: string;
+      let toOwnerType: "ai" | "system";
+      let toOwnerId: string | null;
 
-      await trx("queue_assignments")
-        .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .update({
-          status: "pending",
-          assigned_agent_id: null,
-          handoff_required: true,
-          handoff_reason: reason,
-          updated_at: new Date()
+      if (routingPlan.target.aiAgentId) {
+        await ownershipService.applyTransition(trx, {
+          type: "activate_ai_owner",
+          tenantId,
+          conversationId,
+          customerId: before.customer_id,
+          caseId: before.current_case_id ?? routingContext.caseId,
+          aiAgentId: routingPlan.target.aiAgentId,
+          reason,
+          caseStatus: "in_progress",
+          conversationStatus: "open"
         });
+
+        await trx("queue_assignments")
+          .where({ tenant_id: tenantId, conversation_id: conversationId })
+          .update({
+            module_id: routingPlan.target.moduleId,
+            skill_group_id: routingPlan.target.skillGroupId,
+            department_id: routingPlan.target.departmentId,
+            team_id: routingPlan.target.teamId,
+            assigned_agent_id: null,
+            assigned_ai_agent_id: routingPlan.target.aiAgentId,
+            assignment_strategy: routingPlan.target.strategy,
+            priority: routingPlan.target.priority,
+            status: "pending",
+            assignment_reason: reason,
+            handoff_required: false,
+            handoff_reason: null,
+            updated_at: trx.fn.now()
+          });
+
+        await routingPlanStepService.record(trx, {
+          tenantId,
+          planId,
+          stepType: "agent_handoff_plan_applied",
+          status: "completed",
+          payload: {
+            outcome: "assigned_ai_owner",
+            aiAgentId: routingPlan.target.aiAgentId
+          }
+        });
+        transitionType = "human_to_ai";
+        toOwnerType = "ai";
+        toOwnerId = routingPlan.target.aiAgentId;
+      } else {
+        await ownershipService.applyTransition(trx, {
+          type: "release_to_queue",
+          tenantId,
+          conversationId,
+          customerId: before.customer_id,
+          caseId: before.current_case_id,
+          reason,
+          assignedAgentId: routingPlan.target.agentId ?? null,
+          conversationStatus: "queued"
+        });
+
+        await trx("queue_assignments")
+          .where({ tenant_id: tenantId, conversation_id: conversationId })
+          .update({
+            module_id: routingPlan.target.moduleId,
+            skill_group_id: routingPlan.target.skillGroupId,
+            department_id: routingPlan.target.departmentId,
+            team_id: routingPlan.target.teamId,
+            assigned_agent_id: routingPlan.target.agentId ?? null,
+            assigned_ai_agent_id: null,
+            assignment_strategy: routingPlan.target.strategy,
+            priority: routingPlan.target.priority,
+            status: routingPlan.target.agentId ? "assigned" : "pending",
+            assignment_reason: reason,
+            handoff_required: true,
+            handoff_reason: reason,
+            updated_at: trx.fn.now()
+          });
+
+        await routingPlanStepService.record(trx, {
+          tenantId,
+          planId,
+          stepType: "agent_handoff_plan_applied",
+          status: "completed",
+          payload: {
+            outcome: routingPlan.target.agentId ? "fallback_human_assigned" : "fallback_queue",
+            assignedAgentId: routingPlan.target.agentId ?? null
+          }
+        });
+        transitionType = "human_to_queue";
+        toOwnerType = "system";
+        toOwnerId = null;
+      }
 
       await trx("conversation_events").insert({
         tenant_id: tenantId,
@@ -796,7 +925,13 @@ export async function conversationRoutes(app: FastifyInstance) {
         event_type: "handoff_requested",
         actor_type: agentId ? "agent" : "system",
         actor_id: agentId ?? null,
-        payload: { reason }
+        payload: {
+          reason,
+          planId,
+          routedTo: routingPlan.target.aiAgentId ? "ai" : "queue",
+          aiAgentId: routingPlan.target.aiAgentId ?? null,
+          fallbackAgentId: routingPlan.target.agentId ?? null
+        }
       });
 
       const after = await trx("conversations")
@@ -806,28 +941,63 @@ export async function conversationRoutes(app: FastifyInstance) {
       await dispatchAuditService.recordTransition(trx, {
         tenantId,
         conversationId,
+        caseId: before.current_case_id,
         customerId: before.customer_id,
         executionId,
-        transitionType: "human_to_queue",
+        transitionType,
         actorType: agentId ? "agent" : "system",
         actorId: agentId ?? null,
         fromOwnerType: before.current_handler_type,
         fromOwnerId: before.current_handler_id,
         fromSegmentId: before.current_segment_id,
-        toOwnerType: "system",
-        toOwnerId: null,
+        toOwnerType,
+        toOwnerId,
         toSegmentId: after?.current_segment_id ?? null,
         reason
       });
+
+      return {
+        planId,
+        customerId: before.customer_id,
+        channelType: before.channel_type,
+        aiAgentId: routingPlan.target.aiAgentId,
+        fallbackAgentId: routingPlan.target.agentId ?? null,
+        queueStatus: routingPlan.target.aiAgentId ? "pending" : (routingPlan.target.agentId ? "assigned" : "pending")
+      };
     });
 
     const handoffAt = new Date().toISOString();
+
+    await cancelAssignmentAcceptTimeout(conversationId);
+    await cancelFollowUpTimeout(conversationId);
+
+    if (handoffResult.aiAgentId) {
+      await routingQueue.add("routing.required", {
+        tenantId,
+        planId: handoffResult.planId,
+        conversationId,
+        customerId: handoffResult.customerId,
+        channelType: handoffResult.channelType
+      }, {
+        removeOnComplete: 100,
+        removeOnFail: 50
+      });
+    } else if (["assigned", "pending"].includes(handoffResult.queueStatus)) {
+      await scheduleAssignmentAcceptTimeout(tenantId, conversationId, handoffResult.customerId);
+    }
 
     await emitConversationUpdatedSnapshot(db, tenantId, conversationId, {
       occurredAt: handoffAt
     });
 
-    return { success: true, handoffAt, reason };
+    return {
+      success: true,
+      handoffAt,
+      reason,
+      routedTo: handoffResult.aiAgentId ? "ai" : "queue",
+      aiAgentId: handoffResult.aiAgentId ?? null,
+      fallbackAgentId: handoffResult.fallbackAgentId ?? null
+    };
   });
 
   app.post("/api/conversations/:conversationId/assign", async (req) => {
