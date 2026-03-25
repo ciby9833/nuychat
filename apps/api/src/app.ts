@@ -17,14 +17,16 @@ import { conversationRoutes } from "./modules/conversation/conversation.routes.j
 import { closeDatabase } from "./infra/db/client.js";
 import { platformRoutes } from "./modules/platform/platform.routes.js";
 import { realtimeRoutes } from "./modules/realtime/realtime.routes.js";
-import { tenantCustomerIntelligenceRoutes } from "./modules/tenant/tenant-ai-knowledge.routes.js";
-import { tenantAdminRoutes } from "./modules/tenant/tenant-admin.routes.js";
-import { tenantCustomerSegmentRoutes } from "./modules/tenant/tenant-customer-segment.routes.js";
+import { aiAdminRoutes } from "./modules/ai-admin/index.js";
+import { adminGovernanceRoutes } from "./modules/admin-governance/index.js";
+import { adminRoutingRoutes } from "./modules/admin-routing/index.js";
+import { customerAdminRoutes } from "./modules/customer-admin/index.js";
+import { memoryAdminRoutes } from "./modules/memory-admin/index.js";
+import { opsWorkforceRoutes } from "./modules/ops-workforce/index.js";
+import { orgAdminRoutes } from "./modules/org-admin/index.js";
+import { qualityAdminRoutes } from "./modules/quality-admin/index.js";
+import { supervisorAdminRoutes } from "./modules/supervisor-admin/index.js";
 import { tenantContextPlugin } from "./modules/tenant/tenant.middleware.js";
-import { tenantOrgMemberRoutes } from "./modules/tenant/tenant-org-member.routes.js";
-import { tenantQualityRoutes } from "./modules/tenant/tenant-quality.routes.js";
-import { tenantMemoryObservabilityRoutes } from "./modules/tenant/tenant-memory-observability.routes.js";
-import { ticketRoutes } from "./modules/ticket/ticket.routes.js";
 import { uploadRoutes } from "./modules/upload/upload.routes.js";
 import { webchatRoutes } from "./modules/webchat/webchat.routes.js";
 
@@ -88,15 +90,17 @@ export async function buildApp() {
   await app.register(webchatRoutes);
   await app.register(uploadRoutes);
   await app.register(conversationRoutes);
-  await app.register(ticketRoutes);
   await app.register(agentRoutes);
   await app.register(channelAdminRoutes);
-  await app.register(tenantCustomerIntelligenceRoutes);
-  await app.register(tenantOrgMemberRoutes);
-  await app.register(tenantQualityRoutes);
-  await app.register(tenantMemoryObservabilityRoutes);
-  await app.register(tenantCustomerSegmentRoutes);
-  await app.register(tenantAdminRoutes);
+  await app.register(aiAdminRoutes);
+  await app.register(adminRoutingRoutes);
+  await app.register(opsWorkforceRoutes);
+  await app.register(supervisorAdminRoutes);
+  await app.register(adminGovernanceRoutes);
+  await app.register(orgAdminRoutes);
+  await app.register(qualityAdminRoutes);
+  await app.register(memoryAdminRoutes);
+  await app.register(customerAdminRoutes);
 
   app.addHook("onClose", async () => {
     await closeDatabase();

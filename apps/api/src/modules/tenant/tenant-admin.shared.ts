@@ -1,90 +1,3 @@
-import type { Knex } from "knex";
-
-export async function pickTenantAIConfig(
-  trx: Knex.Transaction,
-  tenantId: string
-): Promise<Record<string, unknown> | null> {
-  const row = await trx("ai_configs")
-    .select(
-      "config_id",
-      "name",
-      "provider",
-      "model",
-      "encrypted_api_key",
-      "quotas",
-      "is_default",
-      "is_active",
-      "created_at",
-      "updated_at"
-    )
-    .where({ tenant_id: tenantId })
-    .orderBy([{ column: "is_default", order: "desc" }, { column: "updated_at", order: "desc" }])
-    .first();
-  return row ?? null;
-}
-
-export function serializeAIConfigRow(cfg: Record<string, unknown>) {
-  const quotas = parseJsonObject(cfg.quotas);
-  const provider = String(cfg.provider ?? "openai");
-  const keyBag = parseAIConfigKeyBag(cfg.encrypted_api_key);
-  return {
-    config_id: String(cfg.config_id),
-    name: String(cfg.name ?? "AI Config"),
-    provider,
-    model_name: String(cfg.model ?? "gpt-4o-mini"),
-    temperature: toNumber(quotas.temperature, 0.4),
-    max_tokens: toNumber(quotas.maxTokens, 500),
-    system_prompt_override: typeof quotas.systemPromptOverride === "string" ? quotas.systemPromptOverride : null,
-    integrations: (quotas.integrations as Record<string, { endpoint?: string; apiKey?: string; timeout?: number }>) ?? {},
-    has_api_key: Boolean(readAIProviderApiKey(keyBag, normalizeProvider(provider))),
-    base_url: readAIProviderBaseUrl(quotas, normalizeProvider(provider)),
-    is_default: Boolean(cfg.is_default),
-    is_active: Boolean(cfg.is_active),
-    created_at: cfg.created_at,
-    updated_at: cfg.updated_at
-  };
-}
-
-export function normalizeProvider(
-  value: unknown
-): "openai" | "claude" | "gemini" | "deepseek" | "llama" | "kimi" | "qwen" | "private" {
-  const provider = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (
-    provider === "openai" ||
-    provider === "claude" ||
-    provider === "anthropic" ||
-    provider === "gemini" ||
-    provider === "deepseek" ||
-    provider === "llama" ||
-    provider === "ollama" ||
-    provider === "kimi" ||
-    provider === "kim" ||
-    provider === "qwen" ||
-    provider === "private" ||
-    provider === "private_model"
-  ) {
-    if (provider === "anthropic") return "claude";
-    if (provider === "ollama") return "llama";
-    if (provider === "kim") return "kimi";
-    if (provider === "private_model") return "private";
-    return provider;
-  }
-  return "openai";
-}
-
-export function defaultModelForProvider(
-  provider: "openai" | "claude" | "gemini" | "deepseek" | "llama" | "kimi" | "qwen" | "private"
-): string {
-  if (provider === "claude") return "claude-3-5-haiku-latest";
-  if (provider === "gemini") return "gemini-2.0-flash";
-  if (provider === "deepseek") return "deepseek-chat";
-  if (provider === "llama") return "llama3.1:8b";
-  if (provider === "kimi") return "moonshot-v1-8k";
-  if (provider === "qwen") return "qwen-plus";
-  if (provider === "private") return "private-model";
-  return "gpt-4o-mini";
-}
-
 export function normalizeNonEmptyString(input: unknown): string | null {
   if (typeof input !== "string") return null;
   const value = input.trim();
@@ -145,84 +58,6 @@ export function parseJsonNumberMap(value: unknown): Record<string, number> {
   return out;
 }
 
-export function parseAIConfigKeyBag(raw: unknown): Record<string, unknown> {
-  if (typeof raw !== "string" || raw.trim() === "") return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : { apiKey: raw };
-  } catch {
-    return { apiKey: raw };
-  }
-}
-
-export function readAIProviderApiKey(
-  keyBag: Record<string, unknown>,
-  provider: "openai" | "claude" | "gemini" | "deepseek" | "llama" | "kimi" | "qwen" | "private"
-): string | null {
-  const aliases = provider === "claude"
-    ? ["anthropicApiKey", "claudeApiKey", "apiKey"]
-    : provider === "llama"
-      ? ["ollamaApiKey", "llamaApiKey", "apiKey"]
-      : [`${provider}ApiKey`, "apiKey"];
-  for (const key of aliases) {
-    const value = keyBag[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-}
-
-export function setAIProviderApiKey(
-  keyBag: Record<string, unknown>,
-  provider: "openai" | "claude" | "gemini" | "deepseek" | "llama" | "kimi" | "qwen" | "private",
-  apiKey: string
-) {
-  const normalized = apiKey.trim();
-  if (!normalized) return;
-  const field = provider === "claude" ? "anthropicApiKey" : provider === "llama" ? "ollamaApiKey" : `${provider}ApiKey`;
-  keyBag[field] = normalized;
-  keyBag.apiKey = normalized;
-}
-
-export function readAIProviderBaseUrl(
-  quotas: Record<string, unknown>,
-  provider: "openai" | "claude" | "gemini" | "deepseek" | "llama" | "kimi" | "qwen" | "private"
-): string | null {
-  const integrations = quotas.integrations && typeof quotas.integrations === "object" && !Array.isArray(quotas.integrations)
-    ? (quotas.integrations as Record<string, unknown>)
-    : {};
-  const key = provider === "claude" ? "anthropic" : provider === "llama" ? "ollama" : provider;
-  const block = integrations[key];
-  if (!block || typeof block !== "object" || Array.isArray(block)) return null;
-  const baseUrl = (block as Record<string, unknown>).baseUrl;
-  return typeof baseUrl === "string" && baseUrl.trim() ? baseUrl.trim() : null;
-}
-
-export function setAIProviderBaseUrl(
-  quotas: Record<string, unknown>,
-  provider: "openai" | "claude" | "gemini" | "deepseek" | "llama" | "kimi" | "qwen" | "private",
-  baseUrl: string | null
-) {
-  const integrations = quotas.integrations && typeof quotas.integrations === "object" && !Array.isArray(quotas.integrations)
-    ? { ...(quotas.integrations as Record<string, unknown>) }
-    : {};
-  const key = provider === "claude" ? "anthropic" : provider === "llama" ? "ollama" : provider;
-  const existing = integrations[key];
-  const block = existing && typeof existing === "object" && !Array.isArray(existing)
-    ? { ...(existing as Record<string, unknown>) }
-    : {};
-
-  if (baseUrl && baseUrl.trim()) {
-    block.baseUrl = baseUrl.trim();
-    integrations[key] = block;
-  } else {
-    delete block.baseUrl;
-    if (Object.keys(block).length > 0) integrations[key] = block;
-    else delete integrations[key];
-  }
-
-  quotas.integrations = integrations;
-}
-
 export function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "23505";
 }
@@ -244,7 +79,7 @@ export function evaluateCustomerSegmentRule(
     tier?: string;
     tags?: Array<{ code: string }>;
     conversationCount?: number;
-    ticketCount?: number;
+    taskCount?: number;
     lastContactAt?: string | null;
     caseCount?: number;
     openCaseCount?: number;
@@ -276,8 +111,8 @@ export function evaluateCustomerSegmentRule(
     return false;
   }
 
-  const minTicketCount = Number(rule.minTicketCount ?? 0);
-  if (Number.isFinite(minTicketCount) && minTicketCount > 0 && (customer.ticketCount ?? 0) < minTicketCount) {
+  const minTaskCount = Number(rule.minTaskCount ?? 0);
+  if (Number.isFinite(minTaskCount) && minTaskCount > 0 && (customer.taskCount ?? 0) < minTaskCount) {
     return false;
   }
 

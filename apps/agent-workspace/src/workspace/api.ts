@@ -397,12 +397,39 @@ export function reopenConversation(
   );
 }
 
-// ─── Ticket API helpers ───────────────────────────────────────────────────────
+// ─── Task API helpers ─────────────────────────────────────────────────────────
 
 import type { Ticket, SkillExecuteResult, AiTrace, SkillSchema, Customer360Data } from "./types";
 
 export function listConversationTickets(conversationId: string, session: Session): Promise<{ tickets: Ticket[] }> {
-  return apiFetch<{ tickets: Ticket[] }>(`/api/conversations/${conversationId}/tickets`, session);
+  return apiFetch<{ tasks: Array<{
+    taskId: string;
+    taskType: string;
+    title: string;
+    source: string;
+    status: "queued" | "running" | "published" | "failed";
+    resultSummary: string | null;
+    createdAt: string;
+  }> }>(`/api/conversations/${conversationId}/tasks`, session).then((data) => ({
+    tickets: data.tasks.map((task) => ({
+      ticketId: task.taskId,
+      conversationId,
+      caseId: null,
+      title: task.title,
+      description: task.resultSummary ?? null,
+      status: task.status,
+      priority: "normal" as const,
+      assigneeId: null,
+      slaDeadlineAt: null,
+      slaStatus: "none" as const,
+      resolvedAt: task.status === "published" ? task.createdAt : null,
+      closedAt: task.status === "failed" ? task.createdAt : null,
+      createdByType: task.source,
+      createdById: null,
+      createdAt: task.createdAt,
+      updatedAt: task.createdAt
+    }))
+  }));
 }
 
 export function createConversationTicket(
@@ -410,7 +437,18 @@ export function createConversationTicket(
   input: { title: string; description?: string; priority?: string },
   session: Session
 ): Promise<Ticket> {
-  return apiPostJson<Ticket>(`/api/conversations/${conversationId}/tickets`, input as Record<string, unknown>, session);
+  return apiPostJson<{ queued: boolean }>(
+    `/api/conversations/${conversationId}/tasks`,
+    { title: input.title, note: input.description ?? "" },
+    session
+  ).then(async () => {
+    const data = await listConversationTickets(conversationId, session);
+    const latest = data.tickets[0];
+    if (!latest) {
+      throw new Error("Task queued but not yet visible");
+    }
+    return latest;
+  });
 }
 
 export function patchTicket(
@@ -418,7 +456,7 @@ export function patchTicket(
   input: { status?: string; priority?: string; assigneeId?: string | null; note?: string },
   session: Session
 ): Promise<Ticket> {
-  return apiPatchJson<Ticket>(`/api/tickets/${ticketId}`, input as Record<string, unknown>, session);
+  return Promise.reject(new Error(`Task updates are not supported: ${ticketId}:${input.status ?? ""}:${session.tenantId}`));
 }
 
 // ─── AI Trace helper ──────────────────────────────────────────────────────────

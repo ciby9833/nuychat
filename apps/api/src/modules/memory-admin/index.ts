@@ -2,15 +2,15 @@ import type { FastifyInstance } from "fastify";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
 import { runMemoryEvaluation, type MemoryEvalDatasetRow } from "../memory/memory-eval.service.js";
-import { attachTenantAdminGuard } from "./tenant-admin.auth.js";
-import { parseJsonObject, toIsoString } from "./tenant-admin.shared.js";
+import { attachTenantAdminGuard } from "../tenant/tenant-admin.auth.js";
+import { parseJsonObject, toIsoString } from "../tenant/tenant-admin.shared.js";
 
 function parseJsonArray<T>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[];
   if (typeof value === "string" && value.trim()) {
     try {
       const parsed = JSON.parse(value) as unknown;
-      return Array.isArray(parsed) ? parsed as T[] : [];
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
     } catch {
       return [];
     }
@@ -18,7 +18,7 @@ function parseJsonArray<T>(value: unknown): T[] {
   return [];
 }
 
-export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
+export async function memoryAdminRoutes(app: FastifyInstance) {
   attachTenantAdminGuard(app);
 
   app.get("/api/admin/memory/encoder-traces", async (req) => {
@@ -42,17 +42,7 @@ export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
           if (query.sourceKind?.trim()) qb.andWhere("source_kind", query.sourceKind.trim());
           if (query.status?.trim()) qb.andWhere("status", query.status.trim());
         })
-        .select(
-          "trace_id",
-          "customer_id",
-          "conversation_id",
-          "case_id",
-          "task_id",
-          "source_kind",
-          "status",
-          "metrics",
-          "created_at"
-        )
+        .select("trace_id", "customer_id", "conversation_id", "case_id", "task_id", "source_kind", "status", "metrics", "created_at")
         .orderBy("created_at", "desc")
         .limit(Math.max(1, Math.min(Number(query.limit ?? 50), 200)));
 
@@ -63,9 +53,7 @@ export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
         .first();
 
       return {
-        summary: {
-          recent7dCount: Number(summary?.cnt ?? 0)
-        },
+        summary: { recent7dCount: Number(summary?.cnt ?? 0) },
         items: rows.map((row) => ({
           traceId: row.trace_id,
           customerId: row.customer_id,
@@ -87,9 +75,7 @@ export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
     const { traceId } = req.params as { traceId: string };
 
     return withTenantTransaction(tenantId, async (trx) => {
-      const row = await trx("memory_encoder_traces")
-        .where({ tenant_id: tenantId, trace_id: traceId })
-        .first();
+      const row = await trx("memory_encoder_traces").where({ tenant_id: tenantId, trace_id: traceId }).first();
       if (!row) throw app.httpErrors.notFound("Memory encoder trace not found");
 
       return {
@@ -114,11 +100,13 @@ export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
   app.get("/api/admin/memory/eval-datasets", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+
     return withTenantTransaction(tenantId, async (trx) => {
       const rows = await trx("memory_eval_datasets")
         .where({ tenant_id: tenantId })
         .select("dataset_id", "name", "description", "sample_count", "created_at", "updated_at")
         .orderBy("created_at", "desc");
+
       return {
         items: rows.map((row) => ({
           datasetId: row.dataset_id,
@@ -135,11 +123,7 @@ export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
   app.post("/api/admin/memory/eval-datasets", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-    const body = req.body as {
-      name?: string;
-      description?: string | null;
-      rows?: MemoryEvalDatasetRow[];
-    };
+    const body = req.body as { name?: string; description?: string | null; rows?: MemoryEvalDatasetRow[] };
     const name = body.name?.trim();
     const rows = Array.isArray(body.rows) ? body.rows : [];
     if (!name) throw app.httpErrors.badRequest("name is required");
@@ -170,6 +154,7 @@ export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
   app.get("/api/admin/memory/eval-reports", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+
     return withTenantTransaction(tenantId, async (trx) => {
       const rows = await trx("memory_eval_reports as r")
         .leftJoin("memory_eval_datasets as d", function joinDataset() {
@@ -198,10 +183,9 @@ export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
     const { reportId } = req.params as { reportId: string };
+
     return withTenantTransaction(tenantId, async (trx) => {
-      const row = await trx("memory_eval_reports")
-        .where({ tenant_id: tenantId, report_id: reportId })
-        .first();
+      const row = await trx("memory_eval_reports").where({ tenant_id: tenantId, report_id: reportId }).first();
       if (!row) throw app.httpErrors.notFound("Memory eval report not found");
       return {
         reportId: row.report_id,
@@ -223,9 +207,7 @@ export async function tenantMemoryObservabilityRoutes(app: FastifyInstance) {
     const body = req.body as { name?: string };
 
     return withTenantTransaction(tenantId, async (trx) => {
-      const datasetRow = await trx("memory_eval_datasets")
-        .where({ tenant_id: tenantId, dataset_id: datasetId })
-        .first();
+      const datasetRow = await trx("memory_eval_datasets").where({ tenant_id: tenantId, dataset_id: datasetId }).first();
       if (!datasetRow) throw app.httpErrors.notFound("Memory eval dataset not found");
 
       const dataset = parseJsonArray<MemoryEvalDatasetRow>(datasetRow.dataset_payload);

@@ -86,7 +86,6 @@ export function DashboardPage() {
         onApplyTopRecommendedSkills={vm.applyTopRecommendedSkills}
         onSetPreferredSkills={vm.updatePreferredSkills}
         onCreateTicket={vm.doCreateTicket}
-        onPatchTicket={vm.doPatchTicket}
         onExecuteSkill={vm.doExecuteSkill}
       />
     </div>

@@ -15,7 +15,6 @@ import {
   unregisterSessionUpdater,
   listConversationTickets,
   createConversationTicket,
-  patchTicket as apiPatchTicket,
   executeSkill as apiExecuteSkill,
   listConversationAiTraces,
   listConversationSkillSchemas,
@@ -463,16 +462,6 @@ export function useWorkspaceDashboard() {
     socket.on("message.sent", handleMessageSentEvent);
     socket.on("message.updated", handleMessageUpdatedEvent);
 
-    socket.on("ticket.sla_warning", (ev: { ticketId: string; title: string; slaDeadlineAt: string }) => {
-      setViewHint(`⚠️ SLA 预警：工单「${ev.title}」即将超时！`);
-      window.setTimeout(() => setViewHint(""), 8000);
-    });
-
-    socket.on("ticket.sla_breached", (ev: { ticketId: string; title: string }) => {
-      setViewHint(`🔴 SLA 已超时：工单「${ev.title}」已违反 SLA！`);
-      window.setTimeout(() => setViewHint(""), 10000);
-    });
-
     return () => {
       socket.close();
     };
@@ -757,26 +746,22 @@ export function useWorkspaceDashboard() {
     }
   }, [loadConversations, loadDetail, postAgentActivity, selectedId, session]);
 
-  const doResolve = useCallback(async (closeLinkedTickets = false) => {
+  const doResolve = useCallback(async () => {
     if (!session || !selectedId) return;
     setActionLoading("resolve");
     try {
       await postAgentActivity("resolve", true);
-      await apiPost(`/api/conversations/${selectedId}/resolve`, { closeLinkedTickets }, session);
+      await apiPost(`/api/conversations/${selectedId}/resolve`, {}, session);
       await Promise.all([loadDetail(selectedId), loadConversations()]);
-      if (closeLinkedTickets) {
-        // Refresh tickets so the resolved statuses are visible immediately
-        await loadTickets(selectedId);
-      }
     } finally {
       setActionLoading(null);
     }
-  }, [loadConversations, loadDetail, loadTickets, postAgentActivity, selectedId, session]);
+  }, [loadConversations, loadDetail, postAgentActivity, selectedId, session]);
 
   // Note: explicit "reopen" is no longer surfaced in the UI.
   // Sending a message to a resolved conversation is sufficient — the outbound
   // worker transparently reactivates it and assigns it to the sending agent.
-  // The conversation is the chat thread; tickets (tasks) carry the work status.
+  // The conversation is the chat thread; async tasks carry execution history.
 
   const onSwitchTenant = useCallback(async (membershipId: string) => {
     if (!session || membershipId === session.membershipId) return;
@@ -840,7 +825,7 @@ export function useWorkspaceDashboard() {
     await updatePreferredSkills(top);
   }, [skillRecommendation, updatePreferredSkills]);
 
-  // ── Ticket handlers ──────────────────────────────────────────────────────────
+  // ── Task handlers ────────────────────────────────────────────────────────────
 
   const doCreateTicket = useCallback(
     async (input: { title: string; description?: string; priority?: string }) => {
@@ -854,15 +839,6 @@ export function useWorkspaceDashboard() {
       }
     },
     [selectedId, session]
-  );
-
-  const doPatchTicket = useCallback(
-    async (ticketId: string, update: { status?: string; priority?: string; note?: string }) => {
-      if (!session) return;
-      const updated = await apiPatchTicket(ticketId, update, session);
-      setTickets((prev) => prev.map((t) => (t.ticketId === ticketId ? updated : t)));
-    },
-    [session]
   );
 
   // ── Skill execute handler ────────────────────────────────────────────────────
@@ -938,7 +914,6 @@ export function useWorkspaceDashboard() {
     tickets,
     ticketLoading,
     doCreateTicket,
-    doPatchTicket,
     skillExecuting,
     lastSkillResult,
     doExecuteSkill,
@@ -969,7 +944,7 @@ function mapConversationRow(r: Record<string, unknown>): ConversationItem {
     customerTier: String(r.customer_tier ?? "standard"),
     customerRef: String(r.customer_ref ?? ""),
     customerTags: Array.isArray(r.customer_tags) ? (r.customer_tags as string[]) : [],
-    hasMyOpenTicket: Boolean(r.has_my_open_ticket)
+    hasMyOpenTicket: Boolean(r.has_pending_case_work ?? r.has_my_open_ticket)
   };
 }
 
@@ -1012,8 +987,7 @@ function shouldIncludeConversationInView(
   }
 
   if (view === "follow_up") {
-    // Task-centric view: server-side filtered to tickets assigned to me.
-    // Client-side: evict from list when my last open ticket is resolved.
+    // Follow-up view is now driven by pending case work owned by me.
     return Boolean(conversation.hasMyOpenTicket);
   }
 

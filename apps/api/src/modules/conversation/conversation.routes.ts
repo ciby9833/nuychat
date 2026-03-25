@@ -109,17 +109,12 @@ export async function conversationRoutes(app: FastifyInstance) {
           "asm.employee_no as assigned_agent_employee_no"
         )
         .select(trx.raw("coalesce(uc.unread_count, 0)::int as unread_count"))
-        // Task badge: true when the current agent has an open ticket on this
-        // conversation. Task ownership (ticket.assignee_id) is the correct lens —
-        // not conversation ownership — so agents only see badges for their own work.
         .select(trx.raw(`
-          EXISTS(
-            SELECT 1 FROM tickets t_badge
-            WHERE t_badge.conversation_id = c.conversation_id
-              AND t_badge.tenant_id = c.tenant_id
-              AND t_badge.status IN ('open', 'in_progress', 'pending_customer')
-              AND t_badge.assignee_id = ?
-          ) as has_my_open_ticket
+          (
+            cc.current_owner_type = 'agent'
+            AND cc.current_owner_id = ?
+            AND cc.status IN ('waiting_customer', 'waiting_internal')
+          ) as has_pending_case_work
         `, [agentId ?? null]))
         .where("c.tenant_id", tenantId);
 
@@ -142,17 +137,10 @@ export async function conversationRoutes(app: FastifyInstance) {
           .whereNot("cc.current_owner_id", agentId)
           .whereIn("c.status", ["human_active", "open", "queued"]);
       } else if (view === "follow_up" && agentId) {
-        // Follow-up view: conversations (any status, including resolved) that have
-        // at least one open ticket assigned to the current agent.
-        // This is the "my pending tasks" queue — helps agents track deferred work.
-        query.whereExists(
-          trx("tickets as t_fu")
-            .select(trx.raw("1"))
-            .whereRaw("t_fu.conversation_id = c.conversation_id")
-            .whereRaw("t_fu.tenant_id = c.tenant_id")
-            .whereIn("t_fu.status", ["open", "in_progress", "pending_customer"])
-            .where("t_fu.assignee_id", agentId)
-        );
+        query
+          .where("cc.current_owner_type", "agent")
+          .where("cc.current_owner_id", agentId)
+          .whereIn("cc.status", ["waiting_customer", "waiting_internal"]);
       } else {
         // view=all: show all conversations reserved for me, whether already
         // accepted by me or still waiting for my response.
@@ -516,7 +504,7 @@ export async function conversationRoutes(app: FastifyInstance) {
 
       if (!base) throw app.httpErrors.notFound("Conversation not found");
 
-      const [profile, latestInsight, historyRows, sentimentRows, customerTickets, memoryRows, stateRows, aiAnalysis] = await Promise.all([
+      const [profile, latestInsight, historyRows, sentimentRows, memoryRows, stateRows, aiAnalysis] = await Promise.all([
         getCustomerProfileRecord(trx, tenantId, base.customer_id),
         getConversationInsightRecord(trx, tenantId, conversationId),
         trx("conversation_cases as cc")
@@ -550,14 +538,6 @@ export async function conversationRoutes(app: FastifyInstance) {
           .select("cc.case_id", "cc.last_activity_at", "ci.sentiment as last_sentiment")
           .orderBy("cc.last_activity_at", "desc")
           .limit(10),
-        trx("tickets as t")
-          .join("conversation_cases as cc", function joinCase() {
-            this.on("cc.case_id", "=", "t.case_id").andOn("cc.tenant_id", "=", "t.tenant_id");
-          })
-          .where({ "t.tenant_id": tenantId, "cc.customer_id": base.customer_id })
-          .select("t.ticket_id", "t.case_id", "t.title", "t.status", "t.priority", "t.created_at")
-          .orderBy("t.created_at", "desc")
-          .limit(8),
         trx("customer_memory_units")
           .where({ tenant_id: tenantId, customer_id: base.customer_id, status: "active" })
           .where((builder) => {
@@ -655,14 +635,6 @@ export async function conversationRoutes(app: FastifyInstance) {
           updatedAt: toIsoString(row.updated_at as string)
         })),
         orderClues,
-        customerTickets: customerTickets.map((row) => ({
-          ticketId: row.ticket_id as string,
-          caseId: (row.case_id as string | null) ?? null,
-          title: row.title as string,
-          status: row.status as string,
-          priority: row.priority as string,
-          createdAt: toIsoString(row.created_at as string)
-        })),
         sentimentTrend: sentimentRows
           .map((row) => ({
             caseId: row.case_id as string,
@@ -1134,10 +1106,6 @@ export async function conversationRoutes(app: FastifyInstance) {
     const tenantId = auth.tenantId;
     const agentId = auth.agentId ?? undefined;
     const { conversationId } = req.params as { conversationId: string };
-    const body = (req.body as { closeLinkedTickets?: boolean }) ?? {};
-    const closeLinkedTickets = body.closeLinkedTickets === true;
-
-    let ticketsClosed = 0;
     let resolvedCustomerId = "";
     let resolvedCaseId: string | null = null;
 
@@ -1183,7 +1151,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         decisionType: "manual_transition",
         channelType: conversation.channel_type,
         channelId: conversation.channel_id,
-        decisionSummary: { toOwnerType: "system", toStatus: "resolved", closeLinkedTickets },
+        decisionSummary: { toOwnerType: "system", toStatus: "resolved" },
         decisionReason: "conversation-resolved"
       });
 
@@ -1238,7 +1206,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         toOwnerId: null,
         toSegmentId: null,
         reason: "conversation-resolved",
-        payload: { closeLinkedTickets }
+        payload: {}
       });
 
       // Auto-create CSAT survey scheduled for 10 minutes after resolve.
@@ -1267,36 +1235,6 @@ export async function conversationRoutes(app: FastifyInstance) {
           updated_at: trx.fn.now()
         });
 
-      // Optionally close all open tickets linked to this conversation
-      if (closeLinkedTickets) {
-        const openTickets = await trx("tickets")
-          .where({ tenant_id: tenantId, conversation_id: conversationId })
-          .whereIn("status", ["open", "in_progress", "pending_customer"])
-          .select("ticket_id", "status");
-
-        if (openTickets.length > 0) {
-          ticketsClosed = openTickets.length;
-          const now = new Date();
-
-          await trx("tickets")
-            .whereIn("ticket_id", openTickets.map((t: { ticket_id: string }) => t.ticket_id))
-            .update({ status: "resolved", resolved_at: now, updated_at: now });
-
-          // Append audit events for each closed ticket (append-only, no RLS needed via trx)
-          await trx("ticket_events").insert(
-            openTickets.map((t: { ticket_id: string; status: string }) => ({
-              tenant_id: tenantId,
-              ticket_id: t.ticket_id,
-              event_type: "status_changed",
-              from_value: t.status,
-              to_value: "resolved",
-              actor_type: agentId ? "agent" : "system",
-              actor_id: agentId ?? null,
-              metadata: JSON.stringify({ reason: "conversation_resolved" })
-            }))
-          );
-        }
-      }
     });
 
     const resolvedAt = new Date().toISOString();
@@ -1326,7 +1264,7 @@ export async function conversationRoutes(app: FastifyInstance) {
       }
     }).catch(() => null);
 
-    return { success: true, resolvedAt, ticketsClosed };
+    return { success: true, resolvedAt };
   });
 
   // ── POST /api/conversations/:conversationId/reopen ────────────────────────────

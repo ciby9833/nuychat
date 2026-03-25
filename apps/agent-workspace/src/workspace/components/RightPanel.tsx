@@ -14,25 +14,19 @@ import type {
 } from "../types";
 import { intentLabel, sentimentLabel, shortTime } from "../utils";
 
-// ─── SLA helpers ──────────────────────────────────────────────────────────────
-
-function slaBadge(t: Ticket): string {
-  if (t.slaStatus === "breached") return "🔴";
-  if (t.slaStatus === "warning") return "🟡";
-  if (t.slaStatus === "met") return "✅";
-  if (t.slaStatus === "ok") return "🟢";
-  return "";
-}
-
-function slaLabel(t: Ticket): string {
-  if (!t.slaDeadlineAt) return "";
-  const deadline = new Date(t.slaDeadlineAt);
-  const diffMs = deadline.getTime() - Date.now();
-  if (diffMs < 0) return "已超时";
-  const h = Math.floor(diffMs / 3600000);
-  const m = Math.floor((diffMs % 3600000) / 60000);
-  if (h > 0) return `剩 ${h}h ${m}m`;
-  return `剩 ${m}m`;
+function taskStatusLabel(status: Ticket["status"]): string {
+  switch (status) {
+    case "queued":
+      return "queued";
+    case "running":
+      return "running";
+    case "published":
+      return "done";
+    case "failed":
+      return "failed";
+    default:
+      return status;
+  }
 }
 
 // ─── Icon tab definitions ─────────────────────────────────────────────────────
@@ -42,7 +36,7 @@ const TABS: Array<{ key: RightTab; icon: string; label: string }> = [
   { key: "customer", icon: "👤", label: "客户" },
   { key: "copilot",  icon: "🤖", label: "AI" },
   { key: "skills",   icon: "⚡", label: "技能" },
-  { key: "orders",   icon: "📋", label: "工单" }
+  { key: "orders",   icon: "📋", label: "任务" }
 ];
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -64,7 +58,6 @@ type RightPanelProps = {
   onApplyTopRecommendedSkills: () => void;
   onSetPreferredSkills: (skills: string[]) => void;
   onCreateTicket: (input: { title: string; description?: string; priority?: string }) => Promise<void>;
-  onPatchTicket: (ticketId: string, update: { status?: string; priority?: string }) => Promise<void>;
   onExecuteSkill: (skillName: string, parameters: Record<string, unknown>) => Promise<void>;
 };
 
@@ -184,7 +177,6 @@ export function RightPanel(props: RightPanelProps) {
     onApplyTopRecommendedSkills,
     onSetPreferredSkills,
     onCreateTicket,
-    onPatchTicket,
     onExecuteSkill
   } = props;
 
@@ -196,15 +188,14 @@ export function RightPanel(props: RightPanelProps) {
   const [showTicketForm, setShowTicketForm] = useState(false);
   const [ticketTitle, setTicketTitle] = useState("");
   const [ticketDesc, setTicketDesc] = useState("");
-  const [ticketPriority, setTicketPriority] = useState("normal");
   const [ticketFormLoading, setTicketFormLoading] = useState(false);
 
   const handleCreateTicket = async () => {
     if (!ticketTitle.trim()) return;
     setTicketFormLoading(true);
     try {
-      await onCreateTicket({ title: ticketTitle.trim(), description: ticketDesc.trim() || undefined, priority: ticketPriority });
-      setTicketTitle(""); setTicketDesc(""); setTicketPriority("normal"); setShowTicketForm(false);
+      await onCreateTicket({ title: ticketTitle.trim(), description: ticketDesc.trim() || undefined, priority: "normal" });
+      setTicketTitle(""); setTicketDesc(""); setShowTicketForm(false);
     } finally {
       setTicketFormLoading(false);
     }
@@ -256,14 +247,14 @@ export function RightPanel(props: RightPanelProps) {
                   <div className="rp-block">{detail.caseSummary || "暂无事项摘要"}</div>
                 </div>
                 <div>
-                  <div className="rp-section-title">事项工单</div>
+                  <div className="rp-section-title">事项任务</div>
                   {tickets.length === 0 ? (
-                    <p className="rp-empty">当前事项暂无工单</p>
+                    <p className="rp-empty">当前事项暂无任务</p>
                   ) : (
                     <div className="rp-chips">
                       {tickets.map((ticket) => (
                         <span key={ticket.ticketId} className="rp-chip">
-                          {ticket.title} · {ticket.status}
+                          {ticket.title} · {taskStatusLabel(ticket.status)}
                         </span>
                       ))}
                     </div>
@@ -341,19 +332,6 @@ export function RightPanel(props: RightPanelProps) {
                   ))}
                 </div>
 
-                <p className="rp-section-title">历史工单</p>
-                {(customer360?.customerTickets ?? []).length === 0 && <p className="rp-empty">暂无历史工单</p>}
-                {(customer360?.customerTickets ?? []).slice(0, 6).map((t) => (
-                  <div key={t.ticketId} className="history-card">
-                    <div className="history-time">{t.title}</div>
-                    <div className="history-tags">
-                      {t.caseId && <span className="history-tag">事项 {t.caseId.slice(0, 8)}</span>}
-                      <span className="history-tag">{t.priority}</span>
-                      <span className="history-tag">{t.status}</span>
-                      <span className="history-tag">{new Date(t.createdAt).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
 
@@ -548,17 +526,17 @@ export function RightPanel(props: RightPanelProps) {
           </div>
         )}
 
-        {/* ── Orders / Tickets ── */}
+        {/* ── Orders / Tasks ── */}
         {rightTab === "orders" && (
           <div>
             <div className="section-action-row">
-              <p className="rp-section-title" style={{ margin: 0 }}>工单列表</p>
+              <p className="rp-section-title" style={{ margin: 0 }}>任务列表</p>
               <button
                 type="button"
                 className={`rp-outline-btn${showTicketForm ? " active" : ""}`}
                 onClick={() => setShowTicketForm((v) => !v)}
               >
-                {showTicketForm ? "取消" : "+ 创建工单"}
+                {showTicketForm ? "取消" : "+ 创建任务"}
               </button>
             </div>
 
@@ -566,7 +544,7 @@ export function RightPanel(props: RightPanelProps) {
               <div className="ticket-form">
                 <input
                   type="text"
-                  placeholder="工单标题 *"
+                  placeholder="任务标题 *"
                   value={ticketTitle}
                   onChange={(e) => setTicketTitle(e.target.value)}
                 />
@@ -576,12 +554,6 @@ export function RightPanel(props: RightPanelProps) {
                   onChange={(e) => setTicketDesc(e.target.value)}
                 />
                 <div className="ticket-form-footer">
-                  <select value={ticketPriority} onChange={(e) => setTicketPriority(e.target.value)}>
-                    <option value="urgent">🔴 紧急 (1h SLA)</option>
-                    <option value="high">🟠 高 (4h SLA)</option>
-                    <option value="normal">🟡 普通 (8h SLA)</option>
-                    <option value="low">🟢 低 (24h SLA)</option>
-                  </select>
                   <button
                     className="ticket-submit-btn"
                     disabled={ticketFormLoading || !ticketTitle.trim()}
@@ -604,31 +576,15 @@ export function RightPanel(props: RightPanelProps) {
               </>
             )}
 
-            {ticketLoading && <p className="rp-empty">加载工单中…</p>}
-            {!ticketLoading && tickets.length === 0 && <p className="rp-empty">暂无工单</p>}
+            {ticketLoading && <p className="rp-empty">加载任务中…</p>}
+            {!ticketLoading && tickets.length === 0 && <p className="rp-empty">暂无任务</p>}
 
             {tickets.map((t) => (
-              <div
-                key={t.ticketId}
-                className={`ticket-card${t.slaStatus === "breached" ? " breached" : t.slaStatus === "warning" ? " warning" : ""}`}
-              >
+              <div key={t.ticketId} className="ticket-card">
                 <div className="ticket-head">
-                  <span style={{ fontSize: 15 }}>{slaBadge(t)}</span>
                   <div className="ticket-info">
                     <p className="ticket-title">{t.title}</p>
-                    <p className="ticket-meta">{t.priority.toUpperCase()} · {t.status} · {slaLabel(t)}</p>
-                  </div>
-                  <div className="ticket-actions">
-                    {t.status !== "resolved" && t.status !== "closed" && (
-                      <button type="button" onClick={() => void onPatchTicket(t.ticketId, { status: "resolved" })}>
-                        解决
-                      </button>
-                    )}
-                    {t.status === "open" && (
-                      <button type="button" onClick={() => void onPatchTicket(t.ticketId, { status: "in_progress" })}>
-                        处理中
-                      </button>
-                    )}
+                    <p className="ticket-meta">{taskStatusLabel(t.status)} · {t.createdByType}</p>
                   </div>
                 </div>
                 {t.description && <p className="ticket-desc">{t.description}</p>}

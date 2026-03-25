@@ -279,7 +279,7 @@ export function TimelinePanel(props: TimelinePanelProps) {
   const [transferTargetId, setTransferTargetId] = useState("");
   const [transferReason, setTransferReason] = useState("");
 
-  const openTickets = tickets.filter((t) => !["resolved", "closed"].includes(t.status));
+  const openTickets = tickets.filter((t) => !["published", "failed"].includes(t.status));
   const isResolved = detail?.status === "resolved" || detail?.status === "closed";
   // Locked: another agent is actively handling this conversation right now.
   const isLockedByAnotherAgent = Boolean(detail && !isAssignedToMe && detail.status === "human_active");
@@ -605,10 +605,10 @@ export function TimelinePanel(props: TimelinePanelProps) {
       {/* Resolve confirmation bar */}
       {resolveConfirm && (
         <div className="resolve-confirm-bar">
-          <span className="rc-label">有 {openTickets.length} 个开放工单</span>
+          <span className="rc-label">有 {openTickets.length} 个未完成任务</span>
           <button onClick={() => { setResolveConfirm(false); void onResolve(false); }}>仅结束会话</button>
           <button className="danger" onClick={() => { setResolveConfirm(false); void onResolve(true); }}>
-            结束 + 关闭工单
+            结束会话
           </button>
           <button className="cancel" onClick={() => setResolveConfirm(false)}>取消</button>
         </div>

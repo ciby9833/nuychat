@@ -40,7 +40,7 @@ export function CustomersTab() {
     description?: string;
     tagsAny?: string;
     minConversationCount?: number;
-    minTicketCount?: number;
+    minTaskCount?: number;
     minCaseCount?: number;
     minOpenCaseCount?: number;
     daysSinceLastConversationGte?: number;
@@ -107,7 +107,7 @@ export function CustomersTab() {
     const rule: Record<string, unknown> = {};
     if (tagsAny.length > 0) rule.tagsAny = tagsAny;
     if (values.minConversationCount) rule.minConversationCount = values.minConversationCount;
-    if (values.minTicketCount) rule.minTicketCount = values.minTicketCount;
+    if (values.minTaskCount) rule.minTaskCount = values.minTaskCount;
     if (values.minCaseCount) rule.minCaseCount = values.minCaseCount;
     if (values.minOpenCaseCount) rule.minOpenCaseCount = values.minOpenCaseCount;
     if (values.daysSinceLastConversationGte) rule.daysSinceLastConversationGte = values.daysSinceLastConversationGte;
@@ -137,7 +137,7 @@ export function CustomersTab() {
       { title: "会话数", dataIndex: "conversationCount" },
       { title: "事项数", dataIndex: "caseCount" },
       { title: "进行中事项", dataIndex: "openCaseCount" },
-      { title: "工单数", dataIndex: "ticketCount" },
+      { title: "任务数", dataIndex: "taskCount" },
       { title: "最近联系", dataIndex: "lastContactAt", render: (v: string | null) => (v ? new Date(v).toLocaleString() : "-") },
       {
         title: "最近事项",
@@ -372,7 +372,7 @@ export function CustomersTab() {
           <Form.Item name="minConversationCount" label="最少会话数">
             <Input type="number" />
           </Form.Item>
-          <Form.Item name="minTicketCount" label="最少工单数">
+          <Form.Item name="minTaskCount" label="最少任务数">
             <Input type="number" />
           </Form.Item>
           <Form.Item name="minCaseCount" label="最少事项数">

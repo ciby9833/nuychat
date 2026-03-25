@@ -2,6 +2,7 @@ import { clearTenantSession, readTenantSession } from "./session";
 import type {
   AgentPresenceResponse,
   AgentShiftItem,
+  AIRuntimePolicy,
   AdminSession,
   AIConfig,
   AIConfigProfile,
@@ -16,6 +17,7 @@ import type {
   ModuleItem,
   DepartmentItem,
   IntegrationConfig,
+  PreReplyPolicySet,
   LoginResponse,
   MarketplaceCatalogSkill,
   MarketplaceGovernancePatchInput,
@@ -429,6 +431,17 @@ export function setDefaultTenantAIConfig(configId: string) {
 export function deleteTenantAIConfig(configId: string) {
   return api<{ deleted: boolean; config_id: string }>(`/api/admin/ai-configs/${configId}`, {
     method: "DELETE"
+  });
+}
+
+export function getTenantAIRuntimePolicy() {
+  return api<AIRuntimePolicy>("/api/admin/ai-runtime-policy");
+}
+
+export function patchTenantAIRuntimePolicy(input: { preReplyPolicies: PreReplyPolicySet }) {
+  return api<AIRuntimePolicy>("/api/admin/ai-runtime-policy", {
+    method: "PATCH",
+    body: JSON.stringify(input)
   });
 }
 

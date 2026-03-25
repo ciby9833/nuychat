@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
-import { attachTenantAdminGuard } from "./tenant-admin.auth.js";
+import { attachTenantAdminGuard } from "../tenant/tenant-admin.auth.js";
 import {
   evaluateCustomerSegmentRule,
   isUniqueViolation,
@@ -9,9 +9,9 @@ import {
   parseJsonObject,
   parseJsonStringArray,
   toIsoString
-} from "./tenant-admin.shared.js";
+} from "../tenant/tenant-admin.shared.js";
 
-export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
+export async function customerAdminRoutes(app: FastifyInstance) {
   attachTenantAdminGuard(app);
 
   app.get("/api/admin/customers/tags", async (req) => {
@@ -143,13 +143,7 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
   app.post("/api/admin/customers/segments", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-    const body = req.body as {
-      code?: string;
-      name?: string;
-      description?: string;
-      rule?: Record<string, unknown>;
-      isActive?: boolean;
-    };
+    const body = req.body as { code?: string; name?: string; description?: string; rule?: Record<string, unknown>; isActive?: boolean };
     const code = body.code?.trim().toLowerCase();
     const name = body.name?.trim();
     if (!code || !name) throw app.httpErrors.badRequest("code and name are required");
@@ -188,12 +182,7 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
     const { segmentId } = req.params as { segmentId: string };
-    const body = req.body as {
-      name?: string;
-      description?: string;
-      rule?: Record<string, unknown>;
-      isActive?: boolean;
-    };
+    const body = req.body as { name?: string; description?: string; rule?: Record<string, unknown>; isActive?: boolean };
 
     return withTenantTransaction(tenantId, async (trx) => {
       const updates: Record<string, unknown> = { updated_at: trx.fn.now() };
@@ -225,22 +214,13 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
 
-    const query = req.query as {
-      search?: string;
-      tagId?: string;
-      segmentId?: string;
-      page?: string;
-      pageSize?: string;
-    };
+    const query = req.query as { search?: string; tagId?: string; segmentId?: string; page?: string; pageSize?: string };
     const page = Math.max(1, Number(query.page ?? 1));
     const pageSize = Math.min(100, Math.max(10, Number(query.pageSize ?? 20)));
 
     return withTenantTransaction(tenantId, async (trx) => {
       const segmentRule = query.segmentId
-        ? await trx("customer_segments")
-            .where({ tenant_id: tenantId, segment_id: query.segmentId, is_active: true })
-            .select("rule_json")
-            .first<{ rule_json: unknown }>()
+        ? await trx("customer_segments").where({ tenant_id: tenantId, segment_id: query.segmentId, is_active: true }).select("rule_json").first<{ rule_json: unknown }>()
         : null;
 
       const baseRows = await trx("customers as cu")
@@ -248,31 +228,18 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
         .modify((qb) => {
           if (query.search?.trim()) {
             const like = `%${query.search.trim()}%`;
-            qb.andWhere((scope) =>
-              scope.whereILike("cu.display_name", like).orWhereILike("cu.external_ref", like)
-            );
+            qb.andWhere((scope) => scope.whereILike("cu.display_name", like).orWhereILike("cu.external_ref", like));
           }
         })
-        .select(
-          "cu.customer_id",
-          "cu.display_name",
-          "cu.external_ref",
-          "cu.primary_channel",
-          "cu.tier",
-          "cu.language",
-          "cu.tags",
-          "cu.updated_at"
-        )
+        .select("cu.customer_id", "cu.display_name", "cu.external_ref", "cu.primary_channel", "cu.tier", "cu.language", "cu.tags", "cu.updated_at")
         .orderBy("cu.updated_at", "desc")
         .limit(pageSize * 3)
         .offset((page - 1) * pageSize);
 
       const customerIds = baseRows.map((row: Record<string, unknown>) => row.customer_id as string);
-      if (customerIds.length === 0) {
-        return { page, pageSize, total: 0, items: [] };
-      }
+      if (customerIds.length === 0) return { page, pageSize, total: 0, items: [] };
 
-      const [tagMapRows, conversationStatsRows, ticketStatsRows, caseStatsRows, latestCaseRows] = await Promise.all([
+      const [tagMapRows, conversationStatsRows, taskStatsRows, caseStatsRows, latestCaseRows] = await Promise.all([
         trx("customer_tag_map as ctm")
           .join("customer_tags as ct", function joinTag() {
             this.on("ct.tag_id", "=", "ctm.tag_id").andOn("ct.tenant_id", "=", "ctm.tenant_id");
@@ -288,16 +255,12 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
           .select("customer_id")
           .count<{ conv_count: string }>("conversation_id as conv_count")
           .max<{ last_contact_at: string }>("updated_at as last_contact_at"),
-        trx("tickets as t")
-          .join("conversations as c", function joinConversation() {
-            this.on("c.conversation_id", "=", "t.conversation_id").andOn("c.tenant_id", "=", "t.tenant_id");
-          })
-          .where("t.tenant_id", tenantId)
-          .whereIn("c.customer_id", customerIds)
-          .groupBy("c.customer_id")
-          .select("c.customer_id")
-          .count<{ ticket_count: string }>("t.ticket_id as ticket_count")
-        ,
+        trx("async_tasks")
+          .where("tenant_id", tenantId)
+          .whereIn("customer_id", customerIds)
+          .groupBy("customer_id")
+          .select("customer_id")
+          .count<{ task_count: string }>("task_id as task_count"),
         trx("conversation_cases as cc")
           .join("conversations as c", function joinConversation() {
             this.on("c.conversation_id", "=", "cc.conversation_id").andOn("c.tenant_id", "=", "cc.tenant_id");
@@ -332,12 +295,7 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
       const tagsByCustomer = tagMapRows.reduce<Record<string, Array<{ tagId: string; code: string; name: string; color: string }>>>((acc, row) => {
         const key = row.customer_id as string;
         if (!acc[key]) acc[key] = [];
-        acc[key]!.push({
-          tagId: row.tag_id as string,
-          code: row.code as string,
-          name: row.name as string,
-          color: row.color as string
-        });
+        acc[key]!.push({ tagId: row.tag_id as string, code: row.code as string, name: row.name as string, color: row.color as string });
         return acc;
       }, {});
 
@@ -349,16 +307,12 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
         return acc;
       }, {});
 
-      const ticketStatsByCustomer = ticketStatsRows.reduce<Record<string, { ticketCount: number }>>((acc, row) => {
-        acc[row.customer_id as string] = {
-          ticketCount: Number((row as { ticket_count?: string }).ticket_count ?? 0)
-        };
+      const taskStatsByCustomer = taskStatsRows.reduce<Record<string, { taskCount: number }>>((acc, row) => {
+        acc[row.customer_id as string] = { taskCount: Number((row as { task_count?: string }).task_count ?? 0) };
         return acc;
       }, {});
 
-      const caseStatsByCustomer = caseStatsRows.reduce<
-        Record<string, { caseCount: number; openCaseCount: number; resolvedCaseCount: number; lastCaseAt: string | null }>
-      >((acc, row) => {
+      const caseStatsByCustomer = caseStatsRows.reduce<Record<string, { caseCount: number; openCaseCount: number; resolvedCaseCount: number; lastCaseAt: string | null }>>((acc, row) => {
         acc[row.customer_id as string] = {
           caseCount: Number((row as { case_count?: string }).case_count ?? 0),
           openCaseCount: Number((row as { open_case_count?: string }).open_case_count ?? 0),
@@ -371,28 +325,20 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
       const latestCaseByCustomer = latestCaseRows.reduce<Record<string, { lastCaseId: string | null; lastCaseTitle: string | null }>>((acc, row) => {
         const customerId = row.customer_id as string;
         if (!acc[customerId]) {
-          acc[customerId] = {
-            lastCaseId: (row.case_id as string | undefined) ?? null,
-            lastCaseTitle: (row.title as string | undefined) ?? null
-          };
+          acc[customerId] = { lastCaseId: (row.case_id as string | undefined) ?? null, lastCaseTitle: (row.title as string | undefined) ?? null };
         }
         return acc;
       }, {});
 
       let items = baseRows.map((row: Record<string, unknown>) => {
-        const cid = row.customer_id as string;
-        const tags = tagsByCustomer[cid] ?? [];
-        const convStats = convStatsByCustomer[cid] ?? { conversationCount: 0, lastContactAt: null };
-        const ticketStats = ticketStatsByCustomer[cid] ?? { ticketCount: 0 };
-        const caseStats = caseStatsByCustomer[cid] ?? {
-          caseCount: 0,
-          openCaseCount: 0,
-          resolvedCaseCount: 0,
-          lastCaseAt: null
-        };
-        const latestCase = latestCaseByCustomer[cid] ?? { lastCaseId: null, lastCaseTitle: null };
+        const customerId = row.customer_id as string;
+        const tags = tagsByCustomer[customerId] ?? [];
+        const convStats = convStatsByCustomer[customerId] ?? { conversationCount: 0, lastContactAt: null };
+        const taskStats = taskStatsByCustomer[customerId] ?? { taskCount: 0 };
+        const caseStats = caseStatsByCustomer[customerId] ?? { caseCount: 0, openCaseCount: 0, resolvedCaseCount: 0, lastCaseAt: null };
+        const latestCase = latestCaseByCustomer[customerId] ?? { lastCaseId: null, lastCaseTitle: null };
         return {
-          customerId: cid,
+          customerId,
           name: row.display_name,
           reference: row.external_ref,
           channel: row.primary_channel,
@@ -400,7 +346,7 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
           language: row.language,
           tags,
           conversationCount: convStats.conversationCount,
-          ticketCount: ticketStats.ticketCount,
+          taskCount: taskStats.taskCount,
           lastContactAt: convStats.lastContactAt ? toIsoString(convStats.lastContactAt) : null,
           caseCount: caseStats.caseCount,
           openCaseCount: caseStats.openCaseCount,
@@ -413,28 +359,15 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
       });
 
       if (query.tagId) {
-        items = items.filter((item: { tags: Array<{ tagId: string }> }) => item.tags.some((tag: { tagId: string }) => tag.tagId === query.tagId));
+        items = items.filter((item: { tags: Array<{ tagId: string }> }) => item.tags.some((tag) => tag.tagId === query.tagId));
       }
 
       if (segmentRule?.rule_json) {
         const rule = parseJsonObject(segmentRule.rule_json);
-        items = items.filter((item: {
-          tier?: string;
-          tags?: Array<{ code: string }>;
-          conversationCount?: number;
-          ticketCount?: number;
-          lastContactAt?: string | null;
-          language?: string;
-          channel?: string;
-        }) => evaluateCustomerSegmentRule(item, rule));
+        items = items.filter((item) => evaluateCustomerSegmentRule(item, rule));
       }
 
-      return {
-        page,
-        pageSize,
-        total: items.length,
-        items: items.slice(0, pageSize)
-      };
+      return { page, pageSize, total: items.length, items: items.slice(0, pageSize) };
     });
   });
 
@@ -452,39 +385,25 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
 
       if (tagIds.length === 0) {
         await trx("customer_tag_map").where({ tenant_id: tenantId, customer_id: customerId }).del();
-        await trx("customers").where({ tenant_id: tenantId, customer_id: customerId }).update({
-          tags: JSON.stringify([]),
-          updated_at: trx.fn.now()
-        });
+        await trx("customers").where({ tenant_id: tenantId, customer_id: customerId }).update({ tags: JSON.stringify([]), updated_at: trx.fn.now() });
         return { customerId, updated: true, tags: [] as string[] };
       }
 
-      const validTags = await trx("customer_tags")
-        .where({ tenant_id: tenantId, is_active: true })
-        .whereIn("tag_id", tagIds)
-        .select("tag_id", "code");
-      if (validTags.length !== tagIds.length) {
-        throw app.httpErrors.badRequest("tagIds contains unknown/disabled tag");
-      }
+      const validTags = await trx("customer_tags").where({ tenant_id: tenantId, is_active: true }).whereIn("tag_id", tagIds).select("tag_id", "code");
+      if (validTags.length !== tagIds.length) throw app.httpErrors.badRequest("tagIds contains unknown/disabled tag");
 
       await trx("customer_tag_map").where({ tenant_id: tenantId, customer_id: customerId }).del();
-      await trx("customer_tag_map").insert(
-        validTags.map((tag) => ({
-          tenant_id: tenantId,
-          customer_id: customerId,
-          tag_id: tag.tag_id as string,
-          source: body.source ?? "manual",
-          note: body.note?.trim() || null,
-          assigned_by_identity_id: actorIdentityId
-        }))
-      );
+      await trx("customer_tag_map").insert(validTags.map((tag) => ({
+        tenant_id: tenantId,
+        customer_id: customerId,
+        tag_id: tag.tag_id as string,
+        source: body.source ?? "manual",
+        note: body.note?.trim() || null,
+        assigned_by_identity_id: actorIdentityId
+      })));
 
       const tagCodes = validTags.map((row) => String(row.code));
-      await trx("customers").where({ tenant_id: tenantId, customer_id: customerId }).update({
-        tags: JSON.stringify(tagCodes),
-        updated_at: trx.fn.now()
-      });
-
+      await trx("customers").where({ tenant_id: tenantId, customer_id: customerId }).update({ tags: JSON.stringify(tagCodes), updated_at: trx.fn.now() });
       return { customerId, updated: true, tags: tagCodes };
     });
   });
@@ -515,12 +434,10 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
         applyTagId = tag.tag_id;
       }
 
-      const customers = await trx("customers")
-        .where({ tenant_id: tenantId })
-        .select("customer_id", "display_name", "external_ref", "primary_channel", "tier", "language", "tags", "updated_at");
-
+      const customers = await trx("customers").where({ tenant_id: tenantId }).select("customer_id", "display_name", "external_ref", "primary_channel", "tier", "language", "tags", "updated_at");
       const customerIds = customers.map((row: Record<string, unknown>) => row.customer_id as string);
-      const [convStatsRows, ticketStatsRows, caseStatsRows] = await Promise.all([
+
+      const [convStatsRows, taskStatsRows, caseStatsRows] = await Promise.all([
         trx("conversations")
           .where("tenant_id", tenantId)
           .whereIn("customer_id", customerIds)
@@ -528,16 +445,12 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
           .select("customer_id")
           .count<{ conv_count: string }>("conversation_id as conv_count")
           .max<{ last_contact_at: string }>("updated_at as last_contact_at"),
-        trx("tickets as t")
-          .join("conversations as c", function joinConversation() {
-            this.on("c.conversation_id", "=", "t.conversation_id").andOn("c.tenant_id", "=", "t.tenant_id");
-          })
-          .where("t.tenant_id", tenantId)
-          .whereIn("c.customer_id", customerIds)
-          .groupBy("c.customer_id")
-          .select("c.customer_id")
-          .count<{ ticket_count: string }>("t.ticket_id as ticket_count")
-        ,
+        trx("async_tasks")
+          .where("tenant_id", tenantId)
+          .whereIn("customer_id", customerIds)
+          .groupBy("customer_id")
+          .select("customer_id")
+          .count<{ task_count: string }>("task_id as task_count"),
         trx("conversation_cases as cc")
           .join("conversations as c", function joinConversation() {
             this.on("c.conversation_id", "=", "cc.conversation_id").andOn("c.tenant_id", "=", "cc.tenant_id");
@@ -547,11 +460,10 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
           .groupBy("c.customer_id")
           .select("c.customer_id")
           .count<{ case_count: string }>("cc.case_id as case_count")
-          .count<{ open_case_count: string }>(
-            trx.raw("case when cc.status in ('open', 'in_progress') then 1 end as open_case_count")
-          )
+          .count<{ open_case_count: string }>(trx.raw("case when cc.status in ('open', 'in_progress') then 1 end as open_case_count"))
           .max<{ last_case_at: string }>("cc.last_activity_at as last_case_at")
       ]) as unknown as [Array<Record<string, unknown>>, Array<Record<string, unknown>>, Array<Record<string, unknown>>];
+
       const convStatsByCustomer = convStatsRows.reduce<Record<string, { conversationCount: number; lastContactAt: string | null }>>((acc, row) => {
         acc[row.customer_id as string] = {
           conversationCount: Number((row as { conv_count?: string }).conv_count ?? 0),
@@ -559,10 +471,12 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
         };
         return acc;
       }, {});
-      const ticketStatsByCustomer = ticketStatsRows.reduce<Record<string, { ticketCount: number }>>((acc, row) => {
-        acc[row.customer_id as string] = { ticketCount: Number((row as { ticket_count?: string }).ticket_count ?? 0) };
+
+      const taskStatsByCustomer = taskStatsRows.reduce<Record<string, { taskCount: number }>>((acc, row) => {
+        acc[row.customer_id as string] = { taskCount: Number((row as { task_count?: string }).task_count ?? 0) };
         return acc;
       }, {});
+
       const caseStatsByCustomer = caseStatsRows.reduce<Record<string, { caseCount: number; openCaseCount: number; lastCaseAt: string | null }>>((acc, row) => {
         acc[row.customer_id as string] = {
           caseCount: Number((row as { case_count?: string }).case_count ?? 0),
@@ -574,24 +488,23 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
 
       const rule = parseJsonObject(segment.rule_json);
       const matched = customers.filter((row: Record<string, unknown>) => {
-        const cid = row.customer_id as string;
-        const candidate = {
-          customerId: cid,
+        const customerId = row.customer_id as string;
+        return evaluateCustomerSegmentRule({
+          customerId,
           name: row.display_name as string | null,
           reference: row.external_ref as string,
           channel: row.primary_channel as string,
           tier: row.tier as string,
           language: row.language as string,
           tags: parseJsonStringArray(row.tags).map((code) => ({ tagId: code, code, name: code, color: "#1677ff" })),
-          conversationCount: convStatsByCustomer[cid]?.conversationCount ?? 0,
-          ticketCount: ticketStatsByCustomer[cid]?.ticketCount ?? 0,
-          lastContactAt: convStatsByCustomer[cid]?.lastContactAt ? toIsoString(convStatsByCustomer[cid]!.lastContactAt!) : null,
-          caseCount: caseStatsByCustomer[cid]?.caseCount ?? 0,
-          openCaseCount: caseStatsByCustomer[cid]?.openCaseCount ?? 0,
-          lastCaseAt: caseStatsByCustomer[cid]?.lastCaseAt ? toIsoString(caseStatsByCustomer[cid]!.lastCaseAt!) : null,
+          conversationCount: convStatsByCustomer[customerId]?.conversationCount ?? 0,
+          taskCount: taskStatsByCustomer[customerId]?.taskCount ?? 0,
+          lastContactAt: convStatsByCustomer[customerId]?.lastContactAt ? toIsoString(convStatsByCustomer[customerId]!.lastContactAt!) : null,
+          caseCount: caseStatsByCustomer[customerId]?.caseCount ?? 0,
+          openCaseCount: caseStatsByCustomer[customerId]?.openCaseCount ?? 0,
+          lastCaseAt: caseStatsByCustomer[customerId]?.lastCaseAt ? toIsoString(caseStatsByCustomer[customerId]!.lastCaseAt!) : null,
           updatedAt: toIsoString(row.updated_at as string)
-        };
-        return evaluateCustomerSegmentRule(candidate, rule);
+        }, rule);
       });
 
       if (applyTagId && applyTagCode) {
@@ -613,20 +526,13 @@ export async function tenantCustomerSegmentRoutes(app: FastifyInstance) {
               updated_at: trx.fn.now()
             });
 
-          const currentTags = new Set(parseJsonStringArray(customers.find((c) => c.customer_id === customer.customerId)?.tags));
+          const currentTags = new Set(parseJsonStringArray(customers.find((item) => item.customer_id === customer.customerId)?.tags));
           currentTags.add(applyTagCode);
-          await trx("customers")
-            .where({ tenant_id: tenantId, customer_id: customer.customerId })
-            .update({ tags: JSON.stringify(Array.from(currentTags)), updated_at: trx.fn.now() });
+          await trx("customers").where({ tenant_id: tenantId, customer_id: customer.customerId }).update({ tags: JSON.stringify(Array.from(currentTags)), updated_at: trx.fn.now() });
         }
       }
 
-      return {
-        segmentId,
-        matchedCount: matched.length,
-        appliedTagId: applyTagId,
-        applied: Boolean(applyTagId)
-      };
+      return { segmentId, matchedCount: matched.length, appliedTagId: applyTagId, applied: Boolean(applyTagId) };
     });
   });
 }

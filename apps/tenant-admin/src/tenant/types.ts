@@ -47,6 +47,23 @@ export type IntegrationConfig = {
   timeout?: number;
 };
 
+export type PreReplyPolicyRule = {
+  ruleId: string;
+  name: string;
+  enabled: boolean;
+  requiredSkills: string[];
+  intents: string[];
+  keywords: string[];
+  onMissing: "handoff" | "defer";
+  reason: string | null;
+  augmentPreferredSkills: boolean;
+};
+
+export type PreReplyPolicySet = {
+  enabled: boolean;
+  rules: PreReplyPolicyRule[];
+};
+
 export type AIConfig = {
   config_id: string;
   name?: string;
@@ -70,6 +87,14 @@ export type AIConfigProfile = AIConfig & {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type AIRuntimePolicy = {
+  policy_id: string | null;
+  tenant_id: string;
+  pre_reply_policies: PreReplyPolicySet;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 export type TenantAIAgent = {
@@ -725,7 +750,7 @@ export type CustomerListItem = {
   language: string;
   tags: Array<{ tagId: string; code: string; name: string; color: string }>;
   conversationCount: number;
-  ticketCount: number;
+  taskCount: number;
   lastContactAt: string | null;
   caseCount: number;
   openCaseCount: number;
@@ -913,14 +938,10 @@ export type DailyReport = {
   events: DailyReportRow[];
   summary: {
     distinctCasesTouched: number;
-    ticketCasesCreated: number;
-    ticketCasesResolved: number;
     conversationsStarted: number;
     messagesReceived: number;
     messagesSent: number;
     skillsExecuted: number;
-    ticketsCreated: number;
-    ticketsResolved: number;
     conversationsResolved: number;
     totalEvents: number;
   };

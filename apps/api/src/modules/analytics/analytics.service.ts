@@ -14,8 +14,6 @@ export type AnalyticsEventType =
   | "message_received"
   | "message_sent"
   | "skill_executed"
-  | "ticket_created"
-  | "ticket_resolved"
   | "conversation_resolved";
 
 export interface AnalyticsEvent {
@@ -76,14 +74,10 @@ export interface DailyReport {
   events: DailyReportRow[];
   summary: {
     distinctCasesTouched: number;
-    ticketCasesCreated: number;
-    ticketCasesResolved: number;
     conversationsStarted: number;
     messagesReceived: number;
     messagesSent: number;
     skillsExecuted: number;
-    ticketsCreated: number;
-    ticketsResolved: number;
     conversationsResolved: number;
     totalEvents: number;
   };
@@ -100,14 +94,10 @@ export async function getDailyReport(tenantId: string, date: string): Promise<Da
     events: [],
     summary: {
       distinctCasesTouched: 0,
-      ticketCasesCreated: 0,
-      ticketCasesResolved: 0,
       conversationsStarted: 0,
       messagesReceived: 0,
       messagesSent: 0,
       skillsExecuted: 0,
-      ticketsCreated: 0,
-      ticketsResolved: 0,
       conversationsResolved: 0,
       totalEvents: 0
     }
@@ -136,9 +126,7 @@ export async function getDailyReport(tenantId: string, date: string): Promise<Da
       client.query({
         query: `
           SELECT
-            uniqExactIf(JSONExtractString(payload, 'caseId'), JSONExtractString(payload, 'caseId') != '') AS distinctCasesTouched,
-            uniqExactIf(JSONExtractString(payload, 'caseId'), event_type = 'ticket_created' AND JSONExtractString(payload, 'caseId') != '') AS ticketCasesCreated,
-            uniqExactIf(JSONExtractString(payload, 'caseId'), event_type = 'ticket_resolved' AND JSONExtractString(payload, 'caseId') != '') AS ticketCasesResolved
+            uniqExactIf(JSONExtractString(payload, 'caseId'), JSONExtractString(payload, 'caseId') != '') AS distinctCasesTouched
           FROM conversation_events
           WHERE tenant_id = {tenantId:String}
             AND toDate(occurred_at) = {date:Date}
@@ -151,8 +139,6 @@ export async function getDailyReport(tenantId: string, date: string): Promise<Da
     const rows = (await result.json()) as DailyReportRow[];
     const caseSummaryRows = (await caseSummaryResult.json()) as Array<{
       distinctCasesTouched?: number | string;
-      ticketCasesCreated?: number | string;
-      ticketCasesResolved?: number | string;
     }>;
     const caseSummary = caseSummaryRows[0] ?? {};
 
@@ -164,14 +150,10 @@ export async function getDailyReport(tenantId: string, date: string): Promise<Da
       events: rows,
       summary: {
         distinctCasesTouched: Number(caseSummary.distinctCasesTouched ?? 0),
-        ticketCasesCreated: Number(caseSummary.ticketCasesCreated ?? 0),
-        ticketCasesResolved: Number(caseSummary.ticketCasesResolved ?? 0),
         conversationsStarted: Number(get("conversation_started")),
         messagesReceived: Number(get("message_received")),
         messagesSent: Number(get("message_sent")),
         skillsExecuted: Number(get("skill_executed")),
-        ticketsCreated: Number(get("ticket_created")),
-        ticketsResolved: Number(get("ticket_resolved")),
         conversationsResolved: Number(get("conversation_resolved")),
         totalEvents: rows.reduce((s, r) => s + Number(r.count), 0)
       }

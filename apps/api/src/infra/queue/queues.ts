@@ -6,10 +6,7 @@ export const inboundQueue = new Queue("inbound", { connection: redisConnection }
 export const outboundQueue = new Queue("outbound", { connection: redisConnection });
 export const analyticsQueue = new Queue("analytics", { connection: redisConnection });
 export const routingQueue = new Queue("routing", { connection: redisConnection });
-export const slaQueue = new Queue("sla", { connection: redisConnection });
-export const taskSchedulerQueue = new Queue("task-scheduler", { connection: redisConnection });
 export const taskEngineQueue = new Queue("task-engine", { connection: redisConnection });
-export const taskPublisherQueue = new Queue("task-publisher", { connection: redisConnection });
 export const customerProfileRefreshQueue = new Queue("customer-profile-refresh", { connection: redisConnection });
 export const conversationTimeoutQueue = new Queue("conversation-timeout", { connection: redisConnection });
 
@@ -56,15 +53,6 @@ export type RoutingJobPayload = {
   channelType: string;
 };
 
-export type SlaJobPayload = {
-  tenantId: string;
-  ticketId: string;
-  /** "warning" fires ~1 h before deadline; "breach" fires at deadline */
-  alertType: "warning" | "breach";
-  /** ISO string of the SLA deadline */
-  slaDeadlineAt: string;
-};
-
 export type TaskScheduleJobPayload = {
   tenantId: string;
   customerId?: string | null;
@@ -80,11 +68,6 @@ export type TaskScheduleJobPayload = {
 };
 
 export type TaskEngineJobPayload = {
-  tenantId: string;
-  taskId: string;
-};
-
-export type TaskPublisherJobPayload = {
   tenantId: string;
   taskId: string;
 };

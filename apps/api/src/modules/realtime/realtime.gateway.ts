@@ -57,8 +57,6 @@ export function createRealtimeGateway(app: FastifyInstance) {
     subscribe("message.received"),
     subscribe("message.sent"),
     subscribe("message.updated"),
-    subscribe("ticket.sla_warning"),
-    subscribe("ticket.sla_breached"),
     subscribe("task.updated")
   ];
 

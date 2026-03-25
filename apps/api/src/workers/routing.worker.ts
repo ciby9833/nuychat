@@ -155,78 +155,25 @@ export function createRoutingWorker() {
           })
         );
 
-        await withTenantTransaction(tenantId, async (trx) => {
-          const fromSegmentId = await trx("conversations")
-            .where({ tenant_id: tenantId, conversation_id: conversationId })
-            .select("current_segment_id")
-            .first<{ current_segment_id: string | null } | undefined>();
-          await ownershipService.applyTransition(trx, {
-            type: "release_to_queue",
-            tenantId,
-            conversationId,
-            customerId: conversation.customer_id as string,
-            caseId: conversation.current_case_id as string | null,
-            reason: "no-active-ai-agent",
-            assignedAgentId: handoffTarget.assignedAgentId,
-            conversationStatus: "queued"
-          });
-          const updatedConversation = await trx("conversations")
-            .where({ tenant_id: tenantId, conversation_id: conversationId })
-            .select("current_segment_id")
-            .first<{ current_segment_id: string | null } | undefined>();
-          await dispatchAuditService.recordTransition(trx, {
-            tenantId,
-            conversationId,
-            customerId: conversation.customer_id as string,
-            executionId: selectedExecutionId,
-            transitionType: "ai_unavailable_to_system",
-            actorType: "system",
-            fromOwnerType: (conversation.current_handler_type as string | null) ?? null,
-            fromOwnerId: (conversation.current_handler_id as string | null) ?? null,
-            fromSegmentId: fromSegmentId?.current_segment_id ?? null,
-            toOwnerType: "system",
-            toOwnerId: null,
-            toSegmentId: updatedConversation?.current_segment_id ?? null,
-            reason: plan.trace.aiSelection.reason || "no-active-ai-agent"
-          });
-
-          await trx("queue_assignments")
-            .where({ tenant_id: tenantId, conversation_id: conversationId })
-            .update({
-              module_id: handoffTarget.moduleId,
-              skill_group_id: handoffTarget.skillGroupId,
-              department_id: handoffTarget.departmentId,
-              team_id: handoffTarget.teamId,
-              assigned_agent_id: handoffTarget.assignedAgentId,
-              assigned_ai_agent_id: null,
-              assignment_strategy: handoffTarget.strategy,
-              priority: handoffTarget.priority,
-              status: handoffTarget.status,
-              assignment_reason: handoffTarget.reason,
-              handoff_required: true,
-              handoff_reason: plan.trace.aiSelection.reason || "no_active_ai_agent",
-              updated_at: trx.fn.now()
-            });
-
-          await routingPlanStepService.record(trx, {
-            tenantId,
-            planId,
-            stepType: "ai_runtime",
-            status: "failed",
-            payload: {
-              reason: plan.trace.aiSelection.reason || "no_active_ai_agent",
-              queueStatus: handoffTarget.status,
-              assignedAgentId: handoffTarget.assignedAgentId
-            }
-          });
-        });
-
-        if (["assigned", "pending"].includes(handoffTarget.status)) {
-          await scheduleAssignmentAcceptTimeout(tenantId, conversationId, customerId);
-        }
-
-        await emitConversationUpdatedSnapshot(db, tenantId, conversationId, {
-          occurredAt: new Date().toISOString()
+        await releaseConversationToHumanQueue({
+          tenantId,
+          planId,
+          conversationId,
+          customerId,
+          conversation,
+          executionId: selectedExecutionId,
+          handoffTarget,
+          reason: plan.trace.aiSelection.reason || "no_active_ai_agent",
+          transitionType: "ai_unavailable_to_system",
+          actorType: "system",
+          actorId: null,
+          assignedAiAgentId: null,
+          stepStatus: "failed",
+          stepPayload: {
+            reason: plan.trace.aiSelection.reason || "no_active_ai_agent",
+            queueStatus: handoffTarget.status,
+            assignedAgentId: handoffTarget.assignedAgentId
+          }
         });
 
         return {
@@ -247,6 +194,7 @@ export function createRoutingWorker() {
           conversationId,
           customerId,
           channelType,
+          caseId: conversation.current_case_id as string | null,
           moduleId: plan.target.moduleId,
           skillGroupId: plan.target.skillGroupId,
           actorType: "ai",
@@ -256,6 +204,7 @@ export function createRoutingWorker() {
       } catch (err) {
         orchestratorError = (err as Error).message ?? "unknown_error";
         result = {
+          action: "handoff" as const,
           response: null as null,
           intent: "unknown",
           sentiment: "neutral" as const,
@@ -290,7 +239,7 @@ export function createRoutingWorker() {
       });
 
       // ── 5. Act on result ─────────────────────────────────────────────────────
-      if (result.response) {
+      if (result.action === "reply" && result.response) {
         // AI produced a reply → send it
         await outboundQueue.add(
           "outbound.ai_reply",
@@ -369,7 +318,7 @@ export function createRoutingWorker() {
         await emitConversationUpdatedSnapshot(db, tenantId, conversationId, {
           occurredAt: new Date().toISOString()
         });
-      } else if (result.shouldHandoff) {
+      } else if (result.action === "handoff" || result.shouldHandoff) {
         const handoffTarget = await withTenantTransaction(tenantId, async (trx) =>
           resolveReservedHumanTarget(trx, {
             tenantId,
@@ -385,83 +334,29 @@ export function createRoutingWorker() {
           })
         );
 
-        await withTenantTransaction(tenantId, async (trx) => {
-          const fromSegmentId = await trx("conversations")
-            .where({ tenant_id: tenantId, conversation_id: conversationId })
-            .select("current_segment_id")
-            .first<{ current_segment_id: string | null } | undefined>();
-          await ownershipService.applyTransition(trx, {
-            type: "release_to_queue",
-            tenantId,
-            conversationId,
-            customerId: conversation.customer_id as string,
-            caseId: conversation.current_case_id as string | null,
-            reason: result.handoffReason ?? "ai-requested-handoff",
+        await releaseConversationToHumanQueue({
+          tenantId,
+          planId,
+          conversationId,
+          customerId,
+          conversation,
+          executionId: selectedExecutionId,
+          handoffTarget,
+          reason: result.handoffReason ?? "ai_requested_handoff",
+          transitionType: "ai_handoff_to_human_queue",
+          actorType: "ai",
+          actorId: plan.target.aiAgentId,
+          assignedAiAgentId: plan.target.aiAgentId,
+          stepStatus: "completed",
+          stepPayload: {
+            outcome: "handoff",
+            aiAgentId: plan.target.aiAgentId,
+            handoff: true,
+            queueStatus: handoffTarget.status,
             assignedAgentId: handoffTarget.assignedAgentId,
-            conversationStatus: "queued"
-          });
-          const updatedConversation = await trx("conversations")
-            .where({ tenant_id: tenantId, conversation_id: conversationId })
-            .select("current_segment_id")
-            .first<{ current_segment_id: string | null } | undefined>();
-          await dispatchAuditService.recordTransition(trx, {
-            tenantId,
-            conversationId,
-            customerId: conversation.customer_id as string,
-            executionId: selectedExecutionId,
-            transitionType: "ai_handoff_to_human_queue",
-            actorType: "ai",
-            actorId: plan.target.aiAgentId,
-            fromOwnerType: (conversation.current_handler_type as string | null) ?? null,
-            fromOwnerId: (conversation.current_handler_id as string | null) ?? null,
-            fromSegmentId: fromSegmentId?.current_segment_id ?? null,
-            toOwnerType: "system",
-            toOwnerId: null,
-            toSegmentId: updatedConversation?.current_segment_id ?? null,
-            reason: result.handoffReason ?? "ai-requested-handoff"
-          });
-
-          await trx("queue_assignments")
-            .where({ tenant_id: tenantId, conversation_id: conversationId })
-            .update({
-              module_id: handoffTarget.moduleId,
-              skill_group_id: handoffTarget.skillGroupId,
-              department_id: handoffTarget.departmentId,
-              team_id: handoffTarget.teamId,
-              assigned_agent_id: handoffTarget.assignedAgentId,
-              assigned_ai_agent_id: plan.target.aiAgentId,
-              assignment_strategy: handoffTarget.strategy,
-              priority: handoffTarget.priority,
-              status: handoffTarget.status,
-              assignment_reason: handoffTarget.reason,
-              handoff_required: true,
-              handoff_reason: result.handoffReason ?? "ai_requested_handoff",
-              updated_at: trx.fn.now()
-            });
-
-          await routingPlanStepService.record(trx, {
-            tenantId,
-            planId,
-            stepType: "ai_runtime",
-            status: "completed",
-            payload: {
-              outcome: "handoff",
-              aiAgentId: plan.target.aiAgentId,
-              handoff: true,
-              queueStatus: handoffTarget.status,
-              assignedAgentId: handoffTarget.assignedAgentId,
-              handoffReason: result.handoffReason ?? "ai_requested_handoff",
-              confidence: result.confidence
-            }
-          });
-        });
-
-        if (["assigned", "pending"].includes(handoffTarget.status)) {
-          await scheduleAssignmentAcceptTimeout(tenantId, conversationId, customerId);
-        }
-
-        await emitConversationUpdatedSnapshot(db, tenantId, conversationId, {
-          occurredAt: new Date().toISOString()
+            handoffReason: result.handoffReason ?? "ai_requested_handoff",
+            confidence: result.confidence
+          }
         });
       } else {
         await withTenantTransaction(tenantId, async (trx) => {
@@ -484,7 +379,7 @@ export function createRoutingWorker() {
         intent: result.intent,
         sentiment: result.sentiment,
         responded: result.response !== null,
-        handoff: result.shouldHandoff
+        handoff: result.action === "handoff" || result.shouldHandoff
       };
     },
     {
@@ -518,6 +413,104 @@ type ReservedHumanTarget = {
   status: "pending" | "assigned";
   reason: string;
 };
+
+type RoutingConversationRow = {
+  customer_id: string | null;
+  current_case_id: string | null;
+  current_handler_type: string | null;
+  current_handler_id: string | null;
+};
+
+async function releaseConversationToHumanQueue(input: {
+  tenantId: string;
+  planId: string;
+  conversationId: string;
+  customerId: string;
+  conversation: RoutingConversationRow;
+  executionId: string;
+  handoffTarget: ReservedHumanTarget;
+  reason: string;
+  transitionType: "ai_unavailable_to_system" | "ai_handoff_to_human_queue";
+  actorType: "system" | "ai";
+  actorId: string | null;
+  assignedAiAgentId: string | null;
+  stepStatus: "failed" | "completed";
+  stepPayload: Record<string, unknown>;
+}) {
+  await withTenantTransaction(input.tenantId, async (trx) => {
+    const fromSegmentId = await trx("conversations")
+      .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
+      .select("current_segment_id")
+      .first<{ current_segment_id: string | null } | undefined>();
+
+    await ownershipService.applyTransition(trx, {
+      type: "release_to_queue",
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      customerId: input.conversation.customer_id as string,
+      caseId: input.conversation.current_case_id as string | null,
+      reason: input.reason,
+      assignedAgentId: input.handoffTarget.assignedAgentId,
+      conversationStatus: "queued"
+    });
+
+    const updatedConversation = await trx("conversations")
+      .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
+      .select("current_segment_id")
+      .first<{ current_segment_id: string | null } | undefined>();
+
+    await dispatchAuditService.recordTransition(trx, {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      customerId: input.conversation.customer_id as string,
+      executionId: input.executionId,
+      transitionType: input.transitionType,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      fromOwnerType: input.conversation.current_handler_type ?? null,
+      fromOwnerId: input.conversation.current_handler_id ?? null,
+      fromSegmentId: fromSegmentId?.current_segment_id ?? null,
+      toOwnerType: "system",
+      toOwnerId: null,
+      toSegmentId: updatedConversation?.current_segment_id ?? null,
+      reason: input.reason
+    });
+
+    await trx("queue_assignments")
+      .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
+      .update({
+        module_id: input.handoffTarget.moduleId,
+        skill_group_id: input.handoffTarget.skillGroupId,
+        department_id: input.handoffTarget.departmentId,
+        team_id: input.handoffTarget.teamId,
+        assigned_agent_id: input.handoffTarget.assignedAgentId,
+        assigned_ai_agent_id: input.assignedAiAgentId,
+        assignment_strategy: input.handoffTarget.strategy,
+        priority: input.handoffTarget.priority,
+        status: input.handoffTarget.status,
+        assignment_reason: input.handoffTarget.reason,
+        handoff_required: true,
+        handoff_reason: input.reason,
+        updated_at: trx.fn.now()
+      });
+
+    await routingPlanStepService.record(trx, {
+      tenantId: input.tenantId,
+      planId: input.planId,
+      stepType: "ai_runtime",
+      status: input.stepStatus,
+      payload: input.stepPayload
+    });
+  });
+
+  if (["assigned", "pending"].includes(input.handoffTarget.status)) {
+    await scheduleAssignmentAcceptTimeout(input.tenantId, input.conversationId, input.customerId);
+  }
+
+  await emitConversationUpdatedSnapshot(db, input.tenantId, input.conversationId, {
+    occurredAt: new Date().toISOString()
+  });
+}
 
 async function resolveReservedHumanTarget(
   trx: Knex.Transaction,

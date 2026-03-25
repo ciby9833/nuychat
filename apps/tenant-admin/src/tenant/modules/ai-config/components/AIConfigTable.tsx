@@ -25,7 +25,7 @@ export function AIConfigTable({
 }) {
   return (
     <Card
-      title="AI 配置列表"
+      title="模型驱动配置"
       extra={<Button onClick={onCreate}>新建配置</Button>}
     >
       <Table<AIConfigProfile>

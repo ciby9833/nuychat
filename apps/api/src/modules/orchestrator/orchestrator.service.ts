@@ -16,6 +16,16 @@ import {
   assertTenantAIBudgetAllowsUsage,
   recordAIUsage
 } from "../ai/usage-meter.service.js";
+import {
+  normalizeAIInteractionContract,
+  ORCHESTRATOR_RESPONSE_CONTRACT,
+  type AIControlAction,
+  type AISentiment
+} from "../ai/ai-runtime-contract.js";
+import {
+  enforcePreReplyPolicy,
+  evaluatePreReplyPolicy
+} from "../ai/pre-reply-policy.service.js";
 import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -25,6 +35,7 @@ export interface OrchestratorInput {
   conversationId: string;
   customerId: string;
   channelType: string;
+  caseId?: string | null;
   aiAgentId?: string | null;
   moduleId?: string | null;
   skillGroupId?: string | null;
@@ -34,10 +45,11 @@ export interface OrchestratorInput {
 }
 
 export interface OrchestratorResult {
+  action: AIControlAction;
   /** Generated reply text; null = no AI response, defer to human */
   response: string | null;
   intent: string;
-  sentiment: "positive" | "neutral" | "negative" | "angry";
+  sentiment: AISentiment;
   shouldHandoff: boolean;
   handoffReason?: string;
   tokensUsed: number;
@@ -67,11 +79,7 @@ const SYSTEM_PROMPT_BASE = `You are a professional customer service AI assistant
 Rules:
 - Always reply in the same language the customer uses.
 - Be concise, helpful, and empathetic.
-- When you need order or shipping information, use the tools provided — do not guess.
-- Search the knowledge base (search_knowledge_base) when answering questions about policies, FAQs, shipping, or returns.
-- If the customer is angry, repeatedly unsatisfied, or requests a human agent, respond ONLY with:
-  HANDOFF_REQUIRED: <one-sentence reason>
-  Do not add anything else when requesting a handoff.`;
+- When you need order or shipping information, use the tools provided — do not guess.`;
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
@@ -113,7 +121,13 @@ export class OrchestratorService {
       actorType,
       conversationId: input.conversationId
     });
-    const preferredSkills = normalizePreferredSkills(input.preferredSkillNames ?? []);
+    const requestedPreferredSkills = normalizePreferredSkills(input.preferredSkillNames ?? []);
+    const preReplyPolicy = await evaluatePreReplyPolicy(db, {
+      tenantId: input.tenantId,
+      chatHistory,
+      preferredSkillNames: requestedPreferredSkills
+    });
+    const preferredSkills = preReplyPolicy.preferredSkills;
     const tools = skillRegistry
       .toOpenAITools()
       .filter((tool) => runtimePolicy.has(tool.function.name))
@@ -129,6 +143,7 @@ export class OrchestratorService {
       memoryContext,
       aiAgent
     });
+    const runtimePrompt = `${systemPrompt}\n\n${ORCHESTRATOR_RESPONSE_CONTRACT}`;
 
     try {
       const budgetGate = await assertTenantAIBudgetAllowsUsage(db, input.tenantId);
@@ -141,12 +156,13 @@ export class OrchestratorService {
         aiSettings.provider,
         model,
         [
-        { role: "system", content: systemPrompt },
+        { role: "system", content: runtimePrompt },
         ...chatHistory
         ],
         tools as unknown as AIToolDefinition[],
         aiSettings.temperature,
-        aiSettings.maxTokens
+        aiSettings.maxTokens,
+        tools.length === 0 ? "json_object" : "text"
       );
 
       let finalContent = turn1.content;
@@ -157,7 +173,7 @@ export class OrchestratorService {
       // ── Tool execution loop ─────────────────────────────────────────────────
       if (turn1.toolCalls && turn1.toolCalls.length > 0) {
         const round2Messages: AIMessage[] = [
-          { role: "system", content: systemPrompt },
+          { role: "system", content: runtimePrompt },
           ...chatHistory,
           { role: "assistant", content: turn1.content, toolCalls: turn1.toolCalls }
         ];
@@ -250,7 +266,8 @@ export class OrchestratorService {
           round2Messages,
           [],
           aiSettings.temperature,
-          aiSettings.maxTokens
+          aiSettings.maxTokens,
+          "json_object"
         );
         finalContent = turn2.content;
         tokensUsed += turn2.tokensUsed;
@@ -277,49 +294,63 @@ export class OrchestratorService {
       });
 
       // ── Parse response ──────────────────────────────────────────────────────
-      const intent = finalContent.startsWith("HANDOFF_REQUIRED:")
-        ? "handoff_request"
-        : classifyIntent(chatHistory);
-      const sentiment = detectSentiment(chatHistory);
+      const aiDecision = normalizeAIInteractionContract(finalContent, {
+        chatHistory,
+        defaultAction: "reply"
+      });
+      const policyEnforcement = enforcePreReplyPolicy({
+        policy: preReplyPolicy,
+        invokedSkills: skillsInvoked,
+        proposedAction: aiDecision.action,
+        currentHandoffReason: aiDecision.handoffReason ?? null
+      });
+      const effectiveAction = policyEnforcement.action;
+      const effectiveHandoffReason = policyEnforcement.handoffReason;
+      const responseText = effectiveAction === "reply" ? aiDecision.response : null;
+      const responseSummary = responseText ?? effectiveHandoffReason ?? finalContent.slice(0, 400);
+      if (policyEnforcement.blocked) {
+        for (const skillName of policyEnforcement.missingSkills) {
+          skillsBlocked.push({ name: skillName, reason: "pre_reply_policy_required" });
+        }
+      }
 
       // ── Update working memory (fire-and-forget) ───────────────────────────
       const lastUserMsg = chatHistory.filter((m) => m.role === "user").at(-1);
-      if (lastUserMsg && !finalContent.startsWith("HANDOFF_REQUIRED:")) {
+      if (lastUserMsg && responseText) {
         const now = Date.now();
         appendWorkingMemory(input.conversationId, [
           { role: "user", content: lastUserMsg.content, ts: now },
-          { role: "assistant", content: finalContent, ts: now + 1 }
+          { role: "assistant", content: responseText, ts: now + 1 }
         ]).catch(() => null);
-
-        // Update conversation summary in PG (fire-and-forget)
-        const entities = extractEntitiesFromText(
-          chatHistory.map((m) => m.content).join(" ")
-        );
-        upsertConversationInsight(db, {
-          tenantId: input.tenantId,
-          customerId: input.customerId,
-          conversationId: input.conversationId,
-          data: {
-            summary: finalContent.slice(0, 400),
-            lastIntent: intent,
-            lastSentiment: sentiment,
-            messageCount: chatHistory.length,
-            keyEntities: entities
-          }
-        }).catch(() => null);
-
-        void scheduleConversationMemoryEncoding({
-          tenantId: input.tenantId,
-          customerId: input.customerId,
-          conversationId: input.conversationId,
-          caseId: input.caseId ?? null,
-          chatHistory,
-          conversationSummary: finalContent.slice(0, 400),
-          lastIntent: intent,
-          lastSentiment: sentiment,
-          finalResponse: finalContent
-        }).catch(() => null);
       }
+
+      const entities = extractEntitiesFromText(
+        chatHistory.map((message) => message.content).join(" ")
+      );
+      upsertConversationInsight(db, {
+        tenantId: input.tenantId,
+        customerId: input.customerId,
+        conversationId: input.conversationId,
+        data: {
+          summary: responseSummary,
+          lastIntent: aiDecision.intent,
+          lastSentiment: aiDecision.sentiment,
+          messageCount: chatHistory.length,
+          keyEntities: entities
+        }
+      }).catch(() => null);
+
+      void scheduleConversationMemoryEncoding({
+        tenantId: input.tenantId,
+        customerId: input.customerId,
+        conversationId: input.conversationId,
+        caseId: input.caseId ?? null,
+        chatHistory,
+        conversationSummary: responseSummary,
+        lastIntent: aiDecision.intent,
+        lastSentiment: aiDecision.sentiment,
+        finalResponse: responseText ?? null
+      }).catch(() => null);
 
       void scheduleExecutionArchive({
         tenantId: input.tenantId,
@@ -327,40 +358,40 @@ export class OrchestratorService {
         conversationId: input.conversationId,
         aiAgent,
         memoryContext,
-        finalContent,
-        intent,
-        sentiment,
+        action: effectiveAction,
+        finalContent: responseText ?? "",
+        intent: aiDecision.intent,
+        sentiment: aiDecision.sentiment,
         tokensUsed,
         skillsInvoked,
         skillsBlocked,
         toolCalls: turn1.toolCalls ?? [],
-        handoffReason: finalContent.startsWith("HANDOFF_REQUIRED:")
-          ? finalContent.replace("HANDOFF_REQUIRED:", "").trim()
-          : null
+        handoffReason: effectiveHandoffReason ?? null
       }).catch(() => null);
 
-      if (finalContent.startsWith("HANDOFF_REQUIRED:")) {
-        const reason = finalContent.replace("HANDOFF_REQUIRED:", "").trim();
+      if (effectiveAction === "handoff") {
         return {
+          action: effectiveAction,
           response: null,
-          intent,
-          sentiment,
+          intent: aiDecision.intent,
+          sentiment: aiDecision.sentiment,
           shouldHandoff: true,
-          handoffReason: reason,
+          handoffReason: effectiveHandoffReason ?? "human_review_required",
           tokensUsed,
-          confidence: 0.9,
+          confidence: aiDecision.confidence,
           skillsInvoked,
           skillsBlocked
         };
       }
 
       return {
-        response: finalContent,
-        intent,
-        sentiment,
-        shouldHandoff: false,
+        action: effectiveAction,
+        response: responseText,
+        intent: aiDecision.intent,
+        sentiment: aiDecision.sentiment,
+        shouldHandoff: effectiveAction === "handoff",
         tokensUsed,
-        confidence: 0.85,
+        confidence: aiDecision.confidence,
         skillsInvoked,
         skillsBlocked
       };
@@ -380,6 +411,7 @@ async function scheduleExecutionArchive(input: {
   conversationId: string;
   aiAgent: AIAgentRow | null | undefined;
   memoryContext: string;
+  action: AIControlAction;
   finalContent: string;
   intent: string;
   sentiment: string;
@@ -400,6 +432,7 @@ async function scheduleExecutionArchive(input: {
     payload: {
       summary: [
         input.aiAgent?.name ? `seat=${input.aiAgent.name}` : null,
+        `action=${input.action}`,
         `intent=${input.intent}`,
         `sentiment=${input.sentiment}`,
         input.skillsInvoked.length > 0 ? `skills=${input.skillsInvoked.join(",")}` : null,
@@ -435,7 +468,7 @@ async function scheduleConversationMemoryEncoding(input: {
   conversationSummary: string;
   lastIntent: string;
   lastSentiment: string;
-  finalResponse: string;
+  finalResponse?: string | null;
 }) {
   await scheduleLongTask({
     tenantId: input.tenantId,
@@ -451,7 +484,7 @@ async function scheduleConversationMemoryEncoding(input: {
       conversationSummary: input.conversationSummary,
       lastIntent: input.lastIntent,
       lastSentiment: input.lastSentiment,
-      finalResponse: input.finalResponse,
+      finalResponse: input.finalResponse ?? null,
       messages: input.chatHistory.slice(-12).map((message) => ({
         role: message.role,
         content: message.content
@@ -571,13 +604,15 @@ async function callLLM(
   messages: AIMessage[],
   tools: AIToolDefinition[],
   temperature: number,
-  maxTokens: number
+  maxTokens: number,
+  responseFormat: "text" | "json_object" = "text"
 ): Promise<LLMCallResult> {
   const result = await provider.complete({
     model,
     messages,
     tools,
     toolChoice: tools.length > 0 ? "auto" : "none",
+    responseFormat,
     temperature,
     maxTokens
   });
@@ -602,44 +637,11 @@ function buildChatHistory(rows: MsgRow[]): { role: "user" | "assistant"; content
     }));
 }
 
-function classifyIntent(history: { role: string; content: string }[]): string {
-  const text = history
-    .filter((m) => m.role === "user")
-    .map((m) => m.content.toLowerCase())
-    .join(" ");
-
-  if (text.match(/order|pesanan|订单|注文|ORD/i)) return "order_inquiry";
-  if (text.match(/refund|返款|退款|pengembalian/i)) return "refund_request";
-  if (text.match(/delivery|pengiriman|配送|配达|track|resi|awb/i)) return "delivery_inquiry";
-  if (text.match(/cancel|batal|取消|キャンセル/i)) return "cancellation";
-  if (text.match(/complaint|keluhan|投诉|クレーム|complain/i)) return "complaint";
-  if (text.match(/payment|bayar|付款|支払|transfer/i)) return "payment_inquiry";
-  return "general_inquiry";
-}
-
-function detectSentiment(history: { role: string; content: string }[]): OrchestratorResult["sentiment"] {
-  const text = history
-    .filter((m) => m.role === "user")
-    .map((m) => m.content.toLowerCase())
-    .join(" ");
-
-  const angryPhrases = [
-    "marah", "kecewa", "jelek", "buruk", "complaint", "penipuan", "fraud",
-    "退款", "投诉", "生气", "差评", "angry", "terrible", "worst", "scam",
-    "tidak puas", "tidak beres", "bohong", "bohongin"
-  ];
-  if (angryPhrases.some((kw) => text.includes(kw))) return "angry";
-
-  const positivePhrases = ["terima kasih", "thank", "thanks", "感谢", "ありがとう", "mantap", "bagus", "good"];
-  if (positivePhrases.some((kw) => text.includes(kw))) return "positive";
-
-  return "neutral";
-}
-
 function noAiResult(reason: string): OrchestratorResult {
   return {
+    action: "handoff",
     response: null,
-    intent: "unknown",
+    intent: "handoff_request",
     sentiment: "neutral",
     shouldHandoff: true,
     handoffReason: reason,

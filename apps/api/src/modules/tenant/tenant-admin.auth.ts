@@ -158,6 +158,7 @@ export function resolveRequiredPermission(method: string, routePath: string): Pe
   if (routePath.startsWith("/api/admin/channel-configs")) return m === "GET" ? "admin_console.read" : "channels.manage";
   if (routePath.startsWith("/api/admin/knowledge-base")) return m === "GET" ? "admin_console.read" : "kb.manage";
   if (routePath.startsWith("/api/admin/ai-config")) return m === "GET" ? "admin_console.read" : "ai.manage";
+  if (routePath.startsWith("/api/admin/ai-runtime-policy")) return m === "GET" ? "admin_console.read" : "ai.manage";
   if (routePath.startsWith("/api/admin/ai-agents")) return m === "GET" ? "admin_console.read" : "ai.manage";
   if (routePath.startsWith("/api/admin/ai-conversations")) return m === "GET" ? "admin_console.read" : "agents.manage";
   if (routePath.startsWith("/api/admin/customer-intelligence")) return m === "GET" ? "admin_console.read" : "ai.manage";

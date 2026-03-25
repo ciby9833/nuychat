@@ -1,5 +1,6 @@
 import type { Knex } from "knex";
 
+import { isHumanHandoffIntent } from "../ai/ai-runtime-contract.js";
 import { AIDispatchService } from "./ai-dispatch.service.js";
 import { HumanDispatchService } from "./human-dispatch.service.js";
 import { normalizeRoutingRuleActions, type NormalizedRoutingRuleActions } from "./routing-rule-schema.js";
@@ -189,7 +190,7 @@ function resolveOverride(
   const requestedHumanByKeyword = normalized.overrides.humanRequestKeywords.some((keyword) =>
     preview.includes(keyword.toLowerCase())
   );
-  const requestedHumanByIntent = context.issueSummary.lastIntent === "handoff_request";
+  const requestedHumanByIntent = isHumanHandoffIntent(context.issueSummary.lastIntent);
 
   if (
     normalized.overrides.customerRequestsHuman === "force_human" &&

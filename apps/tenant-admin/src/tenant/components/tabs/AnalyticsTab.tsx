@@ -16,8 +16,6 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   message_received: "消息接收",
   message_sent: "消息发送",
   skill_executed: "技能执行",
-  ticket_created: "事项工单创建",
-  ticket_resolved: "事项工单解决",
   conversation_resolved: "线程结束"
 };
 
@@ -82,18 +80,6 @@ export function AnalyticsTab() {
         </Col>
         <Col xs={12} sm={8} md={6} lg={4}>
           <Card size="small"><Statistic title="技能执行" value={summary?.skillsExecuted ?? 0} loading={loading} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={6} lg={4}>
-          <Card size="small"><Statistic title="事项工单创建" value={summary?.ticketsCreated ?? 0} loading={loading} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={6} lg={4}>
-          <Card size="small"><Statistic title="建单事项数" value={summary?.ticketCasesCreated ?? 0} loading={loading} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={6} lg={4}>
-          <Card size="small"><Statistic title="事项工单解决" value={summary?.ticketsResolved ?? 0} loading={loading} /></Card>
-        </Col>
-        <Col xs={12} sm={8} md={6} lg={4}>
-          <Card size="small"><Statistic title="解决事项数" value={summary?.ticketCasesResolved ?? 0} loading={loading} /></Card>
         </Col>
         <Col xs={12} sm={8} md={6} lg={4}>
           <Card size="small"><Statistic title="线程结束" value={summary?.conversationsResolved ?? 0} loading={loading} /></Card>

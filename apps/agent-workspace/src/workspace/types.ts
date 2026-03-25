@@ -43,7 +43,7 @@ export type ConversationItem = {
   clientDevice?: string | null;
   clientSource?: string | null;
   clientAppId?: string | null;
-  /** True when the current agent has at least one open ticket assigned to them on this conversation */
+  /** True when the current agent still has pending case work on this conversation */
   hasMyOpenTicket?: boolean;
 };
 
@@ -149,7 +149,7 @@ export type PaginatedConversationsResponse = {
 
 export type RealtimeReplayEvent = {
   eventId: string;
-  event: "conversation.created" | "conversation.updated" | "message.received" | "message.sent" | "message.updated" | "ticket.sla_warning" | "ticket.sla_breached" | "task.updated";
+  event: "conversation.created" | "conversation.updated" | "message.received" | "message.sent" | "message.updated" | "task.updated";
   payload: Record<string, unknown>;
 };
 
@@ -175,19 +175,17 @@ export type ConversationSkillRecommendationResponse = {
 
 // ── Ticket types ───────────────────────────────────────────────────────────────
 
-export type TicketSlaStatus = "none" | "ok" | "warning" | "breached" | "met";
-
 export type Ticket = {
   ticketId: string;
   conversationId: string | null;
   caseId: string | null;
   title: string;
   description: string | null;
-  status: "open" | "in_progress" | "pending_customer" | "resolved" | "closed";
-  priority: "urgent" | "high" | "normal" | "low";
+  status: "queued" | "running" | "published" | "failed";
+  priority: "normal";
   assigneeId: string | null;
   slaDeadlineAt: string | null;
-  slaStatus: TicketSlaStatus;
+  slaStatus: "none";
   resolvedAt: string | null;
   closedAt: string | null;
   createdByType: string;
@@ -306,19 +304,5 @@ export type AiTrace = {
   totalDurationMs: number;
   handoffReason: string | null;
   error: string | null;
-  createdAt: string;
-};
-
-// ── Ticket event type ───────────────────────────────────────────────────────────
-
-export type TicketEvent = {
-  eventId: string;
-  ticketId: string;
-  eventType: string;
-  fromValue: string | null;
-  toValue: string | null;
-  actorType: string;
-  actorId: string | null;
-  metadata: Record<string, unknown>;
   createdAt: string;
 };

@@ -56,26 +56,6 @@ type MessageUpdatedEvent = RealtimeEventBase & {
   occurredAt: string;
 };
 
-type TicketSlaWarningEvent = RealtimeEventBase & {
-  tenantId: string;
-  ticketId: string;
-  conversationId: string | null;
-  title: string;
-  priority: string;
-  slaDeadlineAt: string;
-  occurredAt: string;
-};
-
-type TicketSlaBreachedEvent = RealtimeEventBase & {
-  tenantId: string;
-  ticketId: string;
-  conversationId: string | null;
-  title: string;
-  priority: string;
-  slaDeadlineAt: string;
-  occurredAt: string;
-};
-
 type TaskUpdatedEvent = RealtimeEventBase & {
   tenantId: string;
   taskId: string;
@@ -92,8 +72,6 @@ export type RealtimeEvents = {
   "message.received": MessageReceivedEvent;
   "message.sent": MessageSentEvent;
   "message.updated": MessageUpdatedEvent;
-  "ticket.sla_warning": TicketSlaWarningEvent;
-  "ticket.sla_breached": TicketSlaBreachedEvent;
   "task.updated": TaskUpdatedEvent;
 };
 
