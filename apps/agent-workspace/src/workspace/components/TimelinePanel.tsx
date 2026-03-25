@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { resolveApiUrl } from "../api";
-import { getChannelCapability, QUICK_PHRASES, validateUploadForChannel } from "../constants";
+import { MessageComposer } from "./MessageComposer";
+import { MessageList } from "./MessageList";
+import { getChannelCapability, validateUploadForChannel } from "../constants";
 import type { AgentColleague, ConversationDetail, MessageAttachment, MessageItem, Ticket } from "../types";
-import { fullTimestamp, messageDateSeparator } from "../utils";
 
 type TimelinePanelProps = {
   detail: ConversationDetail | null;
@@ -33,13 +33,9 @@ type TimelinePanelProps = {
   onAssign: () => Promise<void>;
   onHandoff: () => Promise<void>;
   onTransfer: (targetAgentId: string, reason?: string) => Promise<void>;
-  onResolve: (closeLinkedTickets?: boolean) => Promise<void>;
+  onResolve: () => Promise<void>;
+  onAddTaskFromMessage: (messageId: string, preview: string) => void;
 };
-
-/** Render item: either a date separator or a message */
-type RenderItem =
-  | { kind: "sep"; label: string; id: string }
-  | { kind: "msg"; msg: MessageItem; showTime: boolean };
 
 type UploadItem = {
   key: string;
@@ -50,200 +46,17 @@ type UploadItem = {
   mode: "attachment" | "sticker";
 };
 
-// ── Multimedia bubble content renderer ─────────────────────────────────────────
+type PopoverPlacement = "up" | "down";
 
-function fileIcon(fileName: string | undefined): string {
-  const ext = (fileName ?? "").split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "pdf") return "📄";
-  if (["xlsx", "xls", "csv"].includes(ext)) return "📊";
-  if (["doc", "docx"].includes(ext)) return "📝";
-  if (["ppt", "pptx"].includes(ext)) return "📽️";
-  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "📦";
-  return "📎";
-}
-
-function resolveAttachmentUrl(url: string | undefined): string | undefined {
-  if (!url) return undefined;
-  return resolveApiUrl(url);
-}
-
-function getAttachments(content: MessageItem["content"]): Array<{ url?: string; mimeType?: string; fileName?: string; mediaId?: string }> {
-  return Array.isArray(content.attachments) ? content.attachments : [];
-}
-
-function renderAttachment(
-  attachment: { url?: string; mimeType?: string; fileName?: string },
-  key: string,
-  text: string | undefined,
-  onPreviewImage: (url: string, alt: string) => void
-) {
-  const url = resolveAttachmentUrl(attachment.url);
-  const mimeType = attachment.mimeType ?? "";
-
-  if (mimeType.startsWith("image/")) {
-    return (
-      <div key={key} className="media-bubble">
-        {url ? (
-          <img
-            src={url}
-            alt={attachment.fileName ?? "image"}
-            className={mimeType === "image/webp" ? "bubble-img bubble-sticker" : "bubble-img"}
-            loading="lazy"
-            onClick={() => onPreviewImage(url, attachment.fileName ?? "image")}
-          />
-        ) : null}
-        {text ? <div className="media-caption">{text}</div> : null}
-      </div>
-    );
-  }
-
-  if (mimeType.startsWith("video/")) {
-    return (
-      <div key={key} className="media-bubble">
-        {url ? <video src={url} controls className="bubble-video" preload="metadata" /> : null}
-        {text ? <div className="media-caption">{text}</div> : null}
-      </div>
-    );
-  }
-
-  if (mimeType.startsWith("audio/")) {
-    return (
-      <div key={key} className="media-bubble">
-        {url ? <audio src={url} controls className="bubble-audio" preload="metadata" /> : null}
-        {text ? <div className="media-caption">{text}</div> : null}
-      </div>
-    );
-  }
-
-  return (
-    <div key={key} className="file-bubble">
-      <span className="file-icon">{fileIcon(attachment.fileName)}</span>
-      <div className="file-info">
-        <span className="file-name">{attachment.fileName ?? "附件"}</span>
-        <span className="file-type">{mimeType}</span>
-        {text ? <span className="file-caption">{text}</span> : null}
-      </div>
-      <div className="file-actions">
-        {url && mimeType === "application/pdf" ? (
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="file-action-btn"
-          >
-            预览
-          </a>
-        ) : null}
-        {url ? (
-          <a href={url} download={attachment.fileName} className="file-download">下载</a>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function renderBubbleContent(
-  m: MessageItem,
-  onPreviewImage: (url: string, alt: string) => void
-): React.ReactNode {
-  const c = m.content;
-  const mt = m.message_type;
-  const attachments = getAttachments(c);
-
-  if (mt === "media" && attachments.length > 0) {
-    return (
-      <div>
-        {attachments.map((attachment, index) => renderAttachment(
-          attachment,
-          `${m.message_id}-${index}`,
-          attachments.length === 1 && index === 0 ? c.text : undefined,
-          onPreviewImage
-        ))}
-        {attachments.length > 1 && c.text ? <div className="media-caption">{c.text}</div> : null}
-      </div>
-    );
-  }
-
-  // ── Location ─────────────────────────────────────────────────
-  if (mt === "location" && c.location) {
-    return (
-      <div className="location-bubble">
-        <span className="location-pin">📍</span>
-        <div>
-          {c.location.name && <div className="location-name">{c.location.name}</div>}
-          {c.location.address && <div className="location-addr">{c.location.address}</div>}
-          <div className="location-coord">
-            {c.location.latitude.toFixed(5)}, {c.location.longitude.toFixed(5)}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Contacts ─────────────────────────────────────────────────
-  if (mt === "contacts" && c.contacts?.length) {
-    return (
-      <div className="contacts-bubble">
-        {c.contacts.map((ct, i) => (
-          <div key={i} className="contact-row">
-            <span className="contact-name">👤 {ct.name ?? "未知"}</span>
-            {ct.phones?.map((p, j) => (
-              <span key={j} className="contact-phone">{p}</span>
-            ))}
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  // ── Reaction (emoji) ─────────────────────────────────────────
-  if (mt === "reaction") {
-    return <span className="reaction-bubble">{c.text ?? "😀"}</span>;
-  }
-
-  // ── Skill result / task update ───────────────────────────────
-  if ((mt === "skill_result" || mt === "task_update") && c.skillName) {
-    return (
-      <div className="skill-result-bubble">
-        <div className="skill-result-head">⚡ {c.skillName}</div>
-        <pre className="skill-result-body">
-          {JSON.stringify(c.result, null, 2)}
-        </pre>
-      </div>
-    );
-  }
-
-  // ── Default: plain text ──────────────────────────────────────
-  return c.text ?? "[非文本消息]";
-}
-
-function messagePreview(m: MessageItem | null | undefined): string {
-  if (!m) return "";
-  if (m.status_deleted_at) return "[已删除]";
-  if (m.reaction_emoji) return m.reaction_emoji;
-  if (m.content?.text) return m.content.text;
-  const attachments = getAttachments(m.content);
-  if (attachments.length > 0) {
-    return attachments[0]?.fileName ?? "[附件]";
+function messagePreview(message: MessageItem | null | undefined): string {
+  if (!message) return "";
+  if (message.status_deleted_at) return "[已删除]";
+  if (message.reaction_emoji) return message.reaction_emoji;
+  if (message.content?.text) return message.content.text;
+  if (Array.isArray(message.content?.attachments) && message.content.attachments.length > 0) {
+    return message.content.attachments[0]?.fileName ?? "[附件]";
   }
   return "[消息]";
-}
-
-function statusLabel(m: MessageItem): string | null {
-  if (m.direction !== "outbound") return null;
-  if (m.status_deleted_at) return "已删除";
-  switch (m.message_status) {
-    case "read":
-      return "已读";
-    case "delivered":
-      return "已送达";
-    case "sent":
-      return "已发送";
-    case "failed":
-      return "失败";
-    default:
-      return null;
-  }
 }
 
 export function TimelinePanel(props: TimelinePanelProps) {
@@ -270,7 +83,8 @@ export function TimelinePanel(props: TimelinePanelProps) {
     onAssign,
     onHandoff,
     onTransfer,
-    onResolve
+    onResolve,
+    onAddTaskFromMessage
   } = props;
 
   const [resolveConfirm, setResolveConfirm] = useState(false);
@@ -278,8 +92,7 @@ export function TimelinePanel(props: TimelinePanelProps) {
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferTargetId, setTransferTargetId] = useState("");
   const [transferReason, setTransferReason] = useState("");
-
-  const openTickets = tickets.filter((t) => !["published", "failed"].includes(t.status));
+  const openTickets = tickets.filter((t) => !["done", "cancelled"].includes(t.status));
   const isResolved = detail?.status === "resolved" || detail?.status === "closed";
   // Locked: another agent is actively handling this conversation right now.
   const isLockedByAnotherAgent = Boolean(detail && !isAssignedToMe && detail.status === "human_active");
@@ -290,15 +103,15 @@ export function TimelinePanel(props: TimelinePanelProps) {
   const canSend = Boolean(
     detail && !isLockedByAnotherAgent && (reply.trim() || pendingAttachments.length > 0) && (isAssignedToMe || isResolved)
   );
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const stickerInputRef = useRef<HTMLInputElement | null>(null);
-  const [dragOver, setDragOver] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [reactionTargetId, setReactionTargetId] = useState<string | null>(null);
+  const [messageMenuId, setMessageMenuId] = useState<string | null>(null);
+  const [reactionPlacement, setReactionPlacement] = useState<PopoverPlacement>("up");
+  const [menuPlacement, setMenuPlacement] = useState<PopoverPlacement>("up");
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [composerError, setComposerError] = useState<string>("");
   const [imagePreview, setImagePreview] = useState<{ url: string; alt: string } | null>(null);
   const replyTarget = useMemo(
@@ -307,17 +120,6 @@ export function TimelinePanel(props: TimelinePanelProps) {
   );
   const capability = useMemo(() => getChannelCapability(detail?.channelType), [detail?.channelType]);
   const uploading = uploadItems.some((item) => item.status === "uploading");
-
-  // Auto-resize textarea
-  const resizeTextarea = () => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const maxH = 220;
-    el.style.height = "0px";
-    el.style.height = `${Math.min(el.scrollHeight, maxH)}px`;
-    el.style.overflowY = el.scrollHeight > maxH ? "auto" : "hidden";
-  };
-  useEffect(() => { resizeTextarea(); }, [reply]);
 
   // Track if user has scrolled up
   useEffect(() => {
@@ -345,28 +147,32 @@ export function TimelinePanel(props: TimelinePanelProps) {
     setTransferTargetId("");
     setTransferReason("");
     setUploadItems([]);
+    setReactionTargetId(null);
+    setMessageMenuId(null);
+    setReactionPlacement("up");
+    setMenuPlacement("up");
+    setHoveredMessageId(null);
     setComposerError("");
     setImagePreview(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.conversationId]);
 
-  // Build render items: insert date separators + compute timestamp clustering
-  const renderItems = useMemo<RenderItem[]>(() => {
-    const items: RenderItem[] = [];
-    for (let i = 0; i < messages.length; i++) {
-      const m = messages[i];
-      const prev = i > 0 ? messages[i - 1] : null;
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (
+        target.closest(".msg-more-menu") ||
+        target.closest(".msg-reaction-menu") ||
+        target.closest(".msg-tail-trigger")
+      ) return;
+      setMessageMenuId(null);
+      setReactionTargetId(null);
+    };
 
-      // Date separator
-      const sep = messageDateSeparator(prev, m);
-      if (sep) {
-        items.push({ kind: "sep", label: sep, id: `sep-${i}` });
-      }
-
-      items.push({ kind: "msg", msg: m, showTime: true });
-    }
-    return items;
-  }, [messages]);
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
 
   const sendNow = () => {
     if (!canSend) return;
@@ -437,33 +243,11 @@ export function TimelinePanel(props: TimelinePanelProps) {
     void startUpload([target.file], target.mode);
   };
 
-  const handleFiles = async (files: File[]) => {
-    await startUpload(files, "attachment");
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    void handleFiles(Array.from(e.dataTransfer.files));
-  };
-
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const clipboardFiles = Array.from(e.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file instanceof File);
-
-    if (clipboardFiles.length === 0) return;
-
-    e.preventDefault();
-    void handleFiles(clipboardFiles);
-  };
-
   const handleResolveClick = () => {
     if (openTickets.length > 0) {
       setResolveConfirm(true);
     } else {
-      void onResolve(false);
+      void onResolve();
     }
   };
 
@@ -489,6 +273,25 @@ export function TimelinePanel(props: TimelinePanelProps) {
 
   const openImagePreview = (url: string, alt: string) => {
     setImagePreview({ url, alt });
+  };
+
+  const resolvePopoverPlacement = (anchor: HTMLElement | null): PopoverPlacement => {
+    if (!anchor || !listRef.current) return "up";
+    const anchorRect = anchor.getBoundingClientRect();
+    const listRect = listRef.current.getBoundingClientRect();
+    const spaceAbove = anchorRect.top - listRect.top;
+    const spaceBelow = listRect.bottom - anchorRect.bottom;
+    return spaceAbove < 120 && spaceBelow > spaceAbove ? "down" : "up";
+  };
+
+  const copyMessageContent = async (message: MessageItem) => {
+    const text = messagePreview(message);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      setComposerError("复制失败，请检查浏览器权限。");
+    }
   };
 
   return (
@@ -606,116 +409,49 @@ export function TimelinePanel(props: TimelinePanelProps) {
       {resolveConfirm && (
         <div className="resolve-confirm-bar">
           <span className="rc-label">有 {openTickets.length} 个未完成任务</span>
-          <button onClick={() => { setResolveConfirm(false); void onResolve(false); }}>仅结束会话</button>
-          <button className="danger" onClick={() => { setResolveConfirm(false); void onResolve(true); }}>
+          <button className="danger" onClick={() => { setResolveConfirm(false); void onResolve(); }}>
             结束会话
           </button>
           <button className="cancel" onClick={() => setResolveConfirm(false)}>取消</button>
         </div>
       )}
 
-      {/* Message list */}
-      <div className="message-timeline" ref={listRef}>
-        {!detail && (
-          <div className="tl-empty">
-            <div className="tl-empty-icon">💬</div>
-            <div>选择一个会话开始协作处理</div>
-          </div>
-        )}
-
-        {detail && messages.length === 0 && (
-          <div className="tl-empty">
-            <div className="tl-empty-icon">📭</div>
-            <div>暂无消息记录</div>
-          </div>
-        )}
-
-        {renderItems.map((item, renderIndex) => {
-          if (item.kind === "sep") {
-            return (
-              <div key={item.id} className="msg-date-sep">
-                <span>{item.label}</span>
-              </div>
-            );
-          }
-
-          const m = item.msg;
-          const isOut = m.direction === "outbound";
-          const isSystem = m.sender_type === "system";
-          const isAI = m.sender_type === "bot" && isOut;
-          const isAgent = m.sender_type === "agent" && isOut;
-          const prevItem = renderItems[renderIndex - 1];
-          const prevMsg = prevItem?.kind === "msg" ? prevItem.msg : null;
-          const isMediaCluster = m.message_type === "media" &&
-            prevMsg?.message_type === "media" &&
-            prevMsg.direction === m.direction &&
-            prevMsg.sender_id === m.sender_id;
-          const rowClass = isSystem ? "system" : isOut ? "out" : "in";
-          const bubbleClass = isSystem ? "system" : isAI ? "bot" : isOut ? "out" : "in";
-
-          // AI attribution: show AI agent name with robot emoji
-          const aiLabel = isAI
-            ? `🤖 ${m.content?.aiAgentName ?? "AI 助手"}`
-            : null;
-          // Human agent attribution: name + employee_no
-          const agentLabel = isAgent
-            ? [m.sender_name, m.sender_employee_no ? `#${m.sender_employee_no}` : null]
-                .filter(Boolean)
-                .join(" ")
-            : null;
-          const attrLabel = aiLabel ?? agentLabel;
-
-          return (
-            <div key={m.message_id} className={`msg-row ${rowClass}${isMediaCluster ? " media-cluster" : ""}`}>
-              {/* Attribution label above outbound messages (human agent or AI) */}
-              {attrLabel && (
-                <div className={`msg-agent-attr${isAI ? " ai-attr" : ""}`}>{attrLabel}</div>
-              )}
-              <div className={`msg-bubble ${bubbleClass}`}>
-                {m.reply_to_message_id && (
-                  <div className="reply-preview">
-                    <span className="reply-label">回复</span>
-                    <span className="reply-text">{messagePreview(messages.find((msg) => msg.message_id === m.reply_to_message_id) ?? null)}</span>
-                  </div>
-                )}
-                {renderBubbleContent(m, openImagePreview)}
-              </div>
-              {capability.supportsReply && !isSystem && (
-                <div className="msg-actions">
-                  <button type="button" className="msg-action-btn" onClick={() => onSetReplyTarget(m.message_id)}>回复</button>
-                  {capability.supportsReaction && (
-                    <button type="button" className="msg-action-btn" onClick={() => setReactionTargetId((current) => current === m.message_id ? null : m.message_id)}>表情</button>
-                  )}
-                  {capability.supportsReaction && reactionTargetId === m.message_id && (
-                    <div className="reaction-picker">
-                      {["👍", "❤️", "🙏", "😂"].map((emoji) => (
-                        <button
-                          key={emoji}
-                          type="button"
-                          className="reaction-choice"
-                          onClick={() => {
-                            setReactionTargetId(null);
-                            void onSendReaction(m.message_id, emoji);
-                          }}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              {/* Always show full timestamp for every message */}
-              <div className="msg-time msg-time--full">
-                {fullTimestamp(m.created_at)}
-                {statusLabel(m) ? ` · ${statusLabel(m)}` : ""}
-              </div>
-            </div>
-          );
-        })}
-
-        <div ref={bottomRef} />
-      </div>
+      <MessageList
+        detailOpen={Boolean(detail)}
+        messages={messages}
+        capability={capability}
+        isAssignedToMe={isAssignedToMe}
+        listRef={listRef}
+        bottomRef={bottomRef}
+        hoveredMessageId={hoveredMessageId}
+        messageMenuId={messageMenuId}
+        reactionTargetId={reactionTargetId}
+        reactionPlacement={reactionPlacement}
+        menuPlacement={menuPlacement}
+        onHoverMessage={setHoveredMessageId}
+        onCloseReactionMenuForMessage={(messageId) => {
+          setReactionTargetId((current) => current === messageId ? null : current);
+        }}
+        onCloseMenus={() => {
+          setMessageMenuId(null);
+          setReactionTargetId(null);
+        }}
+        onToggleReactionMenu={(messageId, anchor) => {
+          setMessageMenuId(null);
+          setReactionPlacement(resolvePopoverPlacement(anchor));
+          setReactionTargetId((current) => current === messageId ? null : messageId);
+        }}
+        onToggleMessageMenu={(messageId, anchor) => {
+          setReactionTargetId(null);
+          setMenuPlacement(resolvePopoverPlacement(anchor));
+          setMessageMenuId((current) => current === messageId ? null : messageId);
+        }}
+        onSetReplyTarget={onSetReplyTarget}
+        onAddTaskFromMessage={onAddTaskFromMessage}
+        onSendReaction={onSendReaction}
+        onCopyMessageContent={(message) => { void copyMessageContent(message); }}
+        onPreviewImage={openImagePreview}
+      />
 
       {imagePreview ? (
         <div
@@ -740,206 +476,36 @@ export function TimelinePanel(props: TimelinePanelProps) {
           />
         </div>
       ) : null}
-
-      {/* Composer */}
-      <div className="composer">
-        {/* Copilot suggestion bar — streaming Claude-style suggestions above composer */}
-        <div className="copilot-bar">
-          <div className="copilot-bar-header">
-            <span className="copilot-icon">✦</span>
-            <span className="copilot-bar-title">Copilot</span>
-            {detail && aiSuggestions.length === 0 && recommendedSkills.length === 0 && (
-              <span className="copilot-thinking">
-                <span /><span /><span />
-              </span>
-            )}
-            <div className="copilot-quick-tools">
-              <button type="button" className="tool-btn" title="总结客户诉求" onClick={() => onReplyChange((reply.trim() ? reply + "\n" : "") + "请先总结客户诉求，再给出下一步建议。")}>摘要</button>
-              <button type="button" className="tool-btn" title="润色当前草稿" onClick={() => onReplyChange((reply.trim() ? reply + "\n" : "") + "请将上文转换为更礼貌、简短的客服回复。")}>润色</button>
-              <button type="button" className="tool-btn" title="翻译为客户语言" onClick={() => onReplyChange((reply.trim() ? reply + "\n" : "") + "请翻译为客户语言并保留业务术语。")}>翻译</button>
-            </div>
-          </div>
-
-          {/* AI suggested replies — animated stream-in cards */}
-          {aiSuggestions.length > 0 && (
-            <div className="copilot-suggestions">
-              {aiSuggestions.slice(0, 3).map((s, i) => (
-                <button
-                  key={s}
-                  type="button"
-                  className="suggestion-card"
-                  style={{ animationDelay: `${i * 80}ms` }}
-                  onClick={() => onReplyChange(s)}
-                  disabled={!isAssignedToMe}
-                  title={s}
-                >
-                  <span className="suggestion-text">{s}</span>
-                  <span className="suggestion-use">↩</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Recommended skill + quick phrase chips */}
-          <div className="copilot-chip-row">
-            {recommendedSkills.slice(0, 3).map((skill, i) => (
-              <button
-                key={skill}
-                type="button"
-                className="skill-inline-chip"
-                style={{ animationDelay: `${(Math.min(aiSuggestions.length, 3) + i) * 80}ms` }}
-                onClick={() => onReplyChange(`请调用技能：${skill}`)}
-                disabled={!isAssignedToMe}
-              >
-                ⚡ {skill}
-              </button>
-            ))}
-            {QUICK_PHRASES.map((phrase) => (
-              <button
-                key={phrase}
-                type="button"
-                className="quick-phrase-chip"
-                onClick={() => onReplyChange(phrase)}
-                disabled={!isAssignedToMe}
-                title={phrase}
-              >
-                {phrase.slice(0, 12)}{phrase.length > 12 ? "…" : ""}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div
-          className={`composer-box${dragOver ? " drag-over" : ""}`}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          {replyTarget && (
-            <div className="attachment-preview">
-              <span className="attach-file-icon">回复: {messagePreview(replyTarget)}</span>
-              <button type="button" onClick={() => onSetReplyTarget(null)} className="attach-remove" title="取消回复">✕</button>
-            </div>
-          )}
-          {/* Attachment preview bar */}
-          {pendingAttachments.length > 0 && (
-            <div className="attachment-preview">
-              {pendingAttachments.map((attachment, index) => (
-                <div key={`${attachment.fileName}-${index}`} className="attach-chip">
-                  {attachment.mimeType.startsWith("image/")
-                    ? <img src={resolveAttachmentUrl(attachment.url)} alt={attachment.fileName} className="attach-thumb" />
-                    : <span className="attach-file-icon">{fileIcon(attachment.fileName)} {attachment.fileName}</span>
-                  }
-                  <button type="button" onClick={() => onRemoveAttachment(index)} className="attach-remove" title="移除此附件">✕</button>
-                </div>
-              ))}
-              <button type="button" onClick={onClearAttachments} className="attach-remove" title="清空附件">清空</button>
-            </div>
-          )}
-          {uploadItems.length > 0 && (
-            <div className="attachment-preview">
-              {uploadItems.map((item) => (
-                <div key={item.key} className="attach-chip">
-                  <span className="attach-file-icon">
-                    {item.file.name} {item.status === "uploading" ? `${item.progress}%` : `失败: ${item.error ?? ""}`}
-                  </span>
-                  {item.status === "failed" ? (
-                    <button type="button" onClick={() => retryUpload(item.key)} className="attach-remove" title="重试上传">重试</button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
-          {composerError && <div className="composer-error">{composerError}</div>}
-          <textarea
-            ref={textareaRef}
-            value={reply}
-            onChange={(e) => { onReplyChange(e.target.value); resizeTextarea(); }}
-            onPaste={handlePaste}
-            placeholder={
-              isLockedByAnotherAgent
-                ? "该会话已分配给其他客服，无法回复"
-                : isResolved
-                  ? "输入消息继续跟进此客户…"
-                  : isAssignedToMe
-                    ? "输入消息…"
-                    : "请先接管会话后再回复"
-            }
-            disabled={isLockedByAnotherAgent}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendNow();
-              }
-            }}
-          />
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            style={{ display: "none" }}
-            multiple
-            accept={capability.accepts}
-            onChange={(e) => {
-              void handleFiles(Array.from(e.target.files ?? []));
-              e.target.value = "";
-            }}
-          />
-        </div>
-
-        <div className="composer-actions">
-          <span className={`char-count${reply.length > 500 ? " warn" : ""}`}>{reply.length} · Enter 发送</span>
-          <div className="right-actions">
-            <button
-              type="button"
-              className="attach-btn"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLockedByAnotherAgent || uploading || !capability.supportsAttachments}
-              title="添加附件"
-            >
-              📎
-            </button>
-            {capability.supportsSticker && (
-              <button
-                type="button"
-                className="attach-btn"
-                onClick={() => stickerInputRef.current?.click()}
-                disabled={isLockedByAnotherAgent || uploading}
-                title="发送贴纸"
-              >
-                🟩
-              </button>
-            )}
-            <button
-              type="button"
-              className="subtle-btn"
-              onClick={() => {
-                onReplyChange("");
-                onClearAttachments();
-                onSetReplyTarget(null);
-                setComposerError("");
-                setUploadItems([]);
-              }}
-              disabled={!reply && pendingAttachments.length === 0 && !replyTarget && uploadItems.length === 0}
-            >
-              清空
-            </button>
-            <button type="button" className="send-btn" onClick={sendNow} disabled={!canSend}>
-              发送
-            </button>
-          </div>
-        </div>
-        <input
-          ref={stickerInputRef}
-          type="file"
-          style={{ display: "none" }}
-          accept=".webp,image/webp"
-          onChange={(e) => {
-            void startUpload(Array.from(e.target.files ?? []), "sticker");
-            e.target.value = "";
-          }}
-        />
-      </div>
+      <MessageComposer
+        detailOpen={Boolean(detail)}
+        capability={capability}
+        reply={reply}
+        pendingAttachments={pendingAttachments}
+        replyTarget={replyTarget}
+        aiSuggestions={aiSuggestions}
+        isAssignedToMe={isAssignedToMe}
+        isResolved={isResolved}
+        isLockedByAnotherAgent={isLockedByAnotherAgent}
+        canSend={canSend}
+        uploading={uploading}
+        uploadItems={uploadItems}
+        composerError={composerError}
+        onReplyChange={onReplyChange}
+        onSend={sendNow}
+        onSelectFiles={(files, mode) => { void startUpload(files, mode); }}
+        onRetryUpload={retryUpload}
+        onClearAttachments={onClearAttachments}
+        onRemoveAttachment={onRemoveAttachment}
+        onSetReplyTarget={onSetReplyTarget}
+        onClearComposerState={() => {
+          onReplyChange("");
+          onClearAttachments();
+          onSetReplyTarget(null);
+          setComposerError("");
+          setUploadItems([]);
+        }}
+        messagePreview={messagePreview}
+      />
     </section>
   );
 }

@@ -31,6 +31,7 @@ export function DashboardPage() {
         tierFilter={vm.tierFilter}
         searchText={vm.searchText}
         filteredConversations={vm.filteredConversations}
+        viewSummaries={vm.viewSummaries}
         selectedId={vm.selectedId}
         hasMore={vm.hasMoreConversations}
         isLoading={vm.conversationsLoading}
@@ -66,6 +67,10 @@ export function DashboardPage() {
         onHandoff={vm.doHandoff}
         onTransfer={vm.doTransfer}
         onResolve={vm.doResolve}
+        onAddTaskFromMessage={(messageId, preview) => {
+          vm.setTaskDraft({ sourceMessageId: messageId, sourceMessagePreview: preview });
+          vm.setRightTab("orders");
+        }}
       />
 
       {/* Row 2, col 3: right info panel */}
@@ -78,6 +83,8 @@ export function DashboardPage() {
         skillSchemas={vm.skillSchemas}
         tickets={vm.tickets}
         ticketLoading={vm.ticketLoading}
+        taskDraft={vm.taskDraft}
+        colleagues={vm.colleagues}
         skillExecuting={vm.skillExecuting}
         lastSkillResult={vm.lastSkillResult}
         customer360={vm.customer360}
@@ -86,6 +93,8 @@ export function DashboardPage() {
         onApplyTopRecommendedSkills={vm.applyTopRecommendedSkills}
         onSetPreferredSkills={vm.updatePreferredSkills}
         onCreateTicket={vm.doCreateTicket}
+        onPatchTicket={vm.doPatchTicket}
+        onConsumeTaskDraft={() => vm.setTaskDraft(null)}
         onExecuteSkill={vm.doExecuteSkill}
       />
     </div>

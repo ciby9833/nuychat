@@ -13,6 +13,8 @@ import type {
   TenantAIAgent,
   TenantAIAgentListResponse,
   AgentProfile,
+  AdminTaskDetail,
+  AdminTaskItem,
   DailyReport,
   ConversationCaseListResponse,
   MemberListItem,
@@ -286,6 +288,50 @@ export function listHumanConversations(input?: {
 
 export function getHumanConversationDetail(conversationId: string) {
   return api<HumanConversationDetail>(`/api/admin/human-conversations/${conversationId}`);
+}
+
+export function listAdminTasks(input?: {
+  status?: string;
+  ownerAgentId?: string;
+  from?: string;
+  to?: string;
+  search?: string;
+}) {
+  const params = new URLSearchParams();
+  if (input?.status) params.set("status", input.status);
+  if (input?.ownerAgentId) params.set("ownerAgentId", input.ownerAgentId);
+  if (input?.from) params.set("from", input.from);
+  if (input?.to) params.set("to", input.to);
+  if (input?.search) params.set("search", input.search);
+  const query = params.toString();
+  return api<{ items: AdminTaskItem[] }>(`/api/admin/tasks${query ? `?${query}` : ""}`);
+}
+
+export function getAdminTaskDetail(taskId: string) {
+  return api<AdminTaskDetail>(`/api/admin/tasks/${taskId}`);
+}
+
+export function patchAdminTask(
+  taskId: string,
+  input: {
+    status?: string;
+    priority?: string;
+    assigneeAgentId?: string | null;
+    dueAt?: string | null;
+    note?: string;
+  }
+) {
+  return api<AdminTaskDetail>(`/api/admin/tasks/${taskId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function addAdminTaskComment(taskId: string, body: string) {
+  return api<AdminTaskDetail>(`/api/admin/tasks/${taskId}/comments`, {
+    method: "POST",
+    body: JSON.stringify({ body })
+  });
 }
 
 export function listDispatchExecutions(input?: {

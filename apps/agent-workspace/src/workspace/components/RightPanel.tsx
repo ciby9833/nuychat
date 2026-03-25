@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { AVAILABLE_SKILLS } from "../constants";
 import type {
   AiTrace,
+  AgentColleague,
   ConversationDetail,
   ConversationSkillRecommendationResponse,
   CopilotData,
@@ -16,14 +17,14 @@ import { intentLabel, sentimentLabel, shortTime } from "../utils";
 
 function taskStatusLabel(status: Ticket["status"]): string {
   switch (status) {
-    case "queued":
-      return "queued";
-    case "running":
-      return "running";
-    case "published":
-      return "done";
-    case "failed":
-      return "failed";
+    case "open":
+      return "待处理";
+    case "in_progress":
+      return "进行中";
+    case "done":
+      return "已完成";
+    case "cancelled":
+      return "已取消";
     default:
       return status;
   }
@@ -50,6 +51,8 @@ type RightPanelProps = {
   skillSchemas: SkillSchema[];
   tickets: Ticket[];
   ticketLoading: boolean;
+  taskDraft: { sourceMessageId: string | null; sourceMessagePreview: string | null } | null;
+  colleagues: AgentColleague[];
   skillExecuting: string | null;
   lastSkillResult: SkillExecuteResult | null;
   customer360: Customer360Data | null;
@@ -57,7 +60,9 @@ type RightPanelProps = {
   onSelectConversation: (id: string) => void;
   onApplyTopRecommendedSkills: () => void;
   onSetPreferredSkills: (skills: string[]) => void;
-  onCreateTicket: (input: { title: string; description?: string; priority?: string }) => Promise<void>;
+  onCreateTicket: (input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null }) => Promise<void>;
+  onPatchTicket: (ticketId: string, input: { status?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null }) => Promise<void>;
+  onConsumeTaskDraft: () => void;
   onExecuteSkill: (skillName: string, parameters: Record<string, unknown>) => Promise<void>;
 };
 
@@ -169,6 +174,8 @@ export function RightPanel(props: RightPanelProps) {
     skillSchemas,
     tickets,
     ticketLoading,
+    taskDraft,
+    colleagues,
     skillExecuting,
     lastSkillResult,
     customer360,
@@ -177,6 +184,8 @@ export function RightPanel(props: RightPanelProps) {
     onApplyTopRecommendedSkills,
     onSetPreferredSkills,
     onCreateTicket,
+    onPatchTicket,
+    onConsumeTaskDraft,
     onExecuteSkill
   } = props;
 
@@ -188,14 +197,40 @@ export function RightPanel(props: RightPanelProps) {
   const [showTicketForm, setShowTicketForm] = useState(false);
   const [ticketTitle, setTicketTitle] = useState("");
   const [ticketDesc, setTicketDesc] = useState("");
+  const [ticketAssigneeId, setTicketAssigneeId] = useState<string>("");
+  const [ticketDueAt, setTicketDueAt] = useState("");
+  const [ticketSourceMessageId, setTicketSourceMessageId] = useState<string | null>(null);
+  const [ticketSourceMessagePreview, setTicketSourceMessagePreview] = useState<string | null>(null);
   const [ticketFormLoading, setTicketFormLoading] = useState(false);
+
+  useEffect(() => {
+    if (!taskDraft) return;
+    setShowTicketForm(true);
+    setTicketSourceMessageId(taskDraft.sourceMessageId ?? null);
+    setTicketSourceMessagePreview(taskDraft.sourceMessagePreview ?? null);
+    setTicketDesc((current) => current || taskDraft.sourceMessagePreview || "");
+    onConsumeTaskDraft();
+  }, [onConsumeTaskDraft, taskDraft]);
 
   const handleCreateTicket = async () => {
     if (!ticketTitle.trim()) return;
     setTicketFormLoading(true);
     try {
-      await onCreateTicket({ title: ticketTitle.trim(), description: ticketDesc.trim() || undefined, priority: "normal" });
-      setTicketTitle(""); setTicketDesc(""); setShowTicketForm(false);
+      await onCreateTicket({
+        title: ticketTitle.trim(),
+        description: ticketDesc.trim() || undefined,
+        priority: "normal",
+        assigneeId: ticketAssigneeId || null,
+        dueAt: ticketDueAt || null,
+        sourceMessageId: ticketSourceMessageId
+      });
+      setTicketTitle("");
+      setTicketDesc("");
+      setTicketAssigneeId("");
+      setTicketDueAt("");
+      setTicketSourceMessageId(null);
+      setTicketSourceMessagePreview(null);
+      setShowTicketForm(false);
     } finally {
       setTicketFormLoading(false);
     }
@@ -542,6 +577,11 @@ export function RightPanel(props: RightPanelProps) {
 
             {showTicketForm && (
               <div className="ticket-form">
+                {ticketSourceMessagePreview && (
+                  <div className="rp-block" style={{ marginBottom: 8 }}>
+                    引用消息：{ticketSourceMessagePreview}
+                  </div>
+                )}
                 <input
                   type="text"
                   placeholder="任务标题 *"
@@ -552,6 +592,19 @@ export function RightPanel(props: RightPanelProps) {
                   placeholder="描述（可选）"
                   value={ticketDesc}
                   onChange={(e) => setTicketDesc(e.target.value)}
+                />
+                <select value={ticketAssigneeId} onChange={(e) => setTicketAssigneeId(e.target.value)}>
+                  <option value="">负责人（可选）</option>
+                  {colleagues.map((item) => (
+                    <option key={item.agentId} value={item.agentId}>
+                      {item.displayName}{item.employeeNo ? ` #${item.employeeNo}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="datetime-local"
+                  value={ticketDueAt}
+                  onChange={(e) => setTicketDueAt(e.target.value)}
                 />
                 <div className="ticket-form-footer">
                   <button
@@ -584,10 +637,23 @@ export function RightPanel(props: RightPanelProps) {
                 <div className="ticket-head">
                   <div className="ticket-info">
                     <p className="ticket-title">{t.title}</p>
-                    <p className="ticket-meta">{taskStatusLabel(t.status)} · {t.createdByType}</p>
+                    <p className="ticket-meta">
+                      {taskStatusLabel(t.status)}
+                      {t.assigneeName ? ` · ${t.assigneeName}${t.assigneeEmployeeNo ? ` #${t.assigneeEmployeeNo}` : ""}` : ""}
+                      {t.slaDeadlineAt ? ` · 截止 ${shortTime(t.slaDeadlineAt)}` : ""}
+                    </p>
+                  </div>
+                  <div className="ticket-actions">
+                    {t.status === "open" && (
+                      <button type="button" onClick={() => void onPatchTicket(t.ticketId, { status: "in_progress" })}>开始</button>
+                    )}
+                    {t.status !== "done" && t.status !== "cancelled" && (
+                      <button type="button" onClick={() => void onPatchTicket(t.ticketId, { status: "done" })}>完成</button>
+                    )}
                   </div>
                 </div>
                 {t.description && <p className="ticket-desc">{t.description}</p>}
+                {t.sourceMessagePreview && <p className="ticket-desc">引用：{t.sourceMessagePreview}</p>}
                 <p className="ticket-created-at">创建于 {shortTime(t.createdAt)}</p>
               </div>
             ))}

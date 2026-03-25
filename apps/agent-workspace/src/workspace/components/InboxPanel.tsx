@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { ConversationItem, ConversationListItem, SideView } from "../types";
+import type { ConversationItem, ConversationListItem, ConversationViewSummaries, SideView } from "../types";
 import { dateGroupLabel, listTimestamp } from "../utils";
 
 type TierFilter = "all" | "vip" | "premium" | "standard";
@@ -9,6 +9,7 @@ type InboxPanelProps = {
   tierFilter: TierFilter;
   searchText: string;
   filteredConversations: ConversationItem[];
+  viewSummaries: ConversationViewSummaries;
   selectedId: string | null;
   hasMore: boolean;
   isLoading: boolean;
@@ -39,6 +40,7 @@ export function InboxPanel(props: InboxPanelProps) {
     tierFilter,
     searchText,
     filteredConversations,
+    viewSummaries,
     selectedId,
     hasMore,
     isLoading,
@@ -104,6 +106,11 @@ export function InboxPanel(props: InboxPanelProps) {
               {v === "all" ? "全部"
                 : v === "mine" ? "我的"
                 : "跟进"}
+              {(viewSummaries[v]?.unreadMessages ?? 0) > 0 && (
+                <span className="inbox-view-badge">
+                  {(viewSummaries[v]?.unreadMessages ?? 0) > 99 ? "99+" : viewSummaries[v]?.unreadMessages}
+                </span>
+              )}
             </button>
           ))}
         </div>

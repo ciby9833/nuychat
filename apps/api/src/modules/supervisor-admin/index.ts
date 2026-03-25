@@ -364,6 +364,9 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
         .leftJoin("tenant_ai_agents as ai", function joinAiAgent() {
           this.on("ai.ai_agent_id", "=", "m.sender_id").andOn("ai.tenant_id", "=", "m.tenant_id");
         })
+        .leftJoin("messages as rm", function joinReplyTarget() {
+          this.on("rm.message_id", "=", "m.reply_to_message_id").andOn("rm.tenant_id", "=", "m.tenant_id");
+        })
         .where({ "m.tenant_id": tenantId, "m.conversation_id": conversationId })
         .select(
           "m.message_id",
@@ -371,7 +374,11 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
           "m.sender_type",
           "m.message_type",
           "m.content",
+          "m.reply_to_message_id",
+          "m.reaction_target_message_id",
+          "m.reaction_emoji",
           "m.created_at",
+          "rm.content as reply_to_content",
           "tm.display_name as sender_name",
           "ai.name as ai_agent_name"
         )
@@ -418,6 +425,10 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
           messageType: row.message_type,
           content: parseJsonValue(row.content),
           preview: extractMessagePreview(parseJsonValue(row.content)),
+          replyToMessageId: (row.reply_to_message_id as string | null) ?? null,
+          replyToPreview: row.reply_to_content ? extractMessagePreview(parseJsonValue(row.reply_to_content)) : null,
+          reactionTargetMessageId: (row.reaction_target_message_id as string | null) ?? null,
+          reactionEmoji: (row.reaction_emoji as string | null) ?? null,
           createdAt: toIsoString(row.created_at as string)
         }))
       };
@@ -640,16 +651,23 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
     return withTenantTransaction(tenantId, async (trx) => {
       const conversation = await trx("conversations")
         .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .select("customer_id")
-        .first<{ customer_id: string } | undefined>();
+        .select("customer_id", "current_case_id", "current_segment_id", "status")
+        .first<{
+          customer_id: string;
+          current_case_id: string | null;
+          current_segment_id: string | null;
+          status: string;
+        } | undefined>();
       if (!conversation) throw app.httpErrors.notFound("Conversation not found");
 
-      await conversationSegmentService.closeCurrentSegment(trx, {
-        tenantId,
-        conversationId,
-        status: "resolved",
-        reason: "supervisor-force-close"
-      });
+      if (conversation.current_case_id && conversation.current_segment_id) {
+        await conversationSegmentService.closeCurrentSegment(trx, {
+          tenantId,
+          conversationId,
+          status: "resolved",
+          reason: "supervisor-force-close"
+        });
+      }
 
       await ownershipService.applyTransition(trx, {
         type: "resolve_conversation",

@@ -3,7 +3,7 @@
 // 作者：吴川
 
 import { Alert, Space, Tag } from "antd";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { AIConversationDetail, AIConversationListItem } from "../../../types";
 import { formatDateLabel, formatTime, isSameDay } from "../helpers";
@@ -20,6 +20,23 @@ export function ChatTimeline({
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [detail?.messages]);
+  const messages = detail?.messages ?? [];
+  const renderItems = useMemo(
+    () => messages.filter((msg) => !(msg.messageType === "reaction" && msg.reactionTargetMessageId)),
+    [messages]
+  );
+  const reactionsByTarget = useMemo(() => {
+    const grouped = new Map<string, Array<{ emoji: string; count: number }>>();
+    for (const msg of messages) {
+      if (msg.messageType !== "reaction" || !msg.reactionTargetMessageId || !msg.reactionEmoji) continue;
+      const current = grouped.get(msg.reactionTargetMessageId) ?? [];
+      const existing = current.find((item) => item.emoji === msg.reactionEmoji);
+      if (existing) existing.count += 1;
+      else current.push({ emoji: msg.reactionEmoji, count: 1 });
+      grouped.set(msg.reactionTargetMessageId, current);
+    }
+    return grouped;
+  }, [messages]);
 
   if (!detail || !currentItem) {
     return (
@@ -70,11 +87,11 @@ export function ChatTimeline({
           <div style={S.chatEmpty}><span style={{ fontSize: 32 }}>📭</span><span>暂无消息记录</span></div>
         ) : (
           <>
-            {detail.messages.map((msg, i) => {
+            {renderItems.map((msg, i) => {
               const isOut = msg.direction === "outbound";
               const isAI = msg.senderType === "ai";
               const isAgent = msg.senderType === "agent";
-              const prev = i > 0 ? detail.messages[i - 1] : null;
+              const prev = i > 0 ? renderItems[i - 1] : null;
               const showDate = !prev || !isSameDay(prev.createdAt, msg.createdAt);
               return (
                 <div key={msg.messageId}>
@@ -91,7 +108,27 @@ export function ChatTimeline({
                         {isAI ? `🤖 ${conv?.aiAgentName ?? "AI"}` : `👤 ${conv?.assignedAgentName ?? "人工"}`}
                       </div>
                     ) : null}
-                    <div style={S.msgBubble(isOut, msg.senderType)}>{msg.preview}</div>
+                    <div style={S.msgBubbleWrap(isOut)}>
+                      <div style={S.msgBubble(isOut, msg.senderType)}>
+                        {msg.replyToPreview ? (
+                          <div style={S.replyPreview(isOut)}>
+                            <div style={S.replyLabel(isOut)}>回复</div>
+                            <div style={S.replyText(isOut)}>{msg.replyToPreview}</div>
+                          </div>
+                        ) : null}
+                        {msg.preview}
+                      </div>
+                      {(reactionsByTarget.get(msg.messageId)?.length ?? 0) > 0 ? (
+                        <div style={S.reactionStack(isOut)}>
+                          {reactionsByTarget.get(msg.messageId)!.map((reaction) => (
+                            <span key={`${msg.messageId}-${reaction.emoji}`} style={S.reactionChip}>
+                              <span>{reaction.emoji}</span>
+                              {reaction.count > 1 ? <span style={S.reactionCount}>{reaction.count}</span> : null}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                     <div style={S.msgTime}>{formatTime(msg.createdAt)}</div>
                   </div>
                 </div>

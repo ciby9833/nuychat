@@ -26,6 +26,7 @@ import { opsWorkforceRoutes } from "./modules/ops-workforce/index.js";
 import { orgAdminRoutes } from "./modules/org-admin/index.js";
 import { qualityAdminRoutes } from "./modules/quality-admin/index.js";
 import { supervisorAdminRoutes } from "./modules/supervisor-admin/index.js";
+import { taskAdminRoutes } from "./modules/task-admin/index.js";
 import { tenantContextPlugin } from "./modules/tenant/tenant.middleware.js";
 import { uploadRoutes } from "./modules/upload/upload.routes.js";
 import { webchatRoutes } from "./modules/webchat/webchat.routes.js";
@@ -96,6 +97,7 @@ export async function buildApp() {
   await app.register(adminRoutingRoutes);
   await app.register(opsWorkforceRoutes);
   await app.register(supervisorAdminRoutes);
+  await app.register(taskAdminRoutes);
   await app.register(adminGovernanceRoutes);
   await app.register(orgAdminRoutes);
   await app.register(qualityAdminRoutes);

@@ -43,6 +43,7 @@ const { Header, Sider, Content } = Layout;
 const OverviewTab        = lazy(() => import("../components/tabs/OverviewTab").then(m => ({ default: m.OverviewTab })));
 const CasesTab           = lazy(() => import("../components/tabs/CasesTab").then(m => ({ default: m.CasesTab })));
 const HumanConversationsTab = lazy(() => import("../components/tabs/HumanConversationsTab").then(m => ({ default: m.HumanConversationsTab })));
+const TasksTab           = lazy(() => import("../components/tabs/TasksTab").then(m => ({ default: m.TasksTab })));
 const OrganizationTab    = lazy(() => import("../components/tabs/OrganizationTab").then(m => ({ default: m.OrganizationTab })));
 const PermissionsTab     = lazy(() => import("../components/tabs/PermissionsTab").then(m => ({ default: m.PermissionsTab })));
 const ShiftsTab          = lazy(() => import("../components/tabs/ShiftsTab").then(m => ({ default: m.ShiftsTab })));
@@ -70,6 +71,7 @@ const TAB_LABELS: Record<Tab, string> = {
   overview:           "概览",
   cases:              "事项视角",
   "human-conversations": "人工会话",
+  tasks:              "任务管理",
   organization:       "组织架构",
   permissions:        "权限策略",
   shifts:             "排班与在线",
@@ -97,6 +99,7 @@ const TAB_COMPONENTS: Record<Tab, ComponentType> = {
   overview:           OverviewTab,
   cases:              CasesTab,
   "human-conversations": HumanConversationsTab,
+  tasks:              TasksTab,
   organization:       OrganizationTab,
   permissions:        PermissionsTab,
   shifts:             ShiftsTab,
@@ -131,6 +134,7 @@ const MENU_ITEMS: MenuProps["items"] = [
       { key: "overview",          icon: <HomeOutlined />,               label: TAB_LABELS.overview },
       { key: "cases",             icon: <MessageOutlined />,            label: TAB_LABELS.cases },
       { key: "human-conversations", icon: <MessageOutlined />,          label: TAB_LABELS["human-conversations"] },
+      { key: "tasks",             icon: <CheckSquareOutlined />,        label: TAB_LABELS.tasks },
       { key: "organization",      icon: <ApartmentOutlined />,          label: TAB_LABELS.organization },
       { key: "permissions",       icon: <SafetyCertificateOutlined />,  label: TAB_LABELS.permissions },
       { key: "shifts",            icon: <ScheduleOutlined />,           label: TAB_LABELS.shifts },

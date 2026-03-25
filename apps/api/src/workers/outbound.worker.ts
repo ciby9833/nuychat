@@ -74,8 +74,8 @@ export function createOutboundWorker() {
       const saved = await withTenantTransaction(job.data.tenantId, async (trx) => {
         const convRow = await trx("conversations")
           .where({ conversation_id: job.data.conversationId })
-          .select("customer_id", "status")
-          .first<{ customer_id: string | null; status: string }>();
+          .select("customer_id", "status", "last_message_preview")
+          .first<{ customer_id: string | null; status: string; last_message_preview: string | null }>();
 
         // If a human agent writes into a resolved/closed thread, the thread stays
         // the same but a fresh active case becomes the new business object.
@@ -119,9 +119,10 @@ export function createOutboundWorker() {
           .update({
             last_message_at: trx.fn.now(),
             last_message_preview:
-              job.data.message.reactionEmoji ||
-              job.data.message.text ||
-              (job.data.message.attachment ? `[${job.data.message.attachment.fileName ?? "附件"}]` : ""),
+              job.data.message.reactionEmoji
+                ? (convRow?.last_message_preview ?? null)
+                : job.data.message.text ||
+                  (job.data.message.attachment ? `[${job.data.message.attachment.fileName ?? "附件"}]` : ""),
             updated_at: new Date()
           });
 

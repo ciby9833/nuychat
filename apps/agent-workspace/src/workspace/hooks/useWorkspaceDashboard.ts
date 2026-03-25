@@ -15,6 +15,7 @@ import {
   unregisterSessionUpdater,
   listConversationTickets,
   createConversationTicket,
+  patchTicket,
   executeSkill as apiExecuteSkill,
   listConversationAiTraces,
   listConversationSkillSchemas,
@@ -39,8 +40,15 @@ import type {
   Ticket,
   SkillExecuteResult,
   AiTrace,
-  SkillSchema
+  SkillSchema,
+  ConversationViewSummaries
 } from "../types";
+
+const EMPTY_VIEW_SUMMARIES: ConversationViewSummaries = {
+  all: { totalConversations: 0, unreadMessages: 0, unreadConversations: 0 },
+  mine: { totalConversations: 0, unreadMessages: 0, unreadConversations: 0 },
+  follow_up: { totalConversations: 0, unreadMessages: 0, unreadConversations: 0 }
+};
 
 export function useWorkspaceDashboard() {
   const navigate = useNavigate();
@@ -76,6 +84,7 @@ export function useWorkspaceDashboard() {
   const loadingRef = useRef(false);
 
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [viewSummaries, setViewSummaries] = useState<ConversationViewSummaries>(EMPTY_VIEW_SUMMARIES);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [messages, setMessages] = useState<MessageItem[]>([]);
@@ -90,6 +99,7 @@ export function useWorkspaceDashboard() {
   // ── Tickets ─────────────────────────────────────────────────────────────────
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [ticketLoading, setTicketLoading] = useState(false);
+  const [taskDraft, setTaskDraft] = useState<{ sourceMessageId: string | null; sourceMessagePreview: string | null } | null>(null);
 
   // ── Skill execute ────────────────────────────────────────────────────────────
   const [skillExecuting, setSkillExecuting] = useState<string | null>(null);
@@ -115,10 +125,12 @@ export function useWorkspaceDashboard() {
       const data = await listConversationsPaginated(session, { view: effectiveView });
       const items = data.conversations.map(mapConversationRow);
       setConversations(items);
+      setViewSummaries(data.viewSummaries ?? EMPTY_VIEW_SUMMARIES);
       setHasMoreConversations(data.hasMore);
       oldestCursorRef.current = data.nextCursor;
     } catch {
       setConversations([]);
+      setViewSummaries(EMPTY_VIEW_SUMMARIES);
       setHasMoreConversations(false);
       oldestCursorRef.current = null;
     } finally {
@@ -165,6 +177,7 @@ export function useWorkspaceDashboard() {
     try {
       const data = await listConversationsPaginated(session, { view: effectiveView, before: cursor });
       const items = data.conversations.map(mapConversationRow);
+      setViewSummaries(data.viewSummaries ?? EMPTY_VIEW_SUMMARIES);
       setConversations((prev) => {
         const existingIds = new Set(prev.map((c) => c.conversationId));
         const newOnes = items.filter((c) => !existingIds.has(c.conversationId));
@@ -600,18 +613,29 @@ export function useWorkspaceDashboard() {
   }, [loadAiTraces, loadCopilot, loadCustomer360, loadDetail, loadMessages, loadSkillRecommendation, loadSkillSchemas, loadTickets, postAgentActivity, selectedId, syncConversationReadIfVisible]);
 
   const filteredConversations = useMemo(() => {
-    return conversations.filter((c) => {
-      const q = searchText.trim().toLowerCase();
-      const hitSearch =
-        q.length === 0 ||
-        (c.customerName ?? "").toLowerCase().includes(q) ||
-        (c.customerRef ?? "").toLowerCase().includes(q) ||
-        (c.lastMessagePreview ?? "").toLowerCase().includes(q);
+    return conversations
+      .filter((c) => {
+        const q = searchText.trim().toLowerCase();
+        const hitSearch =
+          q.length === 0 ||
+          (c.customerName ?? "").toLowerCase().includes(q) ||
+          (c.customerRef ?? "").toLowerCase().includes(q) ||
+          (c.lastMessagePreview ?? "").toLowerCase().includes(q);
 
-      const tier = (c.customerTier ?? "standard").toLowerCase();
-      const hitTier = tierFilter === "all" || tier === tierFilter;
-      return hitSearch && hitTier;
-    });
+        const tier = (c.customerTier ?? "standard").toLowerCase();
+        const hitTier = tierFilter === "all" || tier === tierFilter;
+        return hitSearch && hitTier;
+      })
+      .sort((a, b) => {
+        const aUnread = a.unreadCount ?? 0;
+        const bUnread = b.unreadCount ?? 0;
+        if ((aUnread > 0) !== (bUnread > 0)) {
+          return aUnread > 0 ? -1 : 1;
+        }
+        const aTime = a.lastMessageAt ?? a.occurredAt;
+        const bTime = b.lastMessageAt ?? b.occurredAt;
+        return aTime < bTime ? 1 : aTime > bTime ? -1 : 0;
+      });
   }, [conversations, searchText, tierFilter]);
 
   useEffect(() => {
@@ -753,6 +777,10 @@ export function useWorkspaceDashboard() {
     }
   }, [loadConversations, loadDetail, postAgentActivity, selectedId, session]);
 
+  useEffect(() => {
+    setTaskDraft(null);
+  }, [selectedId]);
+
   // Note: explicit "reopen" is no longer surfaced in the UI.
   // Sending a message to a resolved conversation is sufficient — the outbound
   // worker transparently reactivates it and assigns it to the sending agent.
@@ -770,6 +798,7 @@ export function useWorkspaceDashboard() {
     setSession(next);
     setSelectedId(null);
     setConversations([]);
+    setViewSummaries(EMPTY_VIEW_SUMMARIES);
     setDetail(null);
     setMessages([]);
     setCopilot(null);
@@ -823,12 +852,27 @@ export function useWorkspaceDashboard() {
   // ── Task handlers ────────────────────────────────────────────────────────────
 
   const doCreateTicket = useCallback(
-    async (input: { title: string; description?: string; priority?: string }) => {
+    async (input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null }) => {
       if (!session || !selectedId) return;
       setTicketLoading(true);
       try {
         const ticket = await createConversationTicket(selectedId, input, session);
         setTickets((prev) => [ticket, ...prev]);
+        setTaskDraft(null);
+      } finally {
+        setTicketLoading(false);
+      }
+    },
+    [selectedId, session]
+  );
+
+  const doPatchTicket = useCallback(
+    async (ticketId: string, input: { status?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null }) => {
+      if (!session || !selectedId) return;
+      setTicketLoading(true);
+      try {
+        const ticket = await patchTicket(ticketId, { conversationId: selectedId, ...input }, session);
+        setTickets((prev) => prev.map((item) => (item.ticketId === ticket.ticketId ? ticket : item)));
       } finally {
         setTicketLoading(false);
       }
@@ -869,6 +913,7 @@ export function useWorkspaceDashboard() {
     tierFilter,
     conversations,
     filteredConversations,
+    viewSummaries,
     hasMoreConversations,
     conversationsLoading,
     loadMoreConversations,
@@ -908,7 +953,10 @@ export function useWorkspaceDashboard() {
     onLogout,
     tickets,
     ticketLoading,
+    taskDraft,
     doCreateTicket,
+    doPatchTicket,
+    setTaskDraft,
     skillExecuting,
     lastSkillResult,
     doExecuteSkill,

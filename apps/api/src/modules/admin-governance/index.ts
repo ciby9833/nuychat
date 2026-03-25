@@ -168,10 +168,24 @@ export async function adminGovernanceRoutes(app: FastifyInstance) {
       if (!conversation) throw app.httpErrors.notFound("Conversation not found");
 
       const [messages, traces] = await Promise.all([
-        trx("messages")
-          .where({ tenant_id: tenantId, conversation_id: conversationId })
-          .select("message_id", "direction", "sender_type", "message_type", "content", "created_at")
-          .orderBy("created_at", "asc")
+        trx("messages as m")
+          .leftJoin("messages as rm", function joinReplyTarget() {
+            this.on("rm.message_id", "=", "m.reply_to_message_id").andOn("rm.tenant_id", "=", "m.tenant_id");
+          })
+          .where({ "m.tenant_id": tenantId, "m.conversation_id": conversationId })
+          .select(
+            "m.message_id",
+            "m.direction",
+            "m.sender_type",
+            "m.message_type",
+            "m.content",
+            "m.created_at",
+            "m.reply_to_message_id",
+            "m.reaction_target_message_id",
+            "m.reaction_emoji",
+            "rm.content as reply_to_content"
+          )
+          .orderBy("m.created_at", "asc")
           .limit(200),
         trx("ai_traces")
           .where({ tenant_id: tenantId, conversation_id: conversationId })
@@ -222,6 +236,10 @@ export async function adminGovernanceRoutes(app: FastifyInstance) {
           messageType: row.message_type,
           content: row.content,
           preview: extractMessagePreview(row.content),
+          replyToMessageId: (row.reply_to_message_id as string | null) ?? null,
+          replyToPreview: row.reply_to_content ? extractMessagePreview(parseJsonValue(row.reply_to_content)) : null,
+          reactionTargetMessageId: (row.reaction_target_message_id as string | null) ?? null,
+          reactionEmoji: (row.reaction_emoji as string | null) ?? null,
           createdAt: toIsoString(row.created_at as string)
         })),
         traces: traces.map((row) => ({

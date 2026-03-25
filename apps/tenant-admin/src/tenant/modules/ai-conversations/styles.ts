@@ -108,9 +108,15 @@ export const S = {
     alignItems: isOut ? ("flex-end" as const) : ("flex-start" as const),
     marginBottom: 12
   }),
+  msgBubbleWrap: (isOut: boolean) => ({
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: isOut ? ("flex-end" as const) : ("flex-start" as const),
+    maxWidth: "70%"
+  }),
   msgAttr: (isAI: boolean) => ({ fontSize: 11, color: isAI ? "#52c41a" : "#1677ff", marginBottom: 2, fontWeight: 500 }),
   msgBubble: (isOut: boolean, senderType: string) => ({
-    maxWidth: "70%", padding: "8px 14px",
+    maxWidth: "100%", padding: "8px 14px",
     borderRadius: isOut ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
     background: senderType === "ai" ? "#f0fdf4" : isOut ? "#1677ff" : "#fff",
     color: senderType === "ai" ? "#1f1f1f" : isOut ? "#fff" : "#1f1f1f",
@@ -119,6 +125,50 @@ export const S = {
     wordBreak: "break-word" as const,
     border: senderType === "ai" ? "1px solid #b7eb8f" : isOut ? "none" : "1px solid #f0f0f0"
   }),
+  replyPreview: (isOut: boolean) => ({
+    marginBottom: 8,
+    padding: "6px 10px",
+    borderLeft: `3px solid ${isOut ? "rgba(255,255,255,0.75)" : "#1677ff"}`,
+    borderRadius: 8,
+    background: isOut ? "rgba(255,255,255,0.14)" : "#f5f5f5"
+  }),
+  replyLabel: (isOut: boolean) => ({
+    fontSize: 11,
+    fontWeight: 600,
+    marginBottom: 2,
+    color: isOut ? "rgba(255,255,255,0.92)" : "#1677ff"
+  }),
+  replyText: (isOut: boolean) => ({
+    fontSize: 12,
+    lineHeight: "1.45",
+    color: isOut ? "rgba(255,255,255,0.92)" : "#595959",
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical" as const,
+    overflow: "hidden" as const
+  }),
+  reactionStack: (isOut: boolean) => ({
+    display: "inline-flex",
+    gap: 6,
+    marginTop: 6,
+    flexWrap: "wrap" as const,
+    justifyContent: isOut ? ("flex-end" as const) : ("flex-start" as const)
+  }),
+  reactionChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    minHeight: 24,
+    padding: "2px 8px",
+    borderRadius: 999,
+    background: "#fff",
+    border: "1px solid rgba(0,0,0,0.08)",
+    boxShadow: "0 2px 8px rgba(15, 23, 42, 0.08)"
+  },
+  reactionCount: {
+    fontSize: 11,
+    color: "#595959"
+  },
   msgTime: { fontSize: 10, color: "#bbb", marginTop: 3 },
   dateSep: { textAlign: "center" as const, margin: "12px 0", fontSize: 11, color: "#bbb" },
   chatEmpty: {

@@ -131,6 +131,14 @@ export type CopilotData = {
 
 export type SideView = "all" | "mine" | "follow_up";
 
+export type ConversationViewSummary = {
+  totalConversations: number;
+  unreadMessages: number;
+  unreadConversations: number;
+};
+
+export type ConversationViewSummaries = Record<SideView, ConversationViewSummary>;
+
 /** A colleague agent available for transfer */
 export type AgentColleague = {
   agentId: string;
@@ -145,6 +153,7 @@ export type PaginatedConversationsResponse = {
   conversations: ConversationItem[];
   hasMore: boolean;
   nextCursor: string | null;
+  viewSummaries: ConversationViewSummaries;
 };
 
 export type RealtimeReplayEvent = {
@@ -179,17 +188,22 @@ export type Ticket = {
   ticketId: string;
   conversationId: string | null;
   caseId: string | null;
+  sourceMessageId: string | null;
   title: string;
   description: string | null;
-  status: "queued" | "running" | "published" | "failed";
-  priority: "normal";
+  status: "open" | "in_progress" | "done" | "cancelled";
+  priority: "low" | "normal" | "high" | "urgent";
   assigneeId: string | null;
+  assigneeName: string | null;
+  assigneeEmployeeNo: string | null;
   slaDeadlineAt: string | null;
   slaStatus: "none";
   resolvedAt: string | null;
   closedAt: string | null;
   createdByType: string;
   createdById: string | null;
+  createdByName: string | null;
+  sourceMessagePreview: string | null;
   createdAt: string;
   updatedAt: string;
 };

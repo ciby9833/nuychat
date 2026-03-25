@@ -297,6 +297,10 @@ export type AIConversationDetail = {
     messageType: string;
     content: unknown;
     preview: string;
+    replyToMessageId?: string | null;
+    replyToPreview?: string | null;
+    reactionTargetMessageId?: string | null;
+    reactionEmoji?: string | null;
     createdAt: string;
   }>;
   traces: Array<{
@@ -378,6 +382,10 @@ export type HumanConversationDetail = {
     messageType: string;
     content: unknown;
     preview: string;
+    replyToMessageId?: string | null;
+    replyToPreview?: string | null;
+    reactionTargetMessageId?: string | null;
+    reactionEmoji?: string | null;
     createdAt: string;
   }>;
 };
@@ -971,6 +979,58 @@ export type DispatchOpsSuggestionGroup = {
   customerSegments: DispatchOpsSuggestion[];
 };
 
+export type AdminTaskComment = {
+  commentId: string;
+  taskId: string;
+  body: string;
+  isInternal: boolean;
+  authorType: string;
+  authorIdentityId: string | null;
+  authorAgentId: string | null;
+  authorName: string | null;
+  authorEmployeeNo: string | null;
+  createdAt: string;
+};
+
+export type AdminTaskItem = {
+  taskId: string;
+  caseId: string;
+  conversationId: string | null;
+  customerId: string | null;
+  sourceMessageId: string | null;
+  taskType: string;
+  title: string;
+  description: string | null;
+  status: "open" | "in_progress" | "done" | "cancelled";
+  priority: "low" | "normal" | "high" | "urgent";
+  ownerAgentId: string | null;
+  ownerName: string | null;
+  ownerEmployeeNo: string | null;
+  dueAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  creatorType: string;
+  creatorIdentityId: string | null;
+  creatorAgentId: string | null;
+  creatorName: string | null;
+  creatorEmployeeNo: string | null;
+  sourceMessagePreview: string | null;
+  sourceMessageAuthorName: string | null;
+  lastCommentedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  caseTitle?: string | null;
+  caseStatus?: string | null;
+  customerName?: string | null;
+  customerRef?: string | null;
+};
+
+export type AdminTaskDetail = {
+  task: AdminTaskItem;
+  comments: AdminTaskComment[];
+};
+
 export type Tab =
   | "overview"
   | "cases"
@@ -988,6 +1048,7 @@ export type Tab =
   | "ai-conversations"
   | "memory-qa"
   | "dispatch-audit"
+  | "tasks"
   | "ai"
   | "kb"
   | "routing"

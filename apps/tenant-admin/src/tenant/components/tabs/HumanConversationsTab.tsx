@@ -1,5 +1,5 @@
 import dayjs from "dayjs";
-import { Alert, Button, DatePicker, Empty, Input, Select, Space, Tag, Typography, message } from "antd";
+import { Alert, App, Button, DatePicker, Empty, Input, Select, Space, Tag, Typography } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -61,6 +61,7 @@ function statusColor(item: HumanConversationListItem): string {
 }
 
 export function HumanConversationsTab() {
+  const { message, modal } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -157,6 +158,22 @@ export function HumanConversationsTab() {
     () => items.find((item) => item.conversationId === selectedConversationId) ?? null,
     [items, selectedConversationId]
   );
+  const renderMessages = useMemo(
+    () => detail?.messages.filter((msg) => !(msg.messageType === "reaction" && msg.reactionTargetMessageId)) ?? [],
+    [detail?.messages]
+  );
+  const reactionsByTarget = useMemo(() => {
+    const grouped = new Map<string, Array<{ emoji: string; count: number }>>();
+    for (const msg of detail?.messages ?? []) {
+      if (msg.messageType !== "reaction" || !msg.reactionTargetMessageId || !msg.reactionEmoji) continue;
+      const current = grouped.get(msg.reactionTargetMessageId) ?? [];
+      const existing = current.find((item) => item.emoji === msg.reactionEmoji);
+      if (existing) existing.count += 1;
+      else current.push({ emoji: msg.reactionEmoji, count: 1 });
+      grouped.set(msg.reactionTargetMessageId, current);
+    }
+    return grouped;
+  }, [detail?.messages]);
 
   const summary = useMemo(() => ({
     total: items.length,
@@ -168,6 +185,11 @@ export function HumanConversationsTab() {
     () => agents.filter((agent) => agent.status === "online" || agent.status === "busy"),
     [agents]
   );
+  const isEndedConversation =
+    detail?.conversation.status === "resolved" ||
+    detail?.conversation.status === "closed" ||
+    detail?.conversation.caseStatus === "resolved" ||
+    detail?.conversation.caseStatus === "closed";
 
   const handleIntervene = useCallback(async () => {
     if (!selectedConversationId || !interveneText.trim()) {
@@ -208,17 +230,27 @@ export function HumanConversationsTab() {
 
   const handleForceClose = useCallback(async () => {
     if (!selectedConversationId) return;
-    setSaving(true);
-    try {
-      await forceCloseConversation(selectedConversationId, "closed from human conversation manager");
-      message.success("会话已强制关闭");
-      await loadList(false);
-    } catch (err) {
-      message.error(`关闭失败: ${(err as Error).message}`);
-    } finally {
-      setSaving(false);
-    }
-  }, [loadList, selectedConversationId]);
+    modal.confirm({
+      title: "确认强制关闭会话？",
+      content: "该操作会直接结束当前会话/事项，并清空当前处理状态。此操作通常只用于异常处理。",
+      okText: "确认关闭",
+      cancelText: "取消",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setSaving(true);
+        try {
+          await forceCloseConversation(selectedConversationId, "closed from human conversation manager");
+          message.success("会话已强制关闭");
+          await loadDetail(selectedConversationId);
+          await loadList(true, selectedConversationId);
+        } catch (err) {
+          message.error(`关闭失败: ${(err as Error).message}`);
+        } finally {
+          setSaving(false);
+        }
+      }
+    });
+  }, [loadDetail, loadList, message, modal, selectedConversationId]);
 
   return (
     <div style={S.root}>
@@ -341,9 +373,9 @@ export function HumanConversationsTab() {
               ) : detail.messages.length === 0 ? (
                 <div style={S.chatEmpty}><span style={{ fontSize: 32 }}>📭</span><span>暂无消息记录</span></div>
               ) : (
-                detail.messages.map((msg, index) => {
+                renderMessages.map((msg, index) => {
                   const isOut = msg.direction === "outbound";
-                  const previous = index > 0 ? detail.messages[index - 1] : null;
+                  const previous = index > 0 ? renderMessages[index - 1] : null;
                   const showDate = !previous || !isSameDay(previous.createdAt, msg.createdAt);
                   const isAI = msg.senderType === "ai";
                   const attrColor = isAI ? "#52c41a" : msg.senderType === "agent" ? "#1677ff" : "#8c8c8c";
@@ -362,7 +394,27 @@ export function HumanConversationsTab() {
                             {msg.senderName ?? (isAI ? "AI" : "人工")}
                           </div>
                         ) : null}
-                        <div style={S.msgBubble(isOut, msg.senderType)}>{msg.preview}</div>
+                        <div style={S.msgBubbleWrap(isOut)}>
+                          <div style={S.msgBubble(isOut, msg.senderType)}>
+                            {msg.replyToPreview ? (
+                              <div style={S.replyPreview(isOut)}>
+                                <div style={S.replyLabel(isOut)}>回复</div>
+                                <div style={S.replyText(isOut)}>{msg.replyToPreview}</div>
+                              </div>
+                            ) : null}
+                            {msg.preview}
+                          </div>
+                          {(reactionsByTarget.get(msg.messageId)?.length ?? 0) > 0 ? (
+                            <div style={S.reactionStack(isOut)}>
+                              {reactionsByTarget.get(msg.messageId)!.map((reaction) => (
+                                <span key={`${msg.messageId}-${reaction.emoji}`} style={S.reactionChip}>
+                                  <span>{reaction.emoji}</span>
+                                  {reaction.count > 1 ? <span style={S.reactionCount}>{reaction.count}</span> : null}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
                         <div style={S.msgTime}>{formatTime(msg.createdAt)}</div>
                       </div>
                     </div>
@@ -399,6 +451,7 @@ export function HumanConversationsTab() {
                 onChange={(e) => setInterveneText(e.target.value)}
                 placeholder="输入消息直接发送给客户…"
                 style={{ marginBottom: 8, borderRadius: 8 }}
+                disabled={Boolean(isEndedConversation)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -406,7 +459,7 @@ export function HumanConversationsTab() {
                   }
                 }}
               />
-              <Button type="primary" block onClick={() => void handleIntervene()} loading={saving} disabled={!interveneText.trim()}>
+              <Button type="primary" block onClick={() => void handleIntervene()} loading={saving} disabled={!interveneText.trim() || Boolean(isEndedConversation)}>
                 发送人工消息
               </Button>
             </div>
@@ -421,13 +474,14 @@ export function HumanConversationsTab() {
                   placeholder="选择在线坐席"
                   value={transferAgentId || undefined}
                   onChange={setTransferAgentId}
+                  disabled={Boolean(isEndedConversation)}
                   options={onlineAgents.map((agent) => ({
                     value: agent.agentId,
                     label: `${agent.displayName} (${agent.activeConversations})`
                   }))}
                 />
-                <Button block onClick={() => void handleTransfer()} loading={saving} disabled={!transferAgentId}>转给人工坐席</Button>
-                <Button block danger onClick={() => void handleForceClose()} loading={saving}>强制关闭会话</Button>
+                <Button block onClick={() => void handleTransfer()} loading={saving} disabled={!transferAgentId || Boolean(isEndedConversation)}>转给人工坐席</Button>
+                <Button block danger onClick={() => void handleForceClose()} loading={saving} disabled={Boolean(isEndedConversation)}>强制关闭会话</Button>
               </div>
             </div>
           </div>

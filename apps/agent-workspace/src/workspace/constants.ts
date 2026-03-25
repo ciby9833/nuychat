@@ -18,15 +18,17 @@ export type ChannelCapability = {
   supportsAttachments: boolean;
   accepts: string;
   maxAttachmentsPerSend: number;
+  reactionOptions: string[];
 };
 
 const DEFAULT_CAPABILITY: ChannelCapability = {
-  supportsReply: false,
-  supportsReaction: false,
+  supportsReply: true,
+  supportsReaction: true,
   supportsSticker: false,
   supportsAttachments: true,
   accepts: "image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx,.zip,.rar,.7z",
-  maxAttachmentsPerSend: 10
+  maxAttachmentsPerSend: 10,
+  reactionOptions: ["👍", "❤️", "😂", "😮", "😢", "🙏"]
 };
 
 const CHANNEL_CAPABILITIES: Record<string, ChannelCapability> = {
@@ -36,7 +38,8 @@ const CHANNEL_CAPABILITIES: Record<string, ChannelCapability> = {
     supportsSticker: true,
     supportsAttachments: true,
     accepts: "image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx,.zip,.rar,.7z,.webp",
-    maxAttachmentsPerSend: 10
+    maxAttachmentsPerSend: 10,
+    reactionOptions: ["👍", "❤️", "😂", "😮", "😢", "🙏"]
   },
   web: DEFAULT_CAPABILITY,
   webhook: DEFAULT_CAPABILITY

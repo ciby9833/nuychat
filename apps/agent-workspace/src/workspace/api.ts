@@ -15,7 +15,7 @@
  */
 
 import { apiHeaders, writeSession } from "./session";
-import type { MessageAttachment, RealtimeReplayEvent, Session } from "./types";
+import type { ConversationViewSummaries, MessageAttachment, RealtimeReplayEvent, Session } from "./types";
 
 export const API_BASE_URL = "http://localhost:3000";
 
@@ -352,6 +352,7 @@ type RawConversationsPage = {
   conversations: Record<string, unknown>[];
   hasMore: boolean;
   nextCursor: string | null;
+  viewSummaries: ConversationViewSummaries;
 };
 
 export async function listConversationsPaginated(
@@ -381,22 +382,6 @@ export function getRealtimeReplay(
   );
 }
 
-/**
- * Reopen a resolved/closed conversation for follow-up.
- * `assignToSelf: true` (default) assigns it to the calling agent immediately.
- */
-export function reopenConversation(
-  conversationId: string,
-  session: Session,
-  assignToSelf = true
-): Promise<{ success: boolean; status: string; assignedAgentId: string | null }> {
-  return apiPostJson<{ success: boolean; status: string; assignedAgentId: string | null }>(
-    `/api/conversations/${conversationId}/reopen`,
-    { assignToSelf },
-    session
-  );
-}
-
 // ─── Task API helpers ─────────────────────────────────────────────────────────
 
 import type { Ticket, SkillExecuteResult, AiTrace, SkillSchema, Customer360Data } from "./types";
@@ -404,59 +389,168 @@ import type { Ticket, SkillExecuteResult, AiTrace, SkillSchema, Customer360Data 
 export function listConversationTickets(conversationId: string, session: Session): Promise<{ tickets: Ticket[] }> {
   return apiFetch<{ tasks: Array<{
     taskId: string;
-    taskType: string;
+    caseId: string;
+    conversationId: string | null;
+    sourceMessageId: string | null;
     title: string;
-    source: string;
-    status: "queued" | "running" | "published" | "failed";
-    resultSummary: string | null;
+    description: string | null;
+    status: "open" | "in_progress" | "done" | "cancelled";
+    priority: "low" | "normal" | "high" | "urgent";
+    ownerAgentId: string | null;
+    ownerName: string | null;
+    ownerEmployeeNo: string | null;
+    dueAt: string | null;
+    creatorType: string;
+    creatorIdentityId: string | null;
+    creatorName: string | null;
+    sourceMessagePreview: string | null;
     createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    cancelledAt: string | null;
   }> }>(`/api/conversations/${conversationId}/tasks`, session).then((data) => ({
     tickets: data.tasks.map((task) => ({
       ticketId: task.taskId,
-      conversationId,
-      caseId: null,
+      conversationId: task.conversationId,
+      caseId: task.caseId,
+      sourceMessageId: task.sourceMessageId,
       title: task.title,
-      description: task.resultSummary ?? null,
+      description: task.description,
       status: task.status,
-      priority: "normal" as const,
-      assigneeId: null,
-      slaDeadlineAt: null,
+      priority: task.priority,
+      assigneeId: task.ownerAgentId,
+      assigneeName: task.ownerName,
+      assigneeEmployeeNo: task.ownerEmployeeNo,
+      slaDeadlineAt: task.dueAt,
       slaStatus: "none" as const,
-      resolvedAt: task.status === "published" ? task.createdAt : null,
-      closedAt: task.status === "failed" ? task.createdAt : null,
-      createdByType: task.source,
-      createdById: null,
+      resolvedAt: task.completedAt,
+      closedAt: task.cancelledAt,
+      createdByType: task.creatorType,
+      createdById: task.creatorIdentityId,
+      createdByName: task.creatorName,
+      sourceMessagePreview: task.sourceMessagePreview,
       createdAt: task.createdAt,
-      updatedAt: task.createdAt
+      updatedAt: task.updatedAt
     }))
   }));
 }
 
 export function createConversationTicket(
   conversationId: string,
-  input: { title: string; description?: string; priority?: string },
+  input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null },
   session: Session
 ): Promise<Ticket> {
-  return apiPostJson<{ queued: boolean }>(
+  return apiPostJson<{ task: {
+    taskId: string;
+    caseId: string;
+    conversationId: string | null;
+    sourceMessageId: string | null;
+    title: string;
+    description: string | null;
+    status: "open" | "in_progress" | "done" | "cancelled";
+    priority: "low" | "normal" | "high" | "urgent";
+    ownerAgentId: string | null;
+    ownerName: string | null;
+    ownerEmployeeNo: string | null;
+    dueAt: string | null;
+    creatorType: string;
+    creatorIdentityId: string | null;
+    creatorName: string | null;
+    sourceMessagePreview: string | null;
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    cancelledAt: string | null;
+  } }>(
     `/api/conversations/${conversationId}/tasks`,
-    { title: input.title, note: input.description ?? "" },
+    {
+      title: input.title,
+      note: input.description ?? "",
+      priority: input.priority ?? "normal",
+      assigneeAgentId: input.assigneeId ?? null,
+      dueAt: input.dueAt ?? null,
+      sourceMessageId: input.sourceMessageId ?? null
+    },
     session
-  ).then(async () => {
-    const data = await listConversationTickets(conversationId, session);
-    const latest = data.tickets[0];
-    if (!latest) {
-      throw new Error("Task queued but not yet visible");
-    }
-    return latest;
-  });
+  ).then((data) => ({
+    ticketId: data.task.taskId,
+    conversationId: data.task.conversationId,
+    caseId: data.task.caseId,
+    sourceMessageId: data.task.sourceMessageId,
+    title: data.task.title,
+    description: data.task.description,
+    status: data.task.status,
+    priority: data.task.priority,
+    assigneeId: data.task.ownerAgentId,
+    assigneeName: data.task.ownerName,
+    assigneeEmployeeNo: data.task.ownerEmployeeNo,
+    slaDeadlineAt: data.task.dueAt,
+    slaStatus: "none" as const,
+    resolvedAt: data.task.completedAt,
+    closedAt: data.task.cancelledAt,
+    createdByType: data.task.creatorType,
+    createdById: data.task.creatorIdentityId,
+    createdByName: data.task.creatorName,
+    sourceMessagePreview: data.task.sourceMessagePreview,
+    createdAt: data.task.createdAt,
+    updatedAt: data.task.updatedAt
+  }));
 }
 
 export function patchTicket(
   ticketId: string,
-  input: { status?: string; priority?: string; assigneeId?: string | null; note?: string },
+  input: { conversationId: string; status?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; note?: string },
   session: Session
 ): Promise<Ticket> {
-  return Promise.reject(new Error(`Task updates are not supported: ${ticketId}:${input.status ?? ""}:${session.tenantId}`));
+  return apiPatchJson<{ task: {
+    taskId: string;
+    caseId: string;
+    conversationId: string | null;
+    sourceMessageId: string | null;
+    title: string;
+    description: string | null;
+    status: "open" | "in_progress" | "done" | "cancelled";
+    priority: "low" | "normal" | "high" | "urgent";
+    ownerAgentId: string | null;
+    ownerName: string | null;
+    ownerEmployeeNo: string | null;
+    dueAt: string | null;
+    creatorType: string;
+    creatorIdentityId: string | null;
+    creatorName: string | null;
+    sourceMessagePreview: string | null;
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    cancelledAt: string | null;
+  } }>(`/api/conversations/${input.conversationId}/tasks/${ticketId}`, {
+    status: input.status,
+    priority: input.priority,
+    assigneeAgentId: input.assigneeId ?? null,
+    dueAt: input.dueAt ?? null
+  }, session).then((data) => ({
+    ticketId: data.task.taskId,
+    conversationId: data.task.conversationId,
+    caseId: data.task.caseId,
+    sourceMessageId: data.task.sourceMessageId,
+    title: data.task.title,
+    description: data.task.description,
+    status: data.task.status,
+    priority: data.task.priority,
+    assigneeId: data.task.ownerAgentId,
+    assigneeName: data.task.ownerName,
+    assigneeEmployeeNo: data.task.ownerEmployeeNo,
+    slaDeadlineAt: data.task.dueAt,
+    slaStatus: "none" as const,
+    resolvedAt: data.task.completedAt,
+    closedAt: data.task.cancelledAt,
+    createdByType: data.task.creatorType,
+    createdById: data.task.creatorIdentityId,
+    createdByName: data.task.creatorName,
+    sourceMessagePreview: data.task.sourceMessagePreview,
+    createdAt: data.task.createdAt,
+    updatedAt: data.task.updatedAt
+  }));
 }
 
 // ─── AI Trace helper ──────────────────────────────────────────────────────────

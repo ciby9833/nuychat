@@ -31,6 +31,7 @@ import {
 } from "../skills/runtime-governance.service.js";
 import { trackEvent } from "../analytics/analytics.service.js";
 import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
+import { CaseTaskService } from "../tasks/case-task.service.js";
 import {
   getConversationInsightRecord,
   getCustomerProfileRecord
@@ -48,6 +49,7 @@ const routingContextService = new RoutingContextService();
 const unifiedRoutingEngineService = new UnifiedRoutingEngineService();
 const routingPlanRepository = new RoutingPlanRepository();
 const routingPlanStepService = new RoutingPlanStepService();
+const caseTaskService = new CaseTaskService();
 
 export async function conversationRoutes(app: FastifyInstance) {
   app.addHook("preHandler", async (req) => {
@@ -68,17 +70,7 @@ export async function conversationRoutes(app: FastifyInstance) {
 
     return withTenantTransaction(tenantId, async (trx) => {
       const conversationSortAt = trx.raw("coalesce(c.last_message_at, c.updated_at)");
-      const unreadCounts = trx("messages as mu")
-        .select("mu.conversation_id")
-        .count<{ unread_count: string }>("mu.message_id as unread_count")
-        .where({
-          "mu.tenant_id": tenantId,
-          "mu.direction": "inbound",
-          "mu.sender_type": "customer"
-        })
-        .whereNull("mu.read_at")
-        .groupBy("mu.conversation_id")
-        .as("uc");
+      const unreadCounts = buildUnreadCountsSubquery(trx, tenantId);
 
       const query = trx("conversations as c")
         .leftJoin("queue_assignments as qa", function joinQueueAssignment() {
@@ -126,36 +118,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         `, [agentId ?? null]))
         .where("c.tenant_id", tenantId);
 
-      if (view === "mine" && agentId) {
-        query
-          .where("cc.current_owner_type", "agent")
-          .where("cc.current_owner_id", agentId);
-      } else if (view === "pending") {
-        if (role === "admin" || role === "supervisor") {
-          query.where((builder) => {
-            builder.where("qa.status", "pending").orWhereNull("qa.assignment_id");
-          });
-        } else {
-          query.whereRaw("1 = 0");
-        }
-      } else if (view === "monitor" && agentId) {
-        // Monitor: conversations actively assigned to OTHER agents only
-        query
-          .where("cc.current_owner_type", "agent")
-          .whereNot("cc.current_owner_id", agentId)
-          .whereIn("c.status", ["human_active", "open", "queued"]);
-      } else if (view === "follow_up" && agentId) {
-        query
-          .where("cc.current_owner_type", "agent")
-          .where("cc.current_owner_id", agentId)
-          .whereIn("cc.status", ["waiting_customer", "waiting_internal"]);
-      } else {
-        // view=all: show all conversations reserved for me, whether already
-        // accepted by me or still waiting for my response.
-        if (agentId) {
-          query.where("c.assigned_agent_id", agentId);
-        }
-      }
+      applyConversationViewFilter(query, { view, agentId, role });
 
       const q = req.query as Record<string, string | undefined>;
       const before = q.before;
@@ -175,7 +138,9 @@ export async function conversationRoutes(app: FastifyInstance) {
       const lastRow = page[page.length - 1] as Record<string, unknown> | undefined;
       const nextCursor = hasMore && lastRow ? String(lastRow.sort_at ?? lastRow.updated_at) : null;
 
-      return { conversations: page, hasMore, nextCursor };
+      const viewSummaries = await getConversationViewSummaries(trx, { tenantId, agentId, role });
+
+      return { conversations: page, hasMore, nextCursor, viewSummaries };
     });
   });
 
@@ -1614,39 +1579,16 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.get("/api/conversations/:conversationId/tasks", async (req) => {
     const auth = requireAuth(app, req);
     const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
     const { conversationId } = req.params as { conversationId: string };
 
     return withTenantTransaction(tenantId, async (trx) => {
-      const rows = await trx("async_tasks")
-        .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .orderBy("created_at", "desc")
-        .limit(50)
-        .select(
-          "task_id",
-          "task_type",
-          "title",
-          "source",
-          "status",
-          "result_summary",
-          "started_at",
-          "completed_at",
-          "published_at",
-          "created_at"
-        );
-
+      await assertConversationAccess(trx, { tenantId, conversationId, agentId, role, app });
+      const result = await caseTaskService.listConversationTasks(trx, tenantId, conversationId);
       return {
-        tasks: rows.map((row) => ({
-          taskId: row.task_id as string,
-          taskType: row.task_type as string,
-          title: row.title as string,
-          source: row.source as string,
-          status: row.status as string,
-          resultSummary: (row.result_summary as string | null) ?? null,
-          startedAt: row.started_at ? toIsoString(row.started_at as string) : null,
-          completedAt: row.completed_at ? toIsoString(row.completed_at as string) : null,
-          publishedAt: row.published_at ? toIsoString(row.published_at as string) : null,
-          createdAt: toIsoString(row.created_at as string)
-        }))
+        caseId: result.caseId,
+        tasks: result.tasks
       };
     });
   });
@@ -1654,111 +1596,140 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.get("/api/conversations/:conversationId/tasks/:taskId", async (req) => {
     const auth = requireAuth(app, req);
     const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
     const { conversationId, taskId } = req.params as { conversationId: string; taskId: string };
 
     return withTenantTransaction(tenantId, async (trx) => {
-      const task = await trx("async_tasks")
-        .where({ tenant_id: tenantId, conversation_id: conversationId, task_id: taskId })
-        .select(
-          "task_id",
-          "task_type",
-          "title",
-          "source",
-          "status",
-          "result_summary",
-          "result_meta",
-          "artifact_dir",
-          "last_error",
-          "created_at",
-          "started_at",
-          "completed_at",
-          "published_at"
-        )
-        .first();
-
-      if (!task) throw app.httpErrors.notFound("Task not found");
-
-      const artifacts = await trx("async_task_artifacts")
-        .where({ tenant_id: tenantId, conversation_id: conversationId, task_id: taskId })
-        .orderBy("sequence_no", "asc")
-        .select("artifact_id", "kind", "file_name", "file_path", "mime_type", "sequence_no", "size_bytes", "content_preview", "metadata", "created_at");
-
-      return {
-        task: {
-          taskId: task.task_id as string,
-          taskType: task.task_type as string,
-          title: task.title as string,
-          source: task.source as string,
-          status: task.status as string,
-          resultSummary: (task.result_summary as string | null) ?? null,
-          resultMeta: parseJsonObject(task.result_meta),
-          artifactDir: (task.artifact_dir as string | null) ?? null,
-          lastError: (task.last_error as string | null) ?? null,
-          createdAt: toIsoString(task.created_at as string),
-          startedAt: task.started_at ? toIsoString(task.started_at as string) : null,
-          completedAt: task.completed_at ? toIsoString(task.completed_at as string) : null,
-          publishedAt: task.published_at ? toIsoString(task.published_at as string) : null
-        },
-        artifacts: artifacts.map((row) => ({
-          artifactId: row.artifact_id as string,
-          kind: row.kind as string,
-          fileName: row.file_name as string,
-          filePath: row.file_path as string,
-          mimeType: row.mime_type as string,
-          sequenceNo: Number(row.sequence_no),
-          sizeBytes: Number(row.size_bytes),
-          contentPreview: (row.content_preview as string | null) ?? null,
-          metadata: parseJsonObject(row.metadata),
-          createdAt: toIsoString(row.created_at as string)
-        }))
-      };
+      await assertConversationAccess(trx, { tenantId, conversationId, agentId, role, app });
+      const detail = await caseTaskService.getConversationTaskDetail(trx, tenantId, conversationId, taskId);
+      if (!detail) throw app.httpErrors.notFound("Task not found");
+      return detail;
     });
   });
 
   app.post("/api/conversations/:conversationId/tasks", async (req) => {
     const auth = requireAuth(app, req);
     const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
     const { conversationId } = req.params as { conversationId: string };
     const body = (req.body as {
       title?: string;
       note?: string;
-      documents?: Array<{ kind?: string; fileName?: string; content?: string; mimeType?: string; metadata?: Record<string, unknown> }>;
+      priority?: string;
+      assigneeAgentId?: string | null;
+      dueAt?: string | null;
+      sourceMessageId?: string | null;
     } | undefined) ?? {};
 
     const title = body.title?.trim();
     if (!title) throw app.httpErrors.badRequest("title is required");
 
-    const conversation = await withTenantTransaction(tenantId, async (trx) => {
-      return trx("conversations")
+    return withTenantTransaction(tenantId, async (trx) => {
+      await assertConversationAccess(trx, { tenantId, conversationId, agentId, role, app });
+      const conversation = await trx("conversations")
         .where({ tenant_id: tenantId, conversation_id: conversationId })
         .select("customer_id")
-        .first<{ customer_id: string }>();
-    });
-    if (!conversation) throw app.httpErrors.notFound("Conversation not found");
+        .first<{ customer_id: string | null } | undefined>();
+      if (!conversation) throw app.httpErrors.notFound("Conversation not found");
 
-    await scheduleLongTask({
-      tenantId,
-      customerId: conversation.customer_id,
-      conversationId,
-      taskType: "conversation_note_archive",
-      title,
-      source: auth.agentId ? "agent" : "workflow",
-      createdById: auth.sub,
-      payload: {
-        note: body.note?.trim() ?? "",
-        documents: Array.isArray(body.documents)
-          ? body.documents.map((item) => ({
-              kind: typeof item.kind === "string" ? item.kind : "document",
-              fileName: typeof item.fileName === "string" ? item.fileName : "document.md",
-              content: typeof item.content === "string" ? item.content : "",
-              mimeType: typeof item.mimeType === "string" ? item.mimeType : "text/markdown",
-              metadata: item.metadata ?? {}
-            }))
-          : []
+      const caseId = await caseTaskService.resolveCurrentOrLatestCaseId(trx, tenantId, conversationId);
+      if (!caseId) throw app.httpErrors.conflict("Conversation has no current or historical case");
+
+      if (body.sourceMessageId) {
+        const sourceMessage = await trx("messages")
+          .where({
+            tenant_id: tenantId,
+            conversation_id: conversationId,
+            message_id: body.sourceMessageId
+          })
+          .select("message_id")
+          .first<{ message_id: string } | undefined>();
+        if (!sourceMessage) {
+          throw app.httpErrors.badRequest("sourceMessageId does not belong to this conversation");
+        }
       }
-    });
 
-    return { queued: true };
+      const taskId = await caseTaskService.createConversationTask(trx, {
+        tenantId,
+        conversationId,
+        caseId,
+        customerId: conversation.customer_id,
+        title,
+        description: body.note?.trim() ?? null,
+        priority: body.priority ?? null,
+        assigneeAgentId: body.assigneeAgentId ?? null,
+        dueAt: body.dueAt ?? null,
+        sourceMessageId: body.sourceMessageId ?? null,
+        creatorType: auth.agentId ? "agent" : "workflow",
+        creatorIdentityId: auth.sub,
+        creatorAgentId: auth.agentId ?? null
+      });
+
+      const detail = await caseTaskService.getConversationTaskDetail(trx, tenantId, conversationId, taskId);
+      if (!detail) throw app.httpErrors.internalServerError("Task created but could not be loaded");
+      return detail;
+    });
+  });
+
+  app.patch("/api/conversations/:conversationId/tasks/:taskId", async (req) => {
+    const auth = requireAuth(app, req);
+    const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
+    const { conversationId, taskId } = req.params as { conversationId: string; taskId: string };
+    const body = (req.body as {
+      status?: string;
+      priority?: string;
+      assigneeAgentId?: string | null;
+      dueAt?: string | null;
+    } | undefined) ?? {};
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      await assertConversationAccess(trx, { tenantId, conversationId, agentId, role, app });
+      const existing = await caseTaskService.getConversationTaskDetail(trx, tenantId, conversationId, taskId);
+      if (!existing) throw app.httpErrors.notFound("Task not found");
+      await caseTaskService.patchTask(trx, {
+        tenantId,
+        taskId,
+        status: body.status,
+        priority: body.priority,
+        assigneeAgentId: body.assigneeAgentId,
+        dueAt: body.dueAt
+      });
+      const detail = await caseTaskService.getConversationTaskDetail(trx, tenantId, conversationId, taskId);
+      if (!detail) throw app.httpErrors.internalServerError("Task updated but could not be loaded");
+      return detail;
+    });
+  });
+
+  app.post("/api/conversations/:conversationId/tasks/:taskId/comments", async (req) => {
+    const auth = requireAuth(app, req);
+    const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
+    const { conversationId, taskId } = req.params as { conversationId: string; taskId: string };
+    const body = (req.body as { body?: string } | undefined) ?? {};
+    const content = body.body?.trim();
+    if (!content) throw app.httpErrors.badRequest("body is required");
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      await assertConversationAccess(trx, { tenantId, conversationId, agentId, role, app });
+      const existing = await caseTaskService.getConversationTaskDetail(trx, tenantId, conversationId, taskId);
+      if (!existing) throw app.httpErrors.notFound("Task not found");
+      await caseTaskService.addComment(trx, {
+        tenantId,
+        taskId,
+        body: content,
+        authorType: auth.agentId ? "agent" : "workflow",
+        authorIdentityId: auth.sub,
+        authorAgentId: auth.agentId ?? null
+      });
+      const detail = await caseTaskService.getConversationTaskDetail(trx, tenantId, conversationId, taskId);
+      if (!detail) throw app.httpErrors.internalServerError("Task comment saved but task could not be loaded");
+      return detail;
+    });
   });
 
   // ── POST /api/conversations/:conversationId/skills/execute ────────────────────
@@ -1941,6 +1912,123 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+function buildUnreadCountsSubquery(trx: Knex.Transaction, tenantId: string) {
+  return trx("messages as mu")
+    .select("mu.conversation_id")
+    .count<{ unread_count: string }>("mu.message_id as unread_count")
+    .where({
+      "mu.tenant_id": tenantId,
+      "mu.direction": "inbound",
+      "mu.sender_type": "customer"
+    })
+    .whereNull("mu.read_at")
+    .groupBy("mu.conversation_id")
+    .as("uc");
+}
+
+function applyConversationViewFilter(
+  query: Knex.QueryBuilder,
+  input: {
+    view: string;
+    agentId?: string;
+    role: string;
+  }
+) {
+  const { view, agentId, role } = input;
+
+  if (view === "mine" && agentId) {
+    query
+      .where("cc.current_owner_type", "agent")
+      .where("cc.current_owner_id", agentId);
+    return;
+  }
+
+  if (view === "pending") {
+    if (role === "admin" || role === "supervisor") {
+      query.where((builder) => {
+        builder.where("qa.status", "pending").orWhereNull("qa.assignment_id");
+      });
+    } else {
+      query.whereRaw("1 = 0");
+    }
+    return;
+  }
+
+  if (view === "monitor" && agentId) {
+    query
+      .where("cc.current_owner_type", "agent")
+      .whereNot("cc.current_owner_id", agentId)
+      .whereIn("c.status", ["human_active", "open", "queued"]);
+    return;
+  }
+
+  if (view === "follow_up" && agentId) {
+    query
+      .where("cc.current_owner_type", "agent")
+      .where("cc.current_owner_id", agentId)
+      .whereIn("cc.status", ["waiting_customer", "waiting_internal"]);
+    return;
+  }
+
+  if (agentId) {
+    query.where("c.assigned_agent_id", agentId);
+  }
+}
+
+async function getConversationViewSummaries(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    agentId?: string;
+    role: string;
+  }
+) {
+  const views = ["all", "mine", "follow_up"] as const;
+
+  const rows = await Promise.all(views.map(async (view) => {
+    const unreadCounts = buildUnreadCountsSubquery(trx, input.tenantId);
+    const row = await trx("conversations as c")
+      .leftJoin(unreadCounts, "uc.conversation_id", "c.conversation_id")
+      .leftJoin("queue_assignments as qa", function joinQueueAssignment() {
+        this.on("qa.conversation_id", "=", "c.conversation_id").andOn("qa.tenant_id", "=", "c.tenant_id");
+      })
+      .leftJoin("conversation_cases as cc", function joinCurrentCase() {
+        this.on("cc.case_id", "=", "c.current_case_id").andOn("cc.tenant_id", "=", "c.tenant_id");
+      })
+      .where("c.tenant_id", input.tenantId)
+      .modify((query) => applyConversationViewFilter(query, {
+        view,
+        agentId: input.agentId,
+        role: input.role
+      }))
+      .select(
+        trx.raw("count(*)::int as total_conversations"),
+        trx.raw("coalesce(sum(coalesce(uc.unread_count, 0)), 0)::int as unread_messages"),
+        trx.raw("coalesce(sum(case when coalesce(uc.unread_count, 0) > 0 then 1 else 0 end), 0)::int as unread_conversations")
+      )
+      .first<{
+        total_conversations: number | string | null;
+        unread_messages: number | string | null;
+        unread_conversations: number | string | null;
+      }>();
+
+    return [
+      view,
+      {
+        totalConversations: Number(row?.total_conversations ?? 0),
+        unreadMessages: Number(row?.unread_messages ?? 0),
+        unreadConversations: Number(row?.unread_conversations ?? 0)
+      }
+    ] as const;
+  }));
+
+  return Object.fromEntries(rows) as Record<"all" | "mine" | "follow_up", {
+    totalConversations: number;
+    unreadMessages: number;
+    unreadConversations: number;
+  }>;
 }
 
 function toIsoString(value: string | Date): string {
