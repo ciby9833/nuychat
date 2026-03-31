@@ -50,7 +50,6 @@ export async function registerAIConfigAdminRoutes(app: FastifyInstance) {
             temperature: typeof quotas.temperature === "number" ? quotas.temperature : 0.4,
             max_tokens: typeof quotas.maxTokens === "number" ? quotas.maxTokens : 500,
             system_prompt_override: typeof quotas.systemPromptOverride === "string" ? quotas.systemPromptOverride : null,
-            integrations: (quotas.integrations as Record<string, { endpoint?: string; apiKey?: string; timeout?: number }>) ?? {},
             has_api_key: Boolean(readAIProviderApiKey(parseAIConfigKeyBag(cfg.encrypted_api_key), provider)),
             base_url: readAIProviderBaseUrl(quotas, provider),
             is_default: Boolean(cfg.is_default),
@@ -88,7 +87,6 @@ export async function registerAIConfigAdminRoutes(app: FastifyInstance) {
       systemPromptOverride?: string | null;
       encryptedApiKey?: string;
       baseUrl?: string | null;
-      integrations?: Record<string, { endpoint?: string; apiKey?: string; timeout?: number }>;
       isActive?: boolean;
       isDefault?: boolean;
     };
@@ -104,8 +102,7 @@ export async function registerAIConfigAdminRoutes(app: FastifyInstance) {
       const quotas: Record<string, unknown> = {
         temperature: body.temperature !== undefined ? Math.max(0, Math.min(2, body.temperature)) : 0.4,
         maxTokens: body.maxTokens !== undefined ? Math.max(100, Math.min(4000, body.maxTokens)) : 500,
-        systemPromptOverride: body.systemPromptOverride ?? null,
-        integrations: body.integrations ?? {}
+        systemPromptOverride: body.systemPromptOverride ?? null
       };
       if (body.baseUrl !== undefined) {
         setAIProviderBaseUrl(quotas, provider, body.baseUrl);
@@ -150,7 +147,6 @@ export async function registerAIConfigAdminRoutes(app: FastifyInstance) {
       systemPromptOverride?: string | null;
       encryptedApiKey?: string;
       baseUrl?: string | null;
-      integrations?: Record<string, { endpoint?: string; apiKey?: string; timeout?: number }>;
     };
 
     return withTenantTransaction(tenantId, async (trx) => {
@@ -168,12 +164,11 @@ export async function registerAIConfigAdminRoutes(app: FastifyInstance) {
         updates.encrypted_api_key = JSON.stringify(keyBag);
       }
 
-      if (body.temperature !== undefined || body.maxTokens !== undefined || body.systemPromptOverride !== undefined || body.integrations !== undefined || body.baseUrl !== undefined) {
+      if (body.temperature !== undefined || body.maxTokens !== undefined || body.systemPromptOverride !== undefined || body.baseUrl !== undefined) {
         const quotas = parseJsonObject(currentConfig.quotas);
         if (body.temperature !== undefined) quotas.temperature = Math.max(0, Math.min(2, body.temperature));
         if (body.maxTokens !== undefined) quotas.maxTokens = Math.max(100, Math.min(4000, body.maxTokens));
         if (body.systemPromptOverride !== undefined) quotas.systemPromptOverride = body.systemPromptOverride;
-        if (body.integrations !== undefined) quotas.integrations = body.integrations;
         if (body.baseUrl !== undefined) {
           const provider = normalizeProvider(String(updates.provider ?? currentConfig.provider ?? "openai"));
           setAIProviderBaseUrl(quotas, provider, body.baseUrl);
@@ -201,7 +196,6 @@ export async function registerAIConfigAdminRoutes(app: FastifyInstance) {
       systemPromptOverride?: string | null;
       encryptedApiKey?: string;
       baseUrl?: string | null;
-      integrations?: Record<string, { endpoint?: string; apiKey?: string; timeout?: number }>;
       isActive?: boolean;
     };
 
@@ -224,12 +218,11 @@ export async function registerAIConfigAdminRoutes(app: FastifyInstance) {
       }
       if (body.isActive !== undefined) updates.is_active = body.isActive;
 
-      if (body.temperature !== undefined || body.maxTokens !== undefined || body.systemPromptOverride !== undefined || body.integrations !== undefined || body.baseUrl !== undefined) {
+      if (body.temperature !== undefined || body.maxTokens !== undefined || body.systemPromptOverride !== undefined || body.baseUrl !== undefined) {
         const quotas = parseJsonObject(current.quotas);
         if (body.temperature !== undefined) quotas.temperature = Math.max(0, Math.min(2, body.temperature));
         if (body.maxTokens !== undefined) quotas.maxTokens = Math.max(100, Math.min(4000, body.maxTokens));
         if (body.systemPromptOverride !== undefined) quotas.systemPromptOverride = body.systemPromptOverride;
-        if (body.integrations !== undefined) quotas.integrations = body.integrations;
         if (body.baseUrl !== undefined) {
           const provider = normalizeProvider(String(updates.provider ?? current.provider ?? "openai"));
           setAIProviderBaseUrl(quotas, provider, body.baseUrl);

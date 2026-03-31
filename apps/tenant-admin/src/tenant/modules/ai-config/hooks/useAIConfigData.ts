@@ -3,22 +3,25 @@
 // 作者：吴川
 
 import type { FormInstance } from "antd";
+import i18next from "i18next";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   createTenantAIConfig,
   deleteTenantAIConfig,
+  listTenantAIAgents,
   listTenantAIConfigs,
   patchTenantAIConfig,
   setDefaultTenantAIConfig
 } from "../../../api";
-import type { AIConfigProfile } from "../../../types";
+import type { AIConfigProfile, TenantAIAgentListResponse } from "../../../types";
 import { requiresAIProviderApiKeyOnCreate } from "../../../../../../../packages/shared-types/src/ai-model-config";
 import type { AIConfigFormValues } from "../types";
 import { normalizeProvider } from "../types";
 
 export function useAIConfigData(form: FormInstance<AIConfigFormValues>) {
   const [rows, setRows] = useState<AIConfigProfile[]>([]);
+  const [summary, setSummary] = useState<TenantAIAgentListResponse["summary"] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [saved, setSaved] = useState(false);
@@ -30,37 +33,56 @@ export function useAIConfigData(form: FormInstance<AIConfigFormValues>) {
   const load = useCallback(async () => {
     try {
       setError("");
-      const data = await listTenantAIConfigs();
+      const [data, aiAgentData] = await Promise.all([
+        listTenantAIConfigs(),
+        listTenantAIAgents()
+      ]);
       const list = data.configs ?? [];
+      setSummary(aiAgentData.summary ?? null);
       setRows(list);
-      const nextSelected = selectedId && list.some((item) => item.config_id === selectedId)
-        ? selectedId
-        : (list.find((item) => item.is_default)?.config_id ?? list[0]?.config_id ?? null);
-      setSelectedId(nextSelected);
-
-      const target = list.find((item) => item.config_id === nextSelected);
-      if (target) {
-        form.setFieldsValue({
-          name: target.name,
-          provider: normalizeProvider(target.provider),
-          model_name: target.model_name,
-          base_url: target.base_url ?? null,
-          temperature: target.temperature,
-          max_tokens: target.max_tokens,
-          system_prompt_override: target.system_prompt_override,
-          is_active: target.is_active
-        });
-      } else {
-        form.resetFields();
-      }
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [form, selectedId]);
+  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (rows.length === 0) {
+      if (selectedId !== null) {
+        setSelectedId(null);
+      }
+      form.resetFields();
+      return;
+    }
+
+    const nextSelected = selectedId && rows.some((item) => item.config_id === selectedId)
+      ? selectedId
+      : (selectedId === null ? null : (rows.find((item) => item.is_default)?.config_id ?? rows[0]?.config_id ?? null));
+
+    if (nextSelected !== selectedId) {
+      setSelectedId(nextSelected);
+      return;
+    }
+
+    const target = rows.find((item) => item.config_id === nextSelected) ?? null;
+    if (target) {
+      form.setFieldsValue({
+        name: target.name,
+        provider: normalizeProvider(target.provider),
+        model_name: target.model_name,
+        base_url: target.base_url ?? null,
+        temperature: target.temperature,
+        max_tokens: target.max_tokens,
+        system_prompt_override: target.system_prompt_override,
+        is_active: target.is_active
+      });
+    } else {
+      form.resetFields();
+    }
+  }, [form, rows, selectedId]);
 
   const save = async () => {
     setError("");
@@ -70,10 +92,10 @@ export function useAIConfigData(form: FormInstance<AIConfigFormValues>) {
       const values = await form.validateFields();
       const providerChanged = selectedId ? values.provider !== selected?.provider : false;
       if (!selectedId && requiresAIProviderApiKeyOnCreate(values.provider) && !apiKey.trim()) {
-        throw new Error("该模型厂商在新增时必须填写 API Key");
+        throw new Error(i18next.t("aiConfig.errors.apiKeyRequiredOnCreate"));
       }
       if (selectedId && requiresAIProviderApiKeyOnCreate(values.provider) && (providerChanged || !selected?.has_api_key) && !apiKey.trim()) {
-        throw new Error(providerChanged ? "切换到该模型厂商时必须填写新的 API Key" : "该模型厂商必须填写 API Key");
+        throw new Error(i18next.t(providerChanged ? "aiConfig.errors.apiKeyRequiredOnProviderSwitch" : "aiConfig.errors.apiKeyRequiredForProvider"));
       }
       if (selectedId) {
         await patchTenantAIConfig(selectedId, {
@@ -142,6 +164,7 @@ export function useAIConfigData(form: FormInstance<AIConfigFormValues>) {
   };
 
   return {
+    summary,
     rows, selected, selectedId, setSelectedId,
     apiKey, setApiKey,
     saved, error, busy,

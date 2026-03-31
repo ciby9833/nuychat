@@ -19,7 +19,9 @@ export class RoutingExecutionService {
       departmentId: plan.target.departmentId,
       teamId: plan.target.teamId,
       assignedAgentId: selectedOwnerType === "human" ? plan.target.agentId : null,
-      assignedAiAgentId: null,
+      // Keep the reserved AI owner on inbound plans so routing/orchestrator
+      // and supervisor monitors can still see who is expected to handle it.
+      assignedAiAgentId: selectedOwnerType === "ai" ? plan.target.aiAgentId : null,
       strategy: plan.target.strategy,
       priority: plan.target.priority,
       status: plan.statusPlan.queueStatus,
@@ -52,7 +54,7 @@ function buildInboundOwnershipTransition(plan: RoutingPlan): OwnershipTransition
         conversationId: plan.conversationId,
         caseId: plan.caseId,
         assignedAgentId: plan.action === "assign_specific_owner" ? plan.target.agentId : null,
-        conversationStatus: plan.statusPlan.conversationStatus
+        conversationStatus: plan.statusPlan.conversationStatus as any
       };
     case "assign_ai_owner":
       return {
@@ -60,7 +62,7 @@ function buildInboundOwnershipTransition(plan: RoutingPlan): OwnershipTransition
         tenantId: plan.tenantId,
         conversationId: plan.conversationId,
         caseId: plan.caseId,
-        conversationStatus: plan.statusPlan.conversationStatus
+        conversationStatus: plan.statusPlan.conversationStatus as any
       };
     default:
       throw new Error(`Unsupported routing action for conversation ${plan.conversationId}`);

@@ -1,8 +1,13 @@
-// 作用: 渠道管理辅助函数（标识读取、剪贴板）
-// 菜单路径: 客户中心 -> 渠道配置
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 渠道配置
+ * 文件职责: 提供渠道标识读取和剪贴板复制辅助方法。
+ * 主要交互文件:
+ * - ./components/ChannelGrid.tsx: 使用 readChannelIdentifier 渲染卡片辅助信息。
+ * - ./components/ChannelDetail.tsx: 使用 readChannelIdentifier 和 copyToClipboard。
+ */
 
 import { message } from "antd";
+import i18next from "i18next";
 
 import type { ChannelConfig } from "../../types";
 
@@ -17,8 +22,8 @@ export async function copyToClipboard(value: string | null | undefined, title: s
   if (!value) return;
   try {
     await navigator.clipboard.writeText(value);
-    message.success(`${title} 已复制`);
+    void message.success(i18next.t("channelsModule.helper.copySuccess", { title }));
   } catch {
-    message.error("复制失败，请手动复制");
+    void message.error(i18next.t("channelsModule.helper.copyFailed"));
   }
 }

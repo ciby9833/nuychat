@@ -1,0 +1,110 @@
+export default {
+  aiCapabilities: {
+    page: {
+      title: "AI Capability Catalog",
+      create: "Create Capability",
+      intro: "A capability package answers five things: what it is, how the model should understand it, how to clarify missing fields, what reference material exists, and how scripts actually execute.",
+      intro2: "Select a row to view details. Use the inline actions to edit or delete.",
+      detailTitle: "Capability Details",
+      deleteTitle: "Delete capability \"{{name}}\"?",
+      deleteContent: "Deleting it will also remove related bindings. Please confirm again.",
+      deleteOk: "Confirm Delete",
+      deleted: "Capability deleted",
+      created: "Capability created",
+      updated: "Capability updated"
+    },
+    detail: {
+      empty: "Select a capability to view details",
+      name: "Name",
+      code: "Code",
+      category: "Category",
+      status: "Status",
+      description: "Description",
+      unmaintained: "Not maintained",
+      scriptsEmpty: "No scripts",
+      enabled: "Enabled",
+      disabled: "Disabled",
+      fileName: "File Name",
+      scriptKey: "Script Key",
+      requirements: "Requirements",
+      envBindings: "Environment Variables",
+      none: "None"
+    },
+    table: {
+      name: "Capability Name",
+      code: "Code",
+      category: "Category",
+      status: "Status",
+      actions: "Actions",
+      edit: "Edit",
+      delete: "Delete"
+    },
+    modal: {
+      basicInfo: "Basic Info",
+      skill: "SKILL.md",
+      forms: "FORMS.md",
+      reference: "REFERENCE.md",
+      scripts: "Scripts",
+      validationWarning: "Please check the required fields in the form",
+      createTitle: "Create AI Capability",
+      editTitle: "Edit AI Capability",
+      cancel: "Cancel",
+      prev: "Previous",
+      next: "Next",
+      createConfirm: "Confirm Create",
+      saveConfirm: "Confirm Save"
+    },
+    metadata: {
+      intro: "The name, code, category, status, and description entered here will form the lightweight metadata loaded when the agent starts.",
+      name: "Capability Name",
+      nameRequired: "Please enter a capability name",
+      namePlaceholder: "For example: Shipment Tracking",
+      code: "Code",
+      codeRequired: "Please enter a code",
+      codePlaceholder: "For example: track_shipment (used for system identification and references)",
+      category: "Category",
+      categoryPlaceholder: "For example: logistics (used for catalog grouping)",
+      status: "Status",
+      description: "Description",
+      descriptionPlaceholder: "Explain in one sentence or one paragraph what problem this capability solves and where it is usually used"
+    },
+    markdown: {
+      skillIntro: "SKILL.md is the actual capability instruction loaded by the model. Follow a fixed structure instead of a vague one-line description.",
+      formsIntro: "FORMS.md tells the model what information is missing, how to ask the user to complete it, and how fields map to script inputs.",
+      referenceIntro: "REFERENCE.md holds detailed reference material such as API doc summaries, error codes, and field explanations. It is read on demand and does not need to be written as dialogue."
+    },
+    scripts: {
+      intro: "Maintain the scripts that actually execute the capability here. Requirements are stored natively with the script config and prepared at runtime, rather than guessed from comments or imports.",
+      script: "Script",
+      delete: "Delete",
+      scriptName: "Script Name",
+      scriptNameRequired: "Please enter a script name",
+      scriptNamePlaceholder: "For example: J&T shipment query script",
+      scriptKey: "Script Key",
+      scriptKeyRequired: "Please enter a script key",
+      scriptKeyPlaceholder: "For example: cargo_trace",
+      fileName: "File Name",
+      fileNamePlaceholder: "For example: query.py",
+      language: "Language",
+      enabled: "Enabled",
+      sourceCode: "Script Content",
+      sourceCodeRequired: "Please enter script content",
+      requirements: "Requirements",
+      requirementsTooltip: "One pip package per line, for example google-generativeai or Pillow.",
+      requirementsExtra: "Only list third-party Python packages required to run this script. Standard library packages do not need to be listed.",
+      requirementsPlaceholder: "Enter a package name and press Enter, for example: google-generativeai",
+      envVars: "Environment Variables",
+      envKeyRequired: "Please enter a variable name",
+      envKeyPlaceholder: "For example: JT_CARGO_API_ACCOUNT",
+      envValueRequired: "Please enter a variable value",
+      envValuePlaceholder: "Enter the variable value for this capability",
+      addEnvVar: "Add Environment Variable",
+      addScript: "Add Script"
+    },
+    status: {
+      active: "Active",
+      draft: "Draft",
+      inactive: "Inactive"
+    }
+  }
+};

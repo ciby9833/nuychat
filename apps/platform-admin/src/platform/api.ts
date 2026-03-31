@@ -31,8 +31,16 @@ import type {
   TenantListResponse
 } from "./types";
 
-const API_BASE = "http://localhost:3000";
+const API_BASE = readRequiredEnv("VITE_API_BASE_URL");
 const SESSION_KEY = "nuychat.platformSession";
+
+function readRequiredEnv(name: "VITE_API_BASE_URL"): string {
+  const value = import.meta.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required env: ${name}`);
+  }
+  return value.replace(/\/$/, "");
+}
 
 // ─── Session-update registry ──────────────────────────────────────────────────
 // DashboardPage registers its setSession() here so the refresh interceptor

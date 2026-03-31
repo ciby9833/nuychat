@@ -1,5 +1,13 @@
 import type { Knex } from "knex";
 
+import {
+  inferStructuredMessageFromText,
+  isInternalControlPayload,
+  normalizeStructuredActions,
+  normalizeStructuredMessage,
+  structuredToPlainText
+} from "../../shared/messaging/structured-message.js";
+import type { StructuredMessage, StructuredMessageAction } from "../../shared/types/structured-message.js";
 import type { UnifiedMessage } from "../../shared/types/unified-message.js";
 import { CUSTOMER_MESSAGE_SENDER_TYPE } from "./message.constants.js";
 
@@ -60,6 +68,8 @@ export class MessageService {
       conversationId: string;
       externalId: string | null;
       text: string;
+      structured?: StructuredMessage | null;
+      actions?: StructuredMessageAction[];
       senderId?: string | null;
       /** If provided (and senderId is absent), marks the message as AI-generated (sender_type="bot") */
       aiAgentName?: string | null;
@@ -76,12 +86,23 @@ export class MessageService {
     }
   ) {
     const isAI = !input.senderId && Boolean(input.aiAgentName);
+    const structured = normalizeStructuredMessage(input.structured) ?? inferStructuredMessageFromText(input.text);
+    const actions = normalizeStructuredActions(input.actions);
+    const resolvedText = isInternalControlPayload(input.text.trim())
+      ? ""
+      : structuredToPlainText(structured, input.text);
     const content: Record<string, unknown> = {
-      text: input.reactionEmoji ?? input.text,
+      text: input.reactionEmoji ?? resolvedText,
       direction: "outbound"
     };
     if (isAI && input.aiAgentName) {
       content.aiAgentName = input.aiAgentName;
+    }
+    if (structured) {
+      content.structured = structured;
+    }
+    if (actions.length > 0) {
+      content.actions = actions;
     }
     if (input.attachment) {
       content.attachments = [input.attachment];
@@ -105,8 +126,8 @@ export class MessageService {
         direction: "outbound",
         sender_type: isAI ? "bot" : "agent",
         sender_id: input.senderId ?? null,
-        channel_message_type: input.channelMessageType ?? resolveOutboundChannelMessageType(input),
-        message_type: input.reactionEmoji ? "reaction" : input.attachment ? "media" : "text",
+        channel_message_type: input.channelMessageType ?? resolveOutboundChannelMessageType({ ...input, actions }),
+        message_type: resolveOutboundMessageType(input, actions),
         content,
         message_status: "sent",
         status_sent_at: input.createdAt ?? new Date(),
@@ -179,14 +200,29 @@ function isVoiceMessage(message: UnifiedMessage): boolean {
 function resolveOutboundChannelMessageType(input: {
   attachment?: MessageAttachment;
   reactionEmoji?: string | null;
+  actions?: StructuredMessageAction[];
 }): string {
   if (input.reactionEmoji) return "reaction";
+  if (Array.isArray(input.actions) && input.actions.length > 0) return "interactive";
   if (!input.attachment) return "text";
   if (input.attachment.mimeType === "image/webp") return "sticker";
   if (input.attachment.mimeType.startsWith("audio/")) return "audio";
   if (input.attachment.mimeType.startsWith("video/")) return "video";
   if (input.attachment.mimeType.startsWith("image/")) return "image";
   return "document";
+}
+
+function resolveOutboundMessageType(
+  input: {
+    attachment?: MessageAttachment;
+    reactionEmoji?: string | null;
+  },
+  actions: StructuredMessageAction[]
+): string {
+  if (input.reactionEmoji) return "reaction";
+  if (input.attachment) return "media";
+  if (actions.length > 0) return "interactive";
+  return "text";
 }
 
 async function hydrateMessageReferences(db: Knex | Knex.Transaction, tenantId: string, messageId: string) {

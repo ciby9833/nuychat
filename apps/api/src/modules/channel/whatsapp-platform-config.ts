@@ -1,3 +1,5 @@
+import { readOptionalEnv, readRequiredBaseUrlEnv } from "../../infra/env.js";
+
 type WhatsAppPlatformConfig = {
   appId: string | null;
   appSecret: string | null;
@@ -15,7 +17,7 @@ export function getWhatsAppPlatformConfig(): WhatsAppPlatformConfig {
     systemUserAccessToken: normalize(process.env.META_SYSTEM_USER_ACCESS_TOKEN),
     webhookVerifyToken: normalize(process.env.META_WEBHOOK_VERIFY_TOKEN),
     embeddedSignupConfigId: normalize(process.env.META_EMBEDDED_SIGNUP_CONFIG_ID),
-    graphApiVersion: normalize(process.env.META_GRAPH_API_VERSION) ?? "v21.0",
+    graphApiVersion: readOptionalEnv("META_GRAPH_API_VERSION") ?? "v21.0",
     apiBaseUrl: resolveApiBaseUrl()
   };
 }
@@ -49,8 +51,7 @@ export function assertWhatsAppMessagingConfigured() {
 }
 
 function resolveApiBaseUrl(): string {
-  const value = normalize(process.env.API_PUBLIC_BASE);
-  return value ?? "http://localhost:3000";
+  return readRequiredBaseUrlEnv("API_PUBLIC_BASE");
 }
 
 function normalize(input: string | undefined | null): string | null {

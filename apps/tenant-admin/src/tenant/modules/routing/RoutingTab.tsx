@@ -1,9 +1,20 @@
-// 用于调度会话座席调度规则中心
-// 菜单路径：客户中心 -> 调度规则
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 路由
+ * 文件职责: 路由模块主入口，负责规则、模块、技能组三个页签与编辑器弹窗状态编排。
+ * 主要交互文件:
+ * - ./hooks/useRoutingData.ts
+ * - ./components/RuleTable.tsx
+ * - ./components/ModuleTable.tsx
+ * - ./components/SkillGroupTable.tsx
+ * - ./modals/RuleEditorDrawer.tsx
+ * - ./modals/ModuleEditorModal.tsx
+ * - ./modals/SkillGroupEditorModal.tsx
+ */
+
 import { ApartmentOutlined, AppstoreOutlined, PlusOutlined, ReloadOutlined, TeamOutlined } from "@ant-design/icons";
 import { Button, Space, Tabs, Tag, Typography } from "antd";
 import { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { ModuleItem, RoutingRule, SkillGroup } from "../../types";
 import { ModuleTable } from "./components/ModuleTable";
@@ -16,6 +27,7 @@ import { SkillGroupEditorModal } from "./modals/SkillGroupEditorModal";
 import type { ModuleFormValues, RuleFormValues, SkillGroupFormValues } from "./types";
 
 export function RoutingTab() {
+  const { t } = useTranslation();
   const data = useRoutingData();
 
   const [editorOpen, setEditorOpen] = useState(false);
@@ -33,35 +45,23 @@ export function RoutingTab() {
 
   const handleRuleSubmit = async (values: RuleFormValues) => {
     const ok = await data.submitRule(values, editingRule);
-    if (ok) {
-      setEditorOpen(false);
-      setEditingRule(null);
-    }
+    if (ok) { setEditorOpen(false); setEditingRule(null); }
   };
 
   const handleDeleteRule = (ruleId: string) => {
     void data.removeRule(ruleId).then(() => {
-      if (editingRule?.rule_id === ruleId) {
-        setEditingRule(null);
-        setEditorOpen(false);
-      }
+      if (editingRule?.rule_id === ruleId) { setEditingRule(null); setEditorOpen(false); }
     });
   };
 
   const handleModuleSubmit = async (values: ModuleFormValues) => {
     const ok = await data.submitModule(values, editingModule);
-    if (ok) {
-      setModuleEditorOpen(false);
-      setEditingModule(null);
-    }
+    if (ok) { setModuleEditorOpen(false); setEditingModule(null); }
   };
 
   const handleSkillGroupSubmit = async (values: SkillGroupFormValues) => {
     const ok = await data.submitSkillGroup(values, editingSkillGroup);
-    if (ok) {
-      setSkillGroupEditorOpen(false);
-      setEditingSkillGroup(null);
-    }
+    if (ok) { setSkillGroupEditorOpen(false); setEditingSkillGroup(null); }
   };
 
   const activeCount = data.rules.filter((r) => r.is_active).length;
@@ -69,31 +69,25 @@ export function RoutingTab() {
   const tabItems = [
     {
       key: "rules",
-      label: (
-        <span><ApartmentOutlined /> 路由规则 <Tag style={{ marginLeft: 4 }}>{data.rules.length}</Tag></span>
-      ),
+      label: <span><ApartmentOutlined /> {t("routing.rulesTab")} <Tag style={{ marginLeft: 4 }}>{data.rules.length}</Tag></span>,
       children: (
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <Space>
-              <Tag color="blue">{data.rules.length} 条规则</Tag>
-              <Tag color="green">{activeCount} 条启用</Tag>
+              <Tag color="blue">{t("routing.rulesCount", { count: data.rules.length })}</Tag>
+              <Tag color="green">{t("routing.enabledCount", { count: activeCount })}</Tag>
             </Space>
             <Space>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => { setEditingRule(null); setEditorOpen(true); }}
-              >
-                新增规则
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingRule(null); setEditorOpen(true); }}>
+                {t("routing.addRule")}
               </Button>
               <Button icon={<ReloadOutlined />} onClick={() => { void data.load(); }} loading={data.loading}>
-                刷新
+                {t("common.refresh")}
               </Button>
             </Space>
           </div>
           <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
-            规则会先命中条件，再把会话导向部门/团队/技能组，最终由调度中心按在线、排班、休息和负载选人。
+            {t("routing.hint")}
           </Typography.Text>
           <RuleTable
             rules={data.rules}
@@ -109,23 +103,17 @@ export function RoutingTab() {
     },
     {
       key: "modules",
-      label: (
-        <span><AppstoreOutlined /> 模块管理 <Tag style={{ marginLeft: 4 }}>{data.modules.length}</Tag></span>
-      ),
+      label: <span><AppstoreOutlined /> {t("routing.modulesTab")} <Tag style={{ marginLeft: 4 }}>{data.modules.length}</Tag></span>,
       children: (
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <Tag color="blue">{data.modules.length} 个模块</Tag>
+            <Tag color="blue">{t("routing.modulesCount", { count: data.modules.length })}</Tag>
             <Space>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => { setEditingModule(null); setModuleEditorOpen(true); }}
-              >
-                新增模块
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingModule(null); setModuleEditorOpen(true); }}>
+                {t("routing.addModule")}
               </Button>
               <Button icon={<ReloadOutlined />} onClick={() => { void data.load(); }} loading={data.loading}>
-                刷新
+                {t("common.refresh")}
               </Button>
             </Space>
           </div>
@@ -140,13 +128,11 @@ export function RoutingTab() {
     },
     {
       key: "skillGroups",
-      label: (
-        <span><TeamOutlined /> 技能组管理 <Tag style={{ marginLeft: 4 }}>{data.groups.length}</Tag></span>
-      ),
+      label: <span><TeamOutlined /> {t("routing.skillGroupsTab")} <Tag style={{ marginLeft: 4 }}>{data.groups.length}</Tag></span>,
       children: (
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <Tag color="blue">{data.groups.length} 个技能组</Tag>
+            <Tag color="blue">{t("routing.skillGroupsCount", { count: data.groups.length })}</Tag>
             <Space>
               <Button
                 type="primary"
@@ -154,10 +140,10 @@ export function RoutingTab() {
                 disabled={data.modules.length === 0}
                 onClick={() => { setEditingSkillGroup(null); setSkillGroupEditorOpen(true); }}
               >
-                新增技能组
+                {t("routing.addSkillGroup")}
               </Button>
               <Button icon={<ReloadOutlined />} onClick={() => { void data.load(); }} loading={data.loading}>
-                刷新
+                {t("common.refresh")}
               </Button>
             </Space>
           </div>
@@ -175,10 +161,7 @@ export function RoutingTab() {
 
   return (
     <>
-      {data.error && (
-        <Tag color="red" style={{ marginBottom: 12 }}>{data.error}</Tag>
-      )}
-
+      {data.error && <Tag color="red" style={{ marginBottom: 12 }}>{data.error}</Tag>}
       <Tabs defaultActiveKey="rules" items={tabItems} />
 
       <RuleEditorDrawer
@@ -192,7 +175,6 @@ export function RoutingTab() {
         onClose={() => { setEditorOpen(false); setEditingRule(null); }}
         onSubmit={handleRuleSubmit}
       />
-
       <ModuleEditorModal
         open={moduleEditorOpen}
         saving={data.saving}
@@ -200,7 +182,6 @@ export function RoutingTab() {
         onClose={() => { setModuleEditorOpen(false); setEditingModule(null); }}
         onSubmit={handleModuleSubmit}
       />
-
       <SkillGroupEditorModal
         open={skillGroupEditorOpen}
         saving={data.saving}

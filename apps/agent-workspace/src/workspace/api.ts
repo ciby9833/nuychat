@@ -17,15 +17,21 @@
 import { apiHeaders, writeSession } from "./session";
 import type { ConversationViewSummaries, MessageAttachment, RealtimeReplayEvent, Session } from "./types";
 
-export const API_BASE_URL = "http://localhost:3000";
+export const API_BASE_URL = readRequiredEnv("VITE_API_BASE_URL");
+
+function readRequiredEnv(name: "VITE_API_BASE_URL"): string {
+  const value = import.meta.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required env: ${name}`);
+  }
+  return value.replace(/\/$/, "");
+}
 
 export function resolveApiUrl(path: string): string {
   return /^(?:https?:|data:|blob:)/i.test(path) ? path : `${API_BASE_URL}${path}`;
 }
 
 // ─── Session-update registry ──────────────────────────────────────────────────
-// DashboardPage registers its setSession() here so the refresh interceptor
-// can keep the React state in sync without prop drilling.
 
 let _sessionUpdater: ((s: Session) => void) | null = null;
 
@@ -38,7 +44,7 @@ export function unregisterSessionUpdater(): void {
 }
 
 // ─── Internal refresh logic ───────────────────────────────────────────────────
-// Deduplicated: concurrent 401s share one in-flight refresh promise.
+
 let _refreshInFlight: Promise<Session | null> | null = null;
 
 async function tryRefreshSession(session: Session): Promise<Session | null> {
@@ -46,7 +52,7 @@ async function tryRefreshSession(session: Session): Promise<Session | null> {
 
   _refreshInFlight = (async () => {
     try {
-      const res = await fetch("http://localhost:3000/api/auth/refresh", {
+      const res = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken: session.refreshToken })
@@ -82,14 +88,14 @@ function goToLogin(): void {
 // ─── Public fetch helpers ─────────────────────────────────────────────────────
 
 export async function apiFetch<T>(path: string, session: Session): Promise<T> {
-  let res = await fetch(`http://localhost:3000${path}`, {
+  let res = await fetch(`${API_BASE_URL}${path}`, {
     headers: apiHeaders(session)
   });
 
   if (res.status === 401) {
     const next = await tryRefreshSession(session);
     if (next) {
-      res = await fetch(`http://localhost:3000${path}`, { headers: apiHeaders(next) });
+      res = await fetch(`${API_BASE_URL}${path}`, { headers: apiHeaders(next) });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return res.json() as Promise<T>;
     }
@@ -107,7 +113,7 @@ export async function apiPost(
   session: Session
 ): Promise<void> {
   const makeRequest = (s: Session) =>
-    fetch(`http://localhost:3000${path}`, {
+    fetch(`${API_BASE_URL}${path}`, {
       method: "POST",
       headers: apiHeaders(s),
       body: JSON.stringify(body)
@@ -135,7 +141,7 @@ export async function apiPatch(
   session: Session
 ): Promise<void> {
   const makeRequest = (s: Session) =>
-    fetch(`http://localhost:3000${path}`, {
+    fetch(`${API_BASE_URL}${path}`, {
       method: "PATCH",
       headers: apiHeaders(s),
       body: JSON.stringify(body)
@@ -163,7 +169,7 @@ export async function apiPut(
   session: Session
 ): Promise<void> {
   const makeRequest = (s: Session) =>
-    fetch(`http://localhost:3000${path}`, {
+    fetch(`${API_BASE_URL}${path}`, {
       method: "PUT",
       headers: apiHeaders(s),
       body: JSON.stringify(body)
@@ -185,14 +191,13 @@ export async function apiPut(
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 }
 
-// ── apiPostJson — like apiPost but returns the JSON response body ─────────────
 export async function apiPostJson<T>(
   path: string,
   body: Record<string, unknown>,
   session: Session
 ): Promise<T> {
   const makeRequest = (s: Session) =>
-    fetch(`http://localhost:3000${path}`, {
+    fetch(`${API_BASE_URL}${path}`, {
       method: "POST",
       headers: apiHeaders(s),
       body: JSON.stringify(body)
@@ -215,14 +220,13 @@ export async function apiPostJson<T>(
   return res.json() as Promise<T>;
 }
 
-// ── apiPatchJson — like apiPatch but returns JSON ─────────────────────────────
 export async function apiPatchJson<T>(
   path: string,
   body: Record<string, unknown>,
   session: Session
 ): Promise<T> {
   const makeRequest = (s: Session) =>
-    fetch(`http://localhost:3000${path}`, {
+    fetch(`${API_BASE_URL}${path}`, {
       method: "PATCH",
       headers: apiHeaders(s),
       body: JSON.stringify(body)
@@ -303,7 +307,7 @@ export async function switchTenantSession(
   session: Session,
   membershipId: string
 ): Promise<Session> {
-  const res = await fetch("http://localhost:3000/api/auth/switch-tenant", {
+  const res = await fetch(`${API_BASE_URL}/api/auth/switch-tenant`, {
     method: "POST",
     headers: apiHeaders(session),
     body: JSON.stringify({ membershipId })
@@ -339,7 +343,7 @@ export async function switchTenantSession(
 }
 
 export async function logoutSession(session: Session, allSessions = false): Promise<void> {
-  await fetch("http://localhost:3000/api/auth/logout", {
+  await fetch(`${API_BASE_URL}/api/auth/logout`, {
     method: "POST",
     headers: apiHeaders(session),
     body: JSON.stringify({ allSessions })
@@ -569,7 +573,7 @@ export function listConversationSkillSchemas(
   session: Session
 ): Promise<{ schemas: SkillSchema[] }> {
   return apiFetch<{ schemas: SkillSchema[] }>(
-    `/api/conversations/${conversationId}/skills/schemas`,
+    `/api/conversations/${conversationId}/executors/schemas`,
     session
   );
 }
@@ -618,8 +622,29 @@ export function executeSkill(
   session: Session
 ): Promise<SkillExecuteResult> {
   return apiPostJson<SkillExecuteResult>(
-    `/api/conversations/${conversationId}/skills/execute`,
-    { skillName, parameters },
+    `/api/conversations/${conversationId}/executors/execute`,
+    { executorName: skillName, parameters },
+    session
+  );
+}
+
+export function requestConversationSkillAssist(
+  conversationId: string,
+  sourceMessageId: string | null,
+  session: Session,
+  skillSlug?: string | null
+): Promise<{
+  assist: {
+    skillName: string;
+    sourceMessageId: string;
+    sourceMessagePreview: string;
+    parameters: Record<string, unknown>;
+    result: Record<string, unknown>;
+  } | null;
+}> {
+  return apiPostJson(
+    `/api/conversations/${conversationId}/skills/assist`,
+    { sourceMessageId, skillSlug: skillSlug ?? undefined },
     session
   );
 }

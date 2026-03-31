@@ -83,3 +83,31 @@ export async function sendWebchatMessage(input: {
   });
   await assertOk(response);
 }
+
+export async function uploadWebchatAttachment(input: {
+  publicKey: string;
+  file: File;
+}): Promise<WebchatAttachment> {
+  const formData = new FormData();
+  formData.append("file", input.file);
+
+  const response = await fetch(`${API_BASE}/api/webchat/public/${encodeURIComponent(input.publicKey)}/upload`, {
+    method: "POST",
+    body: formData
+  });
+  await assertOk(response);
+
+  const payload = await response.json() as {
+    url: string;
+    mimeType: string;
+    fileName: string;
+    fileSize: number;
+  };
+
+  return {
+    name: payload.fileName,
+    mimeType: payload.mimeType,
+    size: payload.fileSize,
+    url: payload.url
+  };
+}

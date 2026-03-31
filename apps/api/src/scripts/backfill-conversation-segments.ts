@@ -51,8 +51,8 @@ async function main() {
           tenant_id: conversation.tenant_id,
           conversation_id: conversation.conversation_id
         })
-        .min<{ started_at: string | null }>("created_at as started_at")
-        .max<{ ended_at: string | null }>("created_at as ended_at")
+        .min<{ started_at: string | null; ended_at: string | null }>("created_at as started_at")
+        .max("created_at as ended_at")
         .first();
 
       const startedAt =

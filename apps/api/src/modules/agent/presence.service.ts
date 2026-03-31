@@ -169,7 +169,7 @@ export class PresenceService {
     const query = trx("agent_profiles as ap")
       .leftJoin(activeBreaks, "ab.agent_id", "ap.agent_id")
       .leftJoin(activeAssignments, function joinActiveAssignments() {
-        this.on(trx.raw("qa.current_handler_id::uuid"), "=", trx.ref("ap.agent_id"));
+        this.on(trx.raw("qa.current_handler_id::uuid") as unknown as string, "=", trx.ref("ap.agent_id"));
       })
       .where("ap.tenant_id", tenantId)
       .select(

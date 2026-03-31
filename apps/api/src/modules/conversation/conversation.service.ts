@@ -25,7 +25,7 @@ export class ConversationService {
         tenant_id: input.tenantId,
         customer_id: input.customerId,
         channel_id: input.channelId
-      })
+      } as any)
       .whereIn("status", activeStatuses)
       .orderBy("updated_at", "desc")
       .first();
@@ -49,7 +49,7 @@ export class ConversationService {
         tenant_id: input.tenantId,
         customer_id: input.customerId,
         channel_id: input.channelId
-      })
+      } as any)
       .whereIn("status", ["resolved", "closed"])
       .orderBy("updated_at", "desc")
       .first();

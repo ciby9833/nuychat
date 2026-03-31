@@ -364,7 +364,7 @@ export async function customerAdminRoutes(app: FastifyInstance) {
 
       if (segmentRule?.rule_json) {
         const rule = parseJsonObject(segmentRule.rule_json);
-        items = items.filter((item) => evaluateCustomerSegmentRule(item, rule));
+        items = items.filter((item: any) => evaluateCustomerSegmentRule(item, rule));
       }
 
       return { page, pageSize, total: items.length, items: items.slice(0, pageSize) };

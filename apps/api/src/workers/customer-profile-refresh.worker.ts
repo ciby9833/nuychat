@@ -40,7 +40,7 @@ export function createCustomerProfileRefreshWorker() {
       };
     },
     {
-      connection: workerConnection,
+      connection: workerConnection as any,
       concurrency: 1
     }
   );

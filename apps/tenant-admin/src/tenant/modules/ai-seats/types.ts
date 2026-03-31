@@ -1,7 +1,13 @@
-// 作用: AI 座席管理模块的类型定义
-// 菜单路径: 客户中心 -> AI 座席管理
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> AI 座席
+ * 文件职责: 定义 AI 座席表单类型，并统一处理模块内接口错误文案。
+ * 主要交互文件:
+ * - ./AISeatsTab.tsx: 使用 AISeatsFormValues 作为编辑表单类型。
+ * - ./hooks/useAISeatsData.ts: 通过 getAISeatErrorMessage 处理接口错误。
+ * - ../../api: 提供 TenantApiError 类型来源。
+ */
 
+import i18next from "i18next";
 import { TenantApiError } from "../../api";
 
 export type AISeatsFormValues = {
@@ -16,7 +22,7 @@ export type AISeatsFormValues = {
 
 export function getAISeatErrorMessage(err: unknown): string {
   if (err instanceof TenantApiError && err.code === "ai_seat_limit_exceeded") {
-    return "AI 座席授权已满，无法启用新的 AI 客服实例。请联系平台管理员扩容。";
+    return i18next.t("aiSeats.errors.seatLimitExceeded");
   }
   return (err as Error).message;
 }

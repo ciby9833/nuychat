@@ -74,6 +74,7 @@ export class AIDispatchService {
     input: {
       tenantId: string;
       customerId: string;
+      conversationId?: string | null;
       aiTarget: {
         aiAgentId: string | null;
         assignmentStrategy: RoutingAssignmentStrategy | null;
@@ -111,6 +112,41 @@ export class AIDispatchService {
           }
         }))
       };
+    }
+
+    // ── Conversation-sticky: reuse the AI agent already assigned to this
+    // conversation if it is still active.  This keeps the same agent across
+    // multiple message rounds, giving continuity without any extra state.
+    if (input.conversationId) {
+      const existing = await db("queue_assignments")
+        .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
+        .whereNotNull("assigned_ai_agent_id")
+        .select("assigned_ai_agent_id")
+        .first<{ assigned_ai_agent_id: string } | undefined>();
+
+      if (existing?.assigned_ai_agent_id) {
+        const sticky = candidates.find((c) => c.aiAgentId === existing.assigned_ai_agent_id);
+        if (sticky) {
+          return {
+            aiAgentId: sticky.aiAgentId,
+            aiAgentName: sticky.aiAgentName,
+            selectionReason: "conversation_sticky",
+            strategy: "sticky",
+            candidates: candidates.map((candidate) => ({
+              candidateType: "ai_agent",
+              candidateId: candidate.aiAgentId,
+              candidateLabel: candidate.aiAgentName,
+              stage: "conversation_sticky",
+              accepted: candidate.aiAgentId === sticky.aiAgentId,
+              rejectReason: candidate.aiAgentId === sticky.aiAgentId ? null : "conversation_sticky_other",
+              details: {
+                activeConversationCount: candidate.activeConversationCount,
+                lastAssignedAt: candidate.lastAssignedAt
+              }
+            }))
+          };
+        }
+      }
     }
 
     const strategy = input.aiTarget.assignmentStrategy ?? "least_busy";

@@ -63,6 +63,19 @@ type TaskUpdatedEvent = RealtimeEventBase & {
   status: string;
   title: string;
   summary?: string | null;
+  error?: string | null;
+  occurredAt: string;
+};
+
+type TicketSlaWarningEvent = RealtimeEventBase & {
+  tenantId: string;
+  conversationId: string;
+  occurredAt: string;
+};
+
+type TicketSlaBreachedEvent = RealtimeEventBase & {
+  tenantId: string;
+  conversationId: string;
   occurredAt: string;
 };
 
@@ -217,6 +230,5 @@ export type {
   MessageSentEvent,
   TicketSlaWarningEvent,
   TicketSlaBreachedEvent,
-  TaskUpdatedEvent,
-  RealtimeEvents
+  TaskUpdatedEvent
 };

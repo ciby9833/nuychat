@@ -1,12 +1,11 @@
 import {
-  ApiOutlined,
   ApartmentOutlined,
   AppstoreOutlined,
   AreaChartOutlined,
   CheckSquareOutlined,
   ClockCircleOutlined,
-  ControlOutlined,
   ForkOutlined,
+  GlobalOutlined,
   HomeOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
@@ -21,14 +20,17 @@ import {
   TeamOutlined,
   ThunderboltOutlined
 } from "@ant-design/icons";
-import { Button, Layout, Menu, Select, Space, Spin, Typography } from "antd";
+import { Button, Dropdown, Layout, Menu, Select, Space, Spin, Tabs, Typography } from "antd";
 import type { MenuProps } from "antd";
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { ComponentType } from "react";
-import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { useNavigate, useParams } from "react-router-dom";
 
 import { logoutTenant, registerTenantSessionUpdater, switchTenant, unregisterTenantSessionUpdater } from "../api";
+import { changeLanguage, LANGS } from "../../i18n";
 import { clearTenantSession, readTenantSession, writeTenantSession } from "../session";
+import { useTenantTabStore } from "../stores/tabStore";
 import type { AdminSession, MembershipSummary, Tab } from "../types";
 
 type AdminNavigateDetail = {
@@ -37,9 +39,7 @@ type AdminNavigateDetail = {
 
 const { Header, Sider, Content } = Layout;
 
-// ── lazy-load each tab so Vite splits them into separate chunks ──────────────
-// (only the visible tab's JS is parsed; initial bundle is much smaller)
-
+// ── lazy-load each tab ────────────────────────────────────────────────────────
 const OverviewTab        = lazy(() => import("../components/tabs/OverviewTab").then(m => ({ default: m.OverviewTab })));
 const CasesTab           = lazy(() => import("../components/tabs/CasesTab").then(m => ({ default: m.CasesTab })));
 const HumanConversationsTab = lazy(() => import("../components/tabs/HumanConversationsTab").then(m => ({ default: m.HumanConversationsTab })));
@@ -53,11 +53,10 @@ const AIConversationsTab = lazy(() => import("../components/tabs/AIConversations
 const MemoryQaTab        = lazy(() => import("../components/tabs/MemoryQaTab").then(m => ({ default: m.MemoryQaTab })));
 const DispatchAuditTab   = lazy(() => import("../components/tabs/DispatchAuditTab").then(m => ({ default: m.DispatchAuditTab })));
 const AIConfigTab        = lazy(() => import("../components/tabs/AIConfigTab").then(m => ({ default: m.AIConfigTab })));
+const CapabilitiesTab    = lazy(() => import("../components/tabs/CapabilitiesTab").then(m => ({ default: m.CapabilitiesTab })));
 const KnowledgeBaseTab   = lazy(() => import("../components/tabs/KnowledgeBaseTab").then(m => ({ default: m.KnowledgeBaseTab })));
 const RoutingTab         = lazy(() => import("../components/tabs/RoutingTab").then(m => ({ default: m.RoutingTab })));
 const ChannelsTab        = lazy(() => import("../components/tabs/ChannelsTab").then(m => ({ default: m.ChannelsTab })));
-const MarketplaceTab     = lazy(() => import("../components/tabs/MarketplaceTab").then(m => ({ default: m.MarketplaceTab })));
-const IntegrationsTab    = lazy(() => import("../components/tabs/IntegrationsTab").then(m => ({ default: m.IntegrationsTab })));
 const AnalyticsTab       = lazy(() => import("../components/tabs/AnalyticsTab").then(m => ({ default: m.AnalyticsTab })));
 const SlaTab             = lazy(() => import("../components/tabs/SlaTab").then(m => ({ default: m.SlaTab })));
 const QaTab              = lazy(() => import("../components/tabs/QaTab").then(m => ({ default: m.QaTab })));
@@ -65,111 +64,36 @@ const CsatTab            = lazy(() => import("../components/tabs/CsatTab").then(
 const SupervisorTab      = lazy(() => import("../components/tabs/SupervisorTab").then(m => ({ default: m.SupervisorTab })));
 const CustomersTab       = lazy(() => import("../components/tabs/CustomersTab").then(m => ({ default: m.CustomersTab })));
 
-// ── tab metadata ─────────────────────────────────────────────────────────────
-
-const TAB_LABELS: Record<Tab, string> = {
-  overview:           "概览",
-  cases:              "事项视角",
-  "human-conversations": "人工会话",
-  tasks:              "任务管理",
-  organization:       "组织架构",
-  permissions:        "权限策略",
-  shifts:             "排班与在线",
-  agents:             "坐席管理",
-  "ai-seats":         "AI 座席",
-  "ai-conversations": "AI 会话",
-  "memory-qa":       "Memory QA",
-  "dispatch-audit":   "调度依据",
-  ai:                 "AI 配置",
-  kb:                 "知识库",
-  routing:            "路由规则",
-  channels:           "渠道配置",
-  marketplace:        "技能市场",
-  integrations:       "集成配置",
-  analytics:          "数据分析",
-  sla:                "SLA 管理",
-  qa:                 "质检系统",
-  csat:               "满意度调查",
-  supervisor:         "主管工作台",
-  customers:          "客户标签与分组"
-};
-
-// TypeScript enforces exhaustive coverage: missing Tab key = compile error
+// TypeScript enforces exhaustive coverage
 const TAB_COMPONENTS: Record<Tab, ComponentType> = {
-  overview:           OverviewTab,
-  cases:              CasesTab,
+  overview:              OverviewTab,
+  cases:                 CasesTab,
   "human-conversations": HumanConversationsTab,
-  tasks:              TasksTab,
-  organization:       OrganizationTab,
-  permissions:        PermissionsTab,
-  shifts:             ShiftsTab,
-  agents:             AgentsTab,
-  "ai-seats":         AISeatsTab,
-  "ai-conversations": AIConversationsTab,
-  "memory-qa":        MemoryQaTab,
-  "dispatch-audit":   DispatchAuditTab,
-  ai:                 AIConfigTab,
-  kb:                 KnowledgeBaseTab,
-  routing:            RoutingTab,
-  channels:           ChannelsTab,
-  marketplace:        MarketplaceTab,
-  integrations:       IntegrationsTab,
-  analytics:          AnalyticsTab,
-  sla:                SlaTab,
-  qa:                 QaTab,
-  csat:               CsatTab,
-  supervisor:         SupervisorTab,
-  customers:          CustomersTab
+  tasks:                 TasksTab,
+  organization:          OrganizationTab,
+  permissions:           PermissionsTab,
+  shifts:                ShiftsTab,
+  agents:                AgentsTab,
+  "ai-seats":            AISeatsTab,
+  "ai-conversations":    AIConversationsTab,
+  "memory-qa":           MemoryQaTab,
+  "dispatch-audit":      DispatchAuditTab,
+  ai:                    AIConfigTab,
+  capabilities:          CapabilitiesTab,
+  kb:                    KnowledgeBaseTab,
+  routing:               RoutingTab,
+  channels:              ChannelsTab,
+  analytics:             AnalyticsTab,
+  sla:                   SlaTab,
+  qa:                    QaTab,
+  csat:                  CsatTab,
+  supervisor:            SupervisorTab,
+  customers:             CustomersTab
 };
 
-// Group header keys ("group-core" etc.) must not trigger navigation
-const VALID_TABS = new Set<string>(Object.keys(TAB_LABELS));
-
-// ── menu items ───────────────────────────────────────────────────────────────
-
-const MENU_ITEMS: MenuProps["items"] = [
-  {
-    type: "group", key: "g-core", label: "基础管理",
-    children: [
-      { key: "overview",          icon: <HomeOutlined />,               label: TAB_LABELS.overview },
-      { key: "cases",             icon: <MessageOutlined />,            label: TAB_LABELS.cases },
-      { key: "human-conversations", icon: <MessageOutlined />,          label: TAB_LABELS["human-conversations"] },
-      { key: "tasks",             icon: <CheckSquareOutlined />,        label: TAB_LABELS.tasks },
-      { key: "organization",      icon: <ApartmentOutlined />,          label: TAB_LABELS.organization },
-      { key: "permissions",       icon: <SafetyCertificateOutlined />,  label: TAB_LABELS.permissions },
-      { key: "shifts",            icon: <ScheduleOutlined />,           label: TAB_LABELS.shifts },
-      { key: "agents",            icon: <TeamOutlined />,               label: TAB_LABELS.agents },
-      { key: "ai-seats",          icon: <RobotOutlined />,              label: TAB_LABELS["ai-seats"] },
-      { key: "ai-conversations",  icon: <MessageOutlined />,            label: TAB_LABELS["ai-conversations"] },
-      { key: "memory-qa",         icon: <ReadOutlined />,               label: TAB_LABELS["memory-qa"] },
-      { key: "dispatch-audit",    icon: <ForkOutlined />,               label: TAB_LABELS["dispatch-audit"] },
-      { key: "routing",           icon: <ForkOutlined />,               label: TAB_LABELS.routing }
-    ]
-  },
-  {
-    type: "group", key: "g-ops", label: "运营管理",
-    children: [
-      { key: "supervisor", icon: <AreaChartOutlined />,   label: TAB_LABELS.supervisor },
-      { key: "customers",  icon: <TagsOutlined />,        label: TAB_LABELS.customers },
-      { key: "sla",        icon: <ClockCircleOutlined />, label: TAB_LABELS.sla },
-      { key: "qa",         icon: <CheckSquareOutlined />, label: TAB_LABELS.qa },
-      { key: "csat",       icon: <SmileOutlined />,       label: TAB_LABELS.csat },
-      { key: "analytics",  icon: <AreaChartOutlined />,   label: TAB_LABELS.analytics }
-    ]
-  },
-  {
-    type: "group", key: "g-sys", label: "平台配置",
-    children: [
-      { key: "ai",           icon: <ThunderboltOutlined />, label: TAB_LABELS.ai },
-      { key: "kb",           icon: <ReadOutlined />,        label: TAB_LABELS.kb },
-      { key: "channels",     icon: <ApiOutlined />,         label: TAB_LABELS.channels },
-      { key: "marketplace",  icon: <AppstoreOutlined />,    label: TAB_LABELS.marketplace },
-      { key: "integrations", icon: <ControlOutlined />,     label: TAB_LABELS.integrations }
-    ]
-  }
-];
-
-// ── helpers ──────────────────────────────────────────────────────────────────
+const ALL_TABS = Object.keys(TAB_COMPONENTS) as Tab[];
+const VALID_TABS = new Set<string>(ALL_TABS);
+const DEFAULT_TAB: Tab = "overview";
 
 const isAdminMembership = (m: MembershipSummary) =>
   m.role === "admin" || m.role === "tenant_admin";
@@ -184,34 +108,72 @@ const TAB_LOADING = (
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const [tab, setTab]             = useState<Tab>("overview");
+  const { tab: routeTabParam } = useParams();
+  const { t, i18n } = useTranslation();
   const [session, setSession]     = useState<AdminSession | null>(() => readTenantSession());
   const [collapsed, setCollapsed] = useState(false);
+  const openedTabs                = useTenantTabStore((state) => state.openedTabs);
+  const activeTab                 = useTenantTabStore((state) => state.activeTab);
+  const refreshSeedByTab          = useTenantTabStore((state) => state.refreshSeedByTab);
+  const activateTab               = useTenantTabStore((state) => state.activateTab);
+  const closeTab                  = useTenantTabStore((state) => state.closeTab);
+  const closeAllTabs              = useTenantTabStore((state) => state.closeAllTabs);
+  const refreshTab                = useTenantTabStore((state) => state.refreshTab);
+  const resetTabs                 = useTenantTabStore((state) => state.resetTabs);
+  const lastTenantRef             = useRef<string | null>(null);
 
-  // keep React state in sync with silent token refreshes in api.ts
+  const routeTab = routeTabParam && VALID_TABS.has(routeTabParam) ? routeTabParam as Tab : DEFAULT_TAB;
+
+  const navigateToTab = useCallback((nextTab: Tab, replace = false) => {
+    navigate(`/dashboard/${nextTab}`, { replace });
+  }, [navigate]);
+
   useEffect(() => {
     registerTenantSessionUpdater(setSession);
     return () => unregisterTenantSessionUpdater();
   }, []);
 
-  // redirect to login when session expires or is cleared
   useEffect(() => {
-    if (!session) { clearTenantSession(); navigate("/", { replace: true }); }
-  }, [session, navigate]);
+    if (!session) {
+      resetTabs(DEFAULT_TAB);
+      clearTenantSession();
+      navigate("/", { replace: true });
+    }
+  }, [navigate, resetTabs, session]);
+
+  useEffect(() => {
+    if (routeTabParam && !VALID_TABS.has(routeTabParam)) {
+      navigateToTab(DEFAULT_TAB, true);
+    }
+  }, [navigateToTab, routeTabParam]);
+
+  useEffect(() => {
+    activateTab(routeTab);
+  }, [activateTab, routeTab]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    if (lastTenantRef.current === null) {
+      lastTenantRef.current = session.tenantId;
+      return;
+    }
+
+    if (lastTenantRef.current !== session.tenantId) {
+      lastTenantRef.current = session.tenantId;
+      resetTabs(routeTab);
+    }
+  }, [resetTabs, routeTab, session]);
 
   useEffect(() => {
     const handleNavigate = (event: Event) => {
       const detail = (event as CustomEvent<AdminNavigateDetail>).detail;
-      if (detail?.tab && VALID_TABS.has(detail.tab)) {
-        setTab(detail.tab);
-      }
+      if (detail?.tab && VALID_TABS.has(detail.tab)) navigateToTab(detail.tab);
     };
-
     window.addEventListener("tenant-admin:navigate", handleNavigate as EventListener);
     return () => window.removeEventListener("tenant-admin:navigate", handleNavigate as EventListener);
-  }, []);
+  }, [navigateToTab]);
 
-  // define handlers before the conditional return so hook order is always stable
   const handleSwitchTenant = useCallback(async (membershipId: string) => {
     if (!session || membershipId === session.membershipId) return;
     const data = await switchTenant(session.accessToken, membershipId);
@@ -225,43 +187,99 @@ export function DashboardPage() {
 
   if (!session) return null;
 
-  // Only changes on tenant switch, NOT on tab change.
-  // This remounts the active tab when the tenant switches (clearing stale data)
-  // but avoids remounting — and unnecessary refetching — on every menu click.
-  const tenantKey = session.tenantId;
-
+  const tenantKey        = session.tenantId;
   const adminMemberships = session.memberships.filter(isAdminMembership);
-  const ActiveTab        = TAB_COMPONENTS[tab];
+
+  // Build menu items using translation keys (re-computed when language changes)
+  const menuItems: MenuProps["items"] = [
+    {
+      type: "group", key: "g-core", label: t("nav.groups.core"),
+      children: [
+        { key: "overview",             icon: <HomeOutlined />,              label: t("tabs.overview") },
+        { key: "cases",                icon: <MessageOutlined />,           label: t("tabs.cases") },
+        { key: "human-conversations",  icon: <MessageOutlined />,           label: t("tabs.human-conversations") },
+        { key: "tasks",                icon: <CheckSquareOutlined />,       label: t("tabs.tasks") },
+        { key: "organization",         icon: <ApartmentOutlined />,         label: t("tabs.organization") },
+        { key: "permissions",          icon: <SafetyCertificateOutlined />, label: t("tabs.permissions") },
+        { key: "shifts",               icon: <ScheduleOutlined />,          label: t("tabs.shifts") },
+        { key: "agents",               icon: <TeamOutlined />,              label: t("tabs.agents") },
+        { key: "ai-seats",             icon: <RobotOutlined />,             label: t("tabs.ai-seats") },
+        { key: "ai-conversations",     icon: <MessageOutlined />,           label: t("tabs.ai-conversations") },
+        { key: "memory-qa",            icon: <ReadOutlined />,              label: t("tabs.memory-qa") },
+        { key: "dispatch-audit",       icon: <ForkOutlined />,              label: t("tabs.dispatch-audit") },
+        { key: "routing",              icon: <ForkOutlined />,              label: t("tabs.routing") }
+      ]
+    },
+    {
+      type: "group", key: "g-ops", label: t("nav.groups.ops"),
+      children: [
+        { key: "supervisor", icon: <AreaChartOutlined />,   label: t("tabs.supervisor") },
+        { key: "customers",  icon: <TagsOutlined />,        label: t("tabs.customers") },
+        { key: "sla",        icon: <ClockCircleOutlined />, label: t("tabs.sla") },
+        { key: "qa",         icon: <CheckSquareOutlined />, label: t("tabs.qa") },
+        { key: "csat",       icon: <SmileOutlined />,       label: t("tabs.csat") },
+        { key: "analytics",  icon: <AreaChartOutlined />,   label: t("tabs.analytics") }
+      ]
+    },
+    {
+      type: "group", key: "g-sys", label: t("nav.groups.sys"),
+      children: [
+        { key: "ai",           icon: <ThunderboltOutlined />, label: t("tabs.ai") },
+        { key: "capabilities", icon: <AppstoreOutlined />,    label: t("tabs.capabilities") },
+        { key: "kb",           icon: <ReadOutlined />,        label: t("tabs.kb") },
+        { key: "channels",     icon: <ThunderboltOutlined />, label: t("tabs.channels") }
+      ]
+    }
+  ];
+
+  const langMenuItems: MenuProps["items"] = LANGS.map(({ key, label }) => ({
+    key,
+    label,
+    onClick: () => changeLanguage(key)
+  }));
+
+  const buildTabContextMenuItems = useCallback((targetTab: Tab): MenuProps["items"] => ([
+    {
+      key: "refresh",
+      label: t("common.refresh"),
+      onClick: () => refreshTab(targetTab)
+    },
+    {
+      key: "close-current",
+      label: t("common.closeCurrent"),
+      disabled: targetTab === DEFAULT_TAB,
+      onClick: () => {
+        if (targetTab === DEFAULT_TAB) return;
+        const nextTab = closeTab(targetTab);
+        if (targetTab === activeTab) {
+          navigateToTab(nextTab);
+        }
+      }
+    },
+    {
+      key: "close-all",
+      label: t("common.closeAll"),
+      disabled: openedTabs.length <= 1,
+      onClick: () => {
+        const nextTab = closeAllTabs(DEFAULT_TAB);
+        navigateToTab(nextTab);
+      }
+    }
+  ]), [activeTab, closeAllTabs, closeTab, navigateToTab, openedTabs.length, refreshTab, t]);
 
   return (
-    /**
-     * Layout strategy:
-     *   • Outer Layout  → height 100vh + overflow hidden → caps total height at viewport
-     *   • Sider         → height 100vh, scrolls its own overflow if menu is very long
-     *   • Inner Layout  → flex column, fills remaining width; overflow hidden
-     *   • Header        → fixed 56 px, never scrolls
-     *   • Content       → flex:1 + overflow-y auto + minHeight:0 → scrolls independently
-     *
-     * Result: sidebar and topbar are always visible; only the page content scrolls.
-     */
     <Layout style={{ height: "100vh", overflow: "hidden" }}>
 
-      {/* ── Sidebar ──────────────────────────────────────────────────── */}
+      {/* ── Sidebar ──────────────────────────────────────────────────────── */}
       <Sider
         theme="light"
         width={220}
         collapsed={collapsed}
         collapsedWidth={64}
-        breakpoint="lg"                          // auto-collapse below 992 px
+        breakpoint="lg"
         onBreakpoint={(broken) => setCollapsed(broken)}
-        style={{
-          borderRight: "1px solid #f0f0f0",
-          height: "100vh",
-          overflowY: "auto",
-          overflowX: "hidden"
-        }}
+        style={{ borderRight: "1px solid #f0f0f0", height: "100vh", overflowY: "auto", overflowX: "hidden" }}
       >
-        {/* Brand mark */}
         <div style={{
           height: 56, padding: "0 16px",
           display: "flex", alignItems: "center", gap: 10,
@@ -272,73 +290,51 @@ export function DashboardPage() {
             background: "linear-gradient(135deg, #1677ff 0%, #0958d9 100%)",
             display: "flex", alignItems: "center", justifyContent: "center",
             color: "#fff", fontWeight: 700, fontSize: 15
-          }}>
-            N
-          </div>
+          }}>N</div>
           {!collapsed && (
             <div style={{ overflow: "hidden", minWidth: 0 }}>
-              <div style={{ fontSize: 11, color: "#8c8c8c", lineHeight: 1.3, whiteSpace: "nowrap" }}>NuyChat</div>
-              <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, whiteSpace: "nowrap" }}>Nuyyess管理后台</div>
+              <div style={{ fontSize: 11, color: "#8c8c8c", lineHeight: 1.3, whiteSpace: "nowrap" }}>{t("nav.subbrand")}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, whiteSpace: "nowrap" }}>{t("nav.brand")}</div>
             </div>
           )}
         </div>
 
         <Menu
           mode="inline"
-          selectedKeys={[tab]}
-          items={MENU_ITEMS}
+          selectedKeys={[activeTab]}
+          items={menuItems}
           inlineCollapsed={collapsed}
-          onClick={({ key }) => { if (VALID_TABS.has(key)) setTab(key as Tab); }}
+          onClick={({ key }) => { if (VALID_TABS.has(key)) navigateToTab(key as Tab); }}
           style={{ borderInlineEnd: "none", paddingTop: 4 }}
         />
       </Sider>
 
-      {/* ── Main column (header + scrollable content) ─────────────────── */}
+      {/* ── Main column ───────────────────────────────────────────────────── */}
       <Layout style={{ overflow: "hidden" }}>
 
         {/* Topbar */}
         <Header style={{
-          background: "#fff",
-          height: 56,
-          lineHeight: "56px",
-          padding: "0 16px 0 8px",
-          borderBottom: "1px solid #f0f0f0",
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between"
+          background: "#fff", height: 56, lineHeight: "56px",
+          padding: "0 16px 0 8px", borderBottom: "1px solid #f0f0f0",
+          flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between"
         }}>
-          {/* Left: collapse toggle + page title — flex:1 + minWidth:0 lets it
-              shrink gracefully when the right side needs space */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            flex: 1, minWidth: 0, overflow: "hidden"
-          }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0, overflow: "hidden" }}>
             <Button
               type="text"
               icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               onClick={() => setCollapsed((c) => !c)}
               style={{ fontSize: 16, color: "#595959", flexShrink: 0 }}
             />
-            {/* minWidth:0 on the text block so ellipsis triggers instead of overflow */}
             <div style={{ minWidth: 0, overflow: "hidden" }}>
-              <Typography.Title
-                level={5}
-                ellipsis
-                style={{ margin: 0, lineHeight: 1.3 }}
-              >
-                {TAB_LABELS[tab]}
+              <Typography.Title level={5} ellipsis style={{ margin: 0, lineHeight: 1.3 }}>
+                {t(`tabs.${activeTab}`)}
               </Typography.Title>
-              <Typography.Text
-                type="secondary"
-                style={{ fontSize: 11, display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-              >
+              <Typography.Text type="secondary" style={{ fontSize: 11, display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {session.tenantSlug}
               </Typography.Text>
             </div>
           </div>
 
-          {/* Right: tenant switcher + logout — flexShrink:0 so it is never squeezed */}
           <Space size={8} style={{ flexShrink: 0 }}>
             {adminMemberships.length > 1 && (
               <Select
@@ -346,34 +342,80 @@ export function DashboardPage() {
                 style={{ width: 200 }}
                 value={session.membershipId}
                 onChange={(v) => { void handleSwitchTenant(v); }}
-                options={adminMemberships.map((m) => ({
-                  value: m.membershipId,
-                  label: m.tenantName || m.tenantSlug
-                }))}
+                options={adminMemberships.map((m) => ({ value: m.membershipId, label: m.tenantName || m.tenantSlug }))}
               />
             )}
-            <Button
-              size="small"
-              icon={<LogoutOutlined />}
-              onClick={() => { void handleLogout(); }}
-            >
-              退出登录
+
+            {/* Language switcher */}
+            <Dropdown menu={{ items: langMenuItems, selectedKeys: [i18n.language] }} placement="bottomRight">
+              <Button size="small" icon={<GlobalOutlined />}>
+                {LANGS.find((l) => l.key === i18n.language)?.label ?? i18n.language}
+              </Button>
+            </Dropdown>
+
+            <Button size="small" icon={<LogoutOutlined />} onClick={() => { void handleLogout(); }}>
+              {t("nav.logout")}
             </Button>
           </Space>
         </Header>
 
-        {/* Scrollable content — only this area scrolls */}
+        <div style={{ background: "#fff", borderBottom: "1px solid #f0f0f0", padding: "0 16px" }}>
+          <Tabs
+            activeKey={activeTab}
+            hideAdd
+            type="editable-card"
+            items={openedTabs.map((openedTab) => ({
+              key: openedTab,
+              label: (
+                <Dropdown
+                  menu={{ items: buildTabContextMenuItems(openedTab) }}
+                  trigger={["contextMenu"]}
+                >
+                  <span>{t(`tabs.${openedTab}`)}</span>
+                </Dropdown>
+              ),
+              closable: openedTab !== DEFAULT_TAB
+            }))}
+            onChange={(key) => {
+              if (VALID_TABS.has(key)) {
+                navigateToTab(key as Tab);
+              }
+            }}
+            onEdit={(targetKey, action) => {
+              if (action !== "remove" || typeof targetKey !== "string" || !VALID_TABS.has(targetKey)) {
+                return;
+              }
+
+              const nextTab = closeTab(targetKey as Tab);
+              if (targetKey === activeTab) {
+                navigateToTab(nextTab);
+              }
+            }}
+            style={{ marginBottom: -1 }}
+          />
+        </div>
+
+        {/* Scrollable content */}
         <Content style={{
-          flex: 1,
-          overflowY: "auto",
-          overflowX: "hidden",
-          padding: 24,
-          minHeight: 0,          // without this, flex children ignore overflow-y
-          background: "#f5f7fb"
+          flex: 1, overflowY: "auto", overflowX: "hidden",
+          padding: 24, minHeight: 0, background: "#f5f7fb"
         }}>
-          <Suspense fallback={TAB_LOADING}>
-            <ActiveTab key={tenantKey} />
-          </Suspense>
+          {openedTabs.map((openedTab) => {
+            const TabComponent = TAB_COMPONENTS[openedTab];
+            const refreshSeed = refreshSeedByTab[openedTab] ?? 0;
+
+            return (
+              <div
+                key={`${tenantKey}:${openedTab}`}
+                aria-hidden={openedTab !== activeTab}
+                style={{ display: openedTab === activeTab ? "block" : "none", minHeight: "100%" }}
+              >
+                <Suspense fallback={openedTab === activeTab ? TAB_LOADING : null}>
+                  <TabComponent key={`${tenantKey}:${openedTab}:${refreshSeed}:content`} />
+                </Suspense>
+              </div>
+            );
+          })}
         </Content>
 
       </Layout>

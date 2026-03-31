@@ -1,3 +1,5 @@
+import i18next from "i18next";
+
 export const QUICK_PHRASES = [
   "您好，我先帮您核对订单状态，请稍等。",
   "收到，我马上为您跟进并在 2 分钟内回复。",
@@ -102,11 +104,12 @@ export function validateUploadForChannel(
   const extAllowed = !rule.extensions || rule.extensions.some((ext) => lowerName.endsWith(ext));
   if (!prefixAllowed && !extAllowed) {
     return mode === "sticker"
-      ? "WhatsApp 贴纸仅支持 WEBP。"
-      : "当前文件类型不在 WhatsApp 支持范围内。";
+      ? i18next.t("validation.stickerOnlyWebp")
+      : i18next.t("validation.unsupportedType");
   }
   if (file.size > rule.maxSizeBytes) {
-    return `文件超过 WhatsApp 限制：最大 ${Math.round(rule.maxSizeBytes / 1024 / 1024 * 10) / 10}MB。`;
+    const size = Math.round(rule.maxSizeBytes / 1024 / 1024 * 10) / 10;
+    return i18next.t("validation.fileTooLarge", { size });
   }
   return null;
 }

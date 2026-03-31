@@ -1,9 +1,10 @@
 import { Worker } from "bullmq";
 import type { Knex } from "knex";
 
-import { withTenantTransaction } from "../infra/db/client.js";
+import { db, withTenantTransaction } from "../infra/db/client.js";
 import { outboundQueue, type OutboundJobPayload } from "../infra/queue/queues.js";
 import { duplicateRedisConnection } from "../infra/redis/client.js";
+import { normalizeStructuredMessage, structuredToPlainText } from "../shared/messaging/structured-message.js";
 import { resolveChannelAdapter } from "../modules/channel/channel-adapter.registry.js";
 import type { ResolvedChannelConfig } from "../modules/channel/channel.repository.js";
 import { findActiveChannelConfig } from "../modules/channel/channel.repository.js";
@@ -62,6 +63,8 @@ export function createOutboundWorker() {
         job.data.channelType,
         {
           text: job.data.message.text,
+          structured: job.data.message.structured ?? null,
+          actions: job.data.message.actions ?? [],
           to: conversation.external_ref as string,
           attachment: job.data.message.attachment ?? undefined,
           contextMessageId: job.data.message.replyToExternalId ?? undefined,
@@ -104,6 +107,8 @@ export function createOutboundWorker() {
           conversationId: job.data.conversationId,
           externalId: sendResult.externalMessageId,
           text: job.data.message.text,
+          structured: job.data.message.structured ?? null,
+          actions: job.data.message.actions ?? [],
           senderId: job.data.message.agentId ?? null,
           aiAgentName: job.data.message.aiAgentName ?? null,
           attachment: job.data.message.attachment ?? undefined,
@@ -121,7 +126,10 @@ export function createOutboundWorker() {
             last_message_preview:
               job.data.message.reactionEmoji
                 ? (convRow?.last_message_preview ?? null)
-                : job.data.message.text ||
+                : structuredToPlainText(
+                    normalizeStructuredMessage(job.data.message.structured),
+                    job.data.message.text
+                  ) ||
                   (job.data.message.attachment ? `[${job.data.message.attachment.fileName ?? "附件"}]` : ""),
             updated_at: new Date()
           });
@@ -201,7 +209,7 @@ export function createOutboundWorker() {
       };
     },
     {
-      connection: workerConnection,
+      connection: workerConnection as any,
       concurrency: 3
     }
   );
@@ -239,6 +247,8 @@ async function sendOutboundByChannel(
   channelType: string,
   input: {
     text: string;
+    structured?: OutboundJobPayload["message"]["structured"];
+    actions?: OutboundJobPayload["message"]["actions"];
     to: string;
     attachment?: { url: string; mimeType: string; fileName?: string };
     contextMessageId?: string;

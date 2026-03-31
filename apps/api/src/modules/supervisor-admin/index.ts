@@ -456,7 +456,7 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
         })
         .join("identities as i", "i.identity_id", "tm.identity_id")
         .leftJoin(activeConversations, function joinActiveConversations() {
-          this.on(trx.raw("ac.current_handler_id::uuid"), "=", trx.ref("ap.agent_id"));
+          this.on(trx.raw("ac.current_handler_id::uuid") as unknown as string, "=", trx.ref("ap.agent_id"));
         })
         .where("ap.tenant_id", tenantId)
         .groupBy("ap.agent_id", "ap.display_name", "ap.presence_state", "ap.last_heartbeat_at", "i.email", "ac.active_count")
@@ -567,6 +567,7 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
           department_id: teamContext.departmentId,
           team_id: teamContext.teamId,
           assigned_agent_id: targetAgentId,
+          assigned_ai_agent_id: null,
           handoff_required: false,
           handoff_reason: null,
           status: "assigned",
@@ -582,6 +583,7 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
           department_id: teamContext.departmentId,
           team_id: teamContext.teamId,
           assigned_agent_id: targetAgentId,
+          assigned_ai_agent_id: null,
           status: "assigned",
           assignment_strategy: "manual",
           assignment_reason: "supervisor-transfer",

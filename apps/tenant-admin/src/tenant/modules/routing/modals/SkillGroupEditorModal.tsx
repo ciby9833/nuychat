@@ -1,4 +1,14 @@
+/**
+ * 菜单路径与名称: 客户中心 -> 路由 -> 技能组管理 -> 技能组编辑弹窗
+ * 文件职责: 维护技能组所属模块、编码、名称、优先级与启用状态。
+ * 主要交互文件:
+ * - ../RoutingTab.tsx
+ * - ../types.ts
+ * - ../../../types
+ */
+
 import { Form, Input, InputNumber, Modal, Select, Switch } from "antd";
+import { useTranslation } from "react-i18next";
 import { useEffect } from "react";
 
 import type { ModuleItem, SkillGroup } from "../../../types";
@@ -19,6 +29,7 @@ export function SkillGroupEditorModal({
   onClose: () => void;
   onSubmit: (values: SkillGroupFormValues) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [form] = Form.useForm<SkillGroupFormValues>();
 
   useEffect(() => {
@@ -34,7 +45,7 @@ export function SkillGroupEditorModal({
 
   return (
     <Modal
-      title={item ? "编辑技能组" : "新增技能组"}
+      title={item ? t("routing.form.editSkillGroup") : t("routing.form.createSkillGroup")}
       open={open}
       onCancel={onClose}
       onOk={() => {
@@ -48,7 +59,7 @@ export function SkillGroupEditorModal({
       destroyOnHidden
     >
       <Form form={form} layout="vertical" initialValues={{ priority: 100, isActive: true }}>
-        <Form.Item label="所属模块" name="moduleId" rules={[{ required: true, message: "请选择模块" }]}>
+        <Form.Item label={t("routing.form.skillGroupModule")} name="moduleId" rules={[{ required: true, message: t("routing.form.skillGroupModuleRequired") }]}>
           <Select
             options={modules.map((m) => ({
               value: m.moduleId,
@@ -56,17 +67,17 @@ export function SkillGroupEditorModal({
             }))}
           />
         </Form.Item>
-        <Form.Item label="技能组编码" name="code" rules={[{ required: true, message: "请输入技能组编码" }]}>
+        <Form.Item label={t("routing.form.skillGroupCode")} name="code" rules={[{ required: true, message: t("routing.form.skillGroupCodeRequired") }]}>
           <Input placeholder="GENERAL" />
         </Form.Item>
-        <Form.Item label="技能组名称" name="name" rules={[{ required: true, message: "请输入技能组名称" }]}>
+        <Form.Item label={t("routing.form.skillGroupName")} name="name" rules={[{ required: true, message: t("routing.form.skillGroupNameRequired") }]}>
           <Input placeholder="General" />
         </Form.Item>
-        <Form.Item label="优先级" name="priority" rules={[{ required: true }]}>
+        <Form.Item label={t("routing.table.priority")} name="priority" rules={[{ required: true }]}>
           <InputNumber min={1} max={999} style={{ width: "100%" }} />
         </Form.Item>
-        <Form.Item label="启用" name="isActive" valuePropName="checked">
-          <Switch checkedChildren="启用" unCheckedChildren="停用" />
+        <Form.Item label={t("routing.form.enabled")} name="isActive" valuePropName="checked">
+          <Switch checkedChildren={t("routing.state.active")} unCheckedChildren={t("routing.state.inactive")} />
         </Form.Item>
       </Form>
     </Modal>

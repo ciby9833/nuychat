@@ -1,8 +1,14 @@
-// 作用: 渠道详情面板（Web/WhatsApp/Webhook 分支渲染）
-// 菜单路径: 客户中心 -> 渠道配置 -> 渠道详情
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 渠道配置 -> 渠道详情
+ * 文件职责: 渲染渠道详情面板，根据 Web、WhatsApp、Webhook 三种渠道分支展示说明与操作。
+ * 主要交互文件:
+ * - ../ChannelsTab.tsx: 负责传入当前选中渠道和操作回调。
+ * - ../helpers.ts: 提供复制与标识读取辅助。
+ * - ../hooks/useChannelsData.ts: 提供 selectedWebInfo、selectedWebhookInfo、whatsAppSetup。
+ */
 
 import { Alert, Button, Card, Descriptions, Input, Space, Tag, Typography } from "antd";
+import { useTranslation } from "react-i18next";
 
 import type { ChannelConfig, WebChannelLinkInfo, WebhookChannelLinkInfo, WhatsAppEmbeddedSignupSetup } from "../../../types";
 import { copyToClipboard, readChannelIdentifier } from "../helpers";
@@ -24,10 +30,11 @@ export function ChannelDetail({
   onBindWhatsApp: (row: ChannelConfig) => void;
   onEdit: (row: ChannelConfig) => void;
 }) {
+  const { t } = useTranslation();
   if (!selectedChannel) {
     return (
-      <Card title="渠道详情">
-        <Typography.Text type="secondary">请先点击一个渠道卡片查看详情。</Typography.Text>
+      <Card title={t("channelsModule.detail.title")}>
+        <Typography.Text type="secondary">{t("channelsModule.detail.empty")}</Typography.Text>
       </Card>
     );
   }
@@ -35,39 +42,39 @@ export function ChannelDetail({
   const whatsappBound = Boolean(selectedChannel.phone_number_id);
 
   return (
-    <Card title="渠道详情">
+    <Card title={t("channelsModule.detail.title")}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Descriptions size="small" bordered column={2}>
-          <Descriptions.Item label="渠道类型">{selectedChannel.channel_type}</Descriptions.Item>
-          <Descriptions.Item label="状态">
+          <Descriptions.Item label={t("channelsModule.detail.channelType")}>{selectedChannel.channel_type}</Descriptions.Item>
+          <Descriptions.Item label={t("channelsModule.detail.status")}>
             <Tag color={selectedChannel.is_active ? "green" : "default"}>
-              {selectedChannel.is_active ? "active" : "inactive"}
+              {selectedChannel.is_active ? t("channelsModule.status.active") : t("channelsModule.status.inactive")}
             </Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="渠道ID" span={2}>{selectedChannel.channel_id}</Descriptions.Item>
-          <Descriptions.Item label="标识" span={2}>{readChannelIdentifier(selectedChannel)}</Descriptions.Item>
+          <Descriptions.Item label={t("channelsModule.detail.channelId")} span={2}>{selectedChannel.channel_id}</Descriptions.Item>
+          <Descriptions.Item label={t("channelsModule.detail.identifier")} span={2}>{readChannelIdentifier(selectedChannel)}</Descriptions.Item>
         </Descriptions>
 
         {selectedChannel.channel_type === "web" ? (
           <>
             <Typography.Text type="secondary">
-              Web 渠道嵌入时请使用 `publicChannelKey`，可直接复制以下代码。
+              {t("channelsModule.detail.webHint")}
             </Typography.Text>
             <Input
               readOnly
               addonBefore="publicChannelKey"
               value={selectedWebInfo?.publicChannelKey ?? "-"}
-              addonAfter={<Button type="link" onClick={() => { void copyToClipboard(selectedWebInfo?.publicChannelKey, "Web 标识"); }}>复制</Button>}
+              addonAfter={<Button type="link" onClick={() => { void copyToClipboard(selectedWebInfo?.publicChannelKey, t("channelsModule.detail.webIdentifier")); }}>{t("channelsModule.detail.copy")}</Button>}
             />
             <Input
               readOnly
-              addonBefore="客户直连地址"
+              addonBefore={t("channelsModule.detail.customerUrl")}
               value={selectedWebInfo?.customerChatUrl ?? "-"}
-              addonAfter={<Button type="link" onClick={() => { void copyToClipboard(selectedWebInfo?.customerChatUrl, "客户直连地址"); }}>复制</Button>}
+              addonAfter={<Button type="link" onClick={() => { void copyToClipboard(selectedWebInfo?.customerChatUrl, t("channelsModule.detail.customerUrl")); }}>{t("channelsModule.detail.copy")}</Button>}
             />
             <Input.TextArea readOnly rows={4} value={selectedWebInfo?.widgetEmbedSnippet ?? ""} />
-            <Button onClick={() => { void copyToClipboard(selectedWebInfo?.widgetEmbedSnippet, "嵌入代码"); }} disabled={!selectedWebInfo?.widgetEmbedSnippet}>
-              复制嵌入代码
+            <Button onClick={() => { void copyToClipboard(selectedWebInfo?.widgetEmbedSnippet, t("channelsModule.detail.embedCode")); }} disabled={!selectedWebInfo?.widgetEmbedSnippet}>
+              {t("channelsModule.detail.copyEmbedCode")}
             </Button>
           </>
         ) : null}
@@ -77,27 +84,27 @@ export function ChannelDetail({
             <Alert
               type={whatsappBound ? "success" : "info"}
               showIcon
-              message={whatsappBound ? "已完成 WhatsApp 绑定" : "尚未绑定 WhatsApp 号码"}
+              message={whatsappBound ? t("channelsModule.detail.whatsappBound") : t("channelsModule.detail.whatsappUnbound")}
               description={
                 whatsAppSetup?.enabled
-                  ? "点击下方按钮打开 Meta Embedded Signup，完成号码授权和绑定。"
-                  : "平台尚未完成 Meta Embedded Signup 配置，当前无法发起绑定。"
+                  ? t("channelsModule.detail.whatsappEnabledDesc")
+                  : t("channelsModule.detail.whatsappDisabledDesc")
               }
             />
             <Descriptions size="small" bordered column={1}>
-              <Descriptions.Item label="平台 Webhook URL">
+              <Descriptions.Item label={t("channelsModule.detail.platformWebhookUrl")}>
                 {selectedChannel.whatsapp_webhook_url ?? whatsAppSetup?.webhookUrl ?? "-"}
               </Descriptions.Item>
               <Descriptions.Item label="Phone Number ID">
                 {selectedChannel.phone_number_id ?? "-"}
               </Descriptions.Item>
-              <Descriptions.Item label="显示号码">
+              <Descriptions.Item label={t("channelsModule.detail.displayNumber")}>
                 {selectedChannel.display_phone_number ?? "-"}
               </Descriptions.Item>
               <Descriptions.Item label="WABA ID">
                 {selectedChannel.waba_id ?? "-"}
               </Descriptions.Item>
-              <Descriptions.Item label="Business Account">
+              <Descriptions.Item label={t("channelsModule.detail.businessAccount")}>
                 {selectedChannel.business_account_name ?? "-"}
               </Descriptions.Item>
             </Descriptions>
@@ -108,13 +115,13 @@ export function ChannelDetail({
                 onClick={() => { void onBindWhatsApp(selectedChannel); }}
                 disabled={!whatsAppSetup?.enabled}
               >
-                {whatsappBound ? "重新绑定 WhatsApp" : "绑定 WhatsApp"}
+                {whatsappBound ? t("channelsModule.grid.rebindWhatsApp") : t("channelsModule.grid.bindWhatsApp")}
               </Button>
               <Button
                 onClick={() => { void copyToClipboard(selectedChannel.whatsapp_webhook_url ?? whatsAppSetup?.webhookUrl, "WhatsApp Webhook URL"); }}
                 disabled={!selectedChannel.whatsapp_webhook_url && !whatsAppSetup?.webhookUrl}
               >
-                复制 Webhook URL
+                {t("channelsModule.detail.copyWebhookUrl")}
               </Button>
             </Space>
           </>
@@ -125,38 +132,38 @@ export function ChannelDetail({
             <Alert
               type="info"
               showIcon
-              message="Webhook 渠道用于第三方系统 HTTP 接入"
-              description="第三方系统把客户消息 POST 到系统生成的入站地址；NuyChat 会把回复 POST 到你配置的出站回调地址。"
+              message={t("channelsModule.detail.webhookIntroTitle")}
+              description={t("channelsModule.detail.webhookIntroDesc")}
             />
             <Descriptions size="small" bordered column={1}>
-              <Descriptions.Item label="系统入站地址">
+              <Descriptions.Item label={t("channelsModule.detail.inboundUrl")}>
                 {selectedWebhookInfo?.inboundWebhookUrl ?? selectedChannel.inbound_webhook_url ?? "-"}
               </Descriptions.Item>
-              <Descriptions.Item label="第三方出站回调地址">
+              <Descriptions.Item label={t("channelsModule.detail.outboundUrl")}>
                 {selectedWebhookInfo?.outboundWebhookUrl ?? selectedChannel.outbound_webhook_url ?? "-"}
               </Descriptions.Item>
               <Descriptions.Item label="Verify Token">
                 {selectedChannel.verify_token ?? "-"}
               </Descriptions.Item>
-              <Descriptions.Item label="Webhook Secret">
-                {selectedChannel.webhook_secret ? "已配置" : "未配置"}
+              <Descriptions.Item label={t("channelsModule.detail.webhookSecret")}>
+                {selectedChannel.webhook_secret ? t("channelsModule.detail.configured") : t("channelsModule.detail.notConfigured")}
               </Descriptions.Item>
             </Descriptions>
             <Space>
               <Button
-                onClick={() => { void copyToClipboard(selectedWebhookInfo?.inboundWebhookUrl ?? selectedChannel.inbound_webhook_url, "Webhook 入站地址"); }}
+                onClick={() => { void copyToClipboard(selectedWebhookInfo?.inboundWebhookUrl ?? selectedChannel.inbound_webhook_url, t("channelsModule.detail.inboundUrl")); }}
                 disabled={!selectedWebhookInfo?.inboundWebhookUrl && !selectedChannel.inbound_webhook_url}
               >
-                复制入站地址
+                {t("channelsModule.detail.copyInboundUrl")}
               </Button>
               <Button
                 onClick={() => onEdit(selectedChannel)}
               >
-                配置出站回调
+                {t("channelsModule.detail.configureOutbound")}
               </Button>
             </Space>
             <Typography.Text type="secondary">
-              `系统入站地址` 由 `API_PUBLIC_BASE` 和当前 `channel_id` 自动生成，不能手改。
+              {t("channelsModule.detail.webhookReadonlyHint")}
             </Typography.Text>
           </>
         ) : null}

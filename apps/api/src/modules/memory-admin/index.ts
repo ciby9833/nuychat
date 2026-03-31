@@ -54,7 +54,7 @@ export async function memoryAdminRoutes(app: FastifyInstance) {
 
       return {
         summary: { recent7dCount: Number(summary?.cnt ?? 0) },
-        items: rows.map((row) => ({
+        items: rows.map((row: any) => ({
           traceId: row.trace_id,
           customerId: row.customer_id,
           conversationId: row.conversation_id,

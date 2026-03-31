@@ -2,8 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
+import "./i18n"; // initialise i18next before rendering
 import { DashboardPage, LoginPage } from "./App";
-import "antd/dist/reset.css";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

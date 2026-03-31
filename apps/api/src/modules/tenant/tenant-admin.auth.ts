@@ -12,7 +12,6 @@ export const PERMISSION_KEYS = [
   "channels.manage",
   "kb.manage",
   "ai.manage",
-  "marketplace.manage",
   "analytics.read"
 ] as const;
 
@@ -29,7 +28,6 @@ const DEFAULT_MATRIX: Record<AppRole, Record<PermissionKey, boolean>> = {
     "channels.manage": true,
     "kb.manage": true,
     "ai.manage": true,
-    "marketplace.manage": true,
     "analytics.read": true
   },
   admin: {
@@ -41,7 +39,6 @@ const DEFAULT_MATRIX: Record<AppRole, Record<PermissionKey, boolean>> = {
     "channels.manage": true,
     "kb.manage": true,
     "ai.manage": true,
-    "marketplace.manage": true,
     "analytics.read": true
   },
   supervisor: {
@@ -53,7 +50,6 @@ const DEFAULT_MATRIX: Record<AppRole, Record<PermissionKey, boolean>> = {
     "channels.manage": false,
     "kb.manage": false,
     "ai.manage": false,
-    "marketplace.manage": false,
     "analytics.read": true
   },
   senior_agent: {
@@ -65,7 +61,6 @@ const DEFAULT_MATRIX: Record<AppRole, Record<PermissionKey, boolean>> = {
     "channels.manage": false,
     "kb.manage": false,
     "ai.manage": false,
-    "marketplace.manage": false,
     "analytics.read": true
   },
   agent: {
@@ -77,7 +72,6 @@ const DEFAULT_MATRIX: Record<AppRole, Record<PermissionKey, boolean>> = {
     "channels.manage": false,
     "kb.manage": false,
     "ai.manage": false,
-    "marketplace.manage": false,
     "analytics.read": false
   },
   readonly: {
@@ -89,7 +83,6 @@ const DEFAULT_MATRIX: Record<AppRole, Record<PermissionKey, boolean>> = {
     "channels.manage": false,
     "kb.manage": false,
     "ai.manage": false,
-    "marketplace.manage": false,
     "analytics.read": true
   }
 };
@@ -164,7 +157,6 @@ export function resolveRequiredPermission(method: string, routePath: string): Pe
   if (routePath.startsWith("/api/admin/human-conversations")) return "admin_console.read";
   if (routePath.startsWith("/api/admin/tasks")) return m === "GET" ? "admin_console.read" : "admin_console.write";
   if (routePath.startsWith("/api/admin/customer-intelligence")) return m === "GET" ? "admin_console.read" : "ai.manage";
-  if (routePath.startsWith("/api/admin/marketplace")) return m === "GET" ? "admin_console.read" : "marketplace.manage";
   if (routePath.startsWith("/api/admin/overview")) return "admin_console.read";
   return "admin_console.read";
 }

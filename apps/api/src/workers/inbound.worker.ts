@@ -1,6 +1,6 @@
 import { Worker } from "bullmq";
 
-import { withTenantTransaction } from "../infra/db/client.js";
+import { db, withTenantTransaction } from "../infra/db/client.js";
 import { duplicateRedisConnection } from "../infra/redis/client.js";
 import {
   inboundQueue,
@@ -32,6 +32,8 @@ import {
   scheduleAssignmentAcceptTimeout,
   scheduleFirstResponseTimeout,
 } from "../modules/sla/conversation-sla.service.js";
+import { resolveWhatsAppMediaAttachments } from "../modules/channel/adapters/whatsapp/whatsapp-media.service.js";
+import { getWhatsAppPlatformConfig } from "../modules/channel/whatsapp-platform-config.js";
 
 const customerService = new CustomerService();
 const conversationService = new ConversationService();
@@ -62,11 +64,28 @@ export function createInboundWorker() {
         throw new Error(`Channel type mismatch for ${job.data.channelId}`);
       }
 
-      const unifiedMessage = parseInboundMessage(job.data.channelType, job.data.rawMessage, {
+      let unifiedMessage = parseInboundMessage(job.data.channelType, job.data.rawMessage, {
         tenantId: job.data.tenantId,
         channelId: job.data.channelId,
         config: channelConfig
       });
+
+      // For WhatsApp media messages: download from Meta Graph API and save locally.
+      // This resolves `mediaId` → local `/uploads/...` URL before the message is stored.
+      if (job.data.channelType === "whatsapp" && unifiedMessage.attachments?.some((a) => a.mediaId && !a.url)) {
+        const waConfig = getWhatsAppPlatformConfig();
+        if (waConfig.systemUserAccessToken) {
+          unifiedMessage = {
+            ...unifiedMessage,
+            attachments: await resolveWhatsAppMediaAttachments(unifiedMessage.attachments, {
+              accessToken: waConfig.systemUserAccessToken,
+              graphApiVersion: waConfig.graphApiVersion
+            })
+          };
+        } else {
+          console.warn(`[inbound] WhatsApp media message received but META_SYSTEM_USER_ACCESS_TOKEN is not set — attachments will store mediaId only`);
+        }
+      }
 
       const result = await withTenantTransaction(job.data.tenantId, async (trx) => {
         const customer = await customerService.getOrCreateByExternalRef(trx, {
@@ -130,10 +149,12 @@ export function createInboundWorker() {
 
           currentConversation = await trx("conversations")
             .where({ tenant_id: job.data.tenantId, conversation_id: conversation.conversationId })
-            .select("status", "assigned_agent_id", "current_segment_id", "current_case_id")
+            .select("status", "assigned_agent_id", "current_handler_type", "current_handler_id", "current_segment_id", "current_case_id")
             .first<{
               status: string;
               assigned_agent_id: string | null;
+              current_handler_type: string | null;
+              current_handler_id: string | null;
               current_segment_id: string | null;
               current_case_id: string | null;
             } | undefined>();
@@ -312,7 +333,7 @@ export function createInboundWorker() {
       return result;
     },
     {
-      connection: workerConnection,
+      connection: workerConnection as any,
       concurrency: 5
     }
   );

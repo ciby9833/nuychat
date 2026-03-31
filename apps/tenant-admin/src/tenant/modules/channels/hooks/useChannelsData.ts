@@ -1,8 +1,14 @@
-// 作用: 渠道数据加载、筛选、编辑保存、WhatsApp 绑定 hook
-// 菜单路径: 客户中心 -> 渠道配置
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 渠道配置
+ * 文件职责: 负责渠道数据加载、筛选、编辑保存，以及 WhatsApp Embedded Signup 绑定流程。
+ * 主要交互文件:
+ * - ../ChannelsTab.tsx: 消费本 hook 的状态与动作。
+ * - ../whatsapp-signup.ts: 负责 Facebook SDK 加载与 Embedded Signup 执行。
+ * - ../helpers.ts: 提供标识读取和复制辅助。
+ */
 
 import { Form, message } from "antd";
+import i18next from "i18next";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -55,7 +61,7 @@ export function useChannelsData() {
 
   const typeOptions = useMemo(() => {
     const set = new Set(channels.map((c) => c.channel_type));
-    return [{ value: "all", label: "全部渠道" }, ...Array.from(set).map((v) => ({ value: v, label: v }))];
+    return [{ value: "all", label: i18next.t("channelsModule.grid.allTypes") }, ...Array.from(set).map((v) => ({ value: v, label: v }))];
   }, [channels]);
 
   const selectedChannel = useMemo(
@@ -152,7 +158,7 @@ export function useChannelsData() {
         method: "PATCH",
         body: JSON.stringify(payload)
       });
-      message.success("渠道配置已更新");
+      void message.success(i18next.t("channelsModule.messages.configUpdated"));
       setEditing(null);
       await load();
     } catch (err) {
@@ -164,7 +170,7 @@ export function useChannelsData() {
 
   const onBindWhatsApp = async (row: ChannelConfig) => {
     if (!whatsAppSetup?.enabled || !whatsAppSetup.appId || !whatsAppSetup.configId) {
-      message.error("平台尚未配置 Meta Embedded Signup");
+      void message.error(i18next.t("channelsModule.messages.embeddedSignupMissing"));
       return;
     }
 
@@ -174,7 +180,7 @@ export function useChannelsData() {
       await loadFacebookSdk(whatsAppSetup.appId);
       const result = await runWhatsAppEmbeddedSignup(whatsAppSetup.configId);
       await completeWhatsAppEmbeddedSignup(row.config_id, result);
-      message.success("WhatsApp 号码已绑定");
+      void message.success(i18next.t("channelsModule.messages.whatsappBound"));
       await load();
       const nextSetup = await getWhatsAppEmbeddedSignupSetup();
       setWhatsAppSetup(nextSetup);

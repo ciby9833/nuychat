@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AVAILABLE_SKILLS } from "../constants";
 import type {
@@ -14,31 +15,60 @@ import type {
   Ticket
 } from "../types";
 import { intentLabel, sentimentLabel, shortTime } from "../utils";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { cn } from "../../lib/utils";
 
-function taskStatusLabel(status: Ticket["status"]): string {
-  switch (status) {
-    case "open":
-      return "待处理";
-    case "in_progress":
-      return "进行中";
-    case "done":
-      return "已完成";
-    case "cancelled":
-      return "已取消";
-    default:
-      return status;
-  }
+function titleCaseLabel(value: string): string {
+  return value
+    .split(/[_\s-]+/)
+    .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : "")
+    .join(" ");
 }
 
-// ─── Icon tab definitions ─────────────────────────────────────────────────────
+function cleanupReadableText(value: string | null | undefined): string {
+  if (!value) return "";
+  return value
+    .replace(/\[[^\]]+\]\s*\|/g, "")
+    .replace(/\s*\|\s*detail=/gi, "。说明：")
+    .replace(/\s*\|\s*/g, "。")
+    .replace(/\bdetail=/gi, "说明：")
+    .replace(/\btitle=/gi, "标题：")
+    .replace(/\bsummary=/gi, "")
+    .replace(/\s+/g, " ")
+    .replace(/。{2,}/g, "。")
+    .trim();
+}
 
-const TABS: Array<{ key: RightTab; icon: string; label: string }> = [
-  { key: "case",     icon: "🧩", label: "事项" },
-  { key: "customer", icon: "👤", label: "客户" },
-  { key: "copilot",  icon: "🤖", label: "AI" },
-  { key: "skills",   icon: "⚡", label: "技能" },
-  { key: "orders",   icon: "📋", label: "任务" }
-];
+function splitReadableParagraphs(value: string | null | undefined): string[] {
+  const cleaned = cleanupReadableText(value);
+  if (!cleaned) return [];
+  return cleaned
+    .split(/\n+|(?<=[。！？])\s+|(?<=\.)\s+(?=[A-Z])/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function formatStatePayload(payload: Record<string, unknown>): string {
+  const entries = Object.entries(payload)
+    .map(([key, raw]) => {
+      if (raw === null || raw === undefined || raw === "") return null;
+      const value = Array.isArray(raw)
+        ? raw.join("、")
+        : typeof raw === "object"
+          ? JSON.stringify(raw)
+          : String(raw);
+      return `${titleCaseLabel(key)}: ${value}`;
+    })
+    .filter((item): item is string => Boolean(item));
+  return entries.join(" · ");
+}
+
+function compactReadableText(value: string | null | undefined, fallback = ""): string {
+  const firstLine = splitReadableParagraphs(value)[0];
+  return firstLine ?? fallback;
+}
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -76,6 +106,7 @@ type ParamFormProps = {
 };
 
 function SkillParamForm({ schema, executing, onExecute, onCancel }: ParamFormProps) {
+  const { t } = useTranslation();
   const props = schema.parameters?.properties ?? {};
   const required = schema.parameters?.required ?? [];
   const [values, setValues] = useState<Record<string, string | number | boolean>>(() => {
@@ -100,22 +131,20 @@ function SkillParamForm({ schema, executing, onExecute, onCancel }: ParamFormPro
   };
 
   return (
-    <div className="param-form">
+    <div className="flex flex-col gap-2 mt-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
       {Object.entries(props).map(([key, def]) => {
         const isRequired = required.includes(key);
         const hasError = errors.includes(key);
         const cur = values[key];
-
         return (
-          <div key={key}>
-            <label className="param-label">
-              {key}{isRequired ? <span className="req"> *</span> : ""}
-              {def.description ? <span className="desc">{def.description.slice(0, 40)}</span> : null}
+          <div key={key} className="flex flex-col gap-1">
+            <label className="text-[11px] font-medium text-slate-600">
+              {key}{isRequired ? <span className="text-red-500 ml-0.5">*</span> : ""}
+              {def.description ? <span className="text-slate-400 ml-1">{def.description.slice(0, 40)}</span> : null}
             </label>
-
             {def.enum ? (
               <select
-                className={`param-select${hasError ? " error" : ""}`}
+                className={cn("h-7 rounded-md border bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500/50", hasError ? "border-red-300" : "border-slate-200")}
                 value={cur as string ?? ""}
                 onChange={(e) => { setValues((p) => ({ ...p, [key]: e.target.value })); setErrors((p) => p.filter((x) => x !== key)); }}
               >
@@ -123,7 +152,7 @@ function SkillParamForm({ schema, executing, onExecute, onCancel }: ParamFormPro
               </select>
             ) : def.type === "boolean" ? (
               <select
-                className={`param-select${hasError ? " error" : ""}`}
+                className={cn("h-7 rounded-md border bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500/50", hasError ? "border-red-300" : "border-slate-200")}
                 value={cur === undefined ? "" : String(cur)}
                 onChange={(e) => { setValues((p) => ({ ...p, [key]: e.target.value === "true" })); setErrors((p) => p.filter((x) => x !== key)); }}
               >
@@ -133,7 +162,7 @@ function SkillParamForm({ schema, executing, onExecute, onCancel }: ParamFormPro
             ) : (def.type === "number" || def.type === "integer") ? (
               <input
                 type="number"
-                className={`param-input${hasError ? " error" : ""}`}
+                className={cn("h-7 rounded-md border bg-white px-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/50", hasError ? "border-red-300" : "border-slate-200")}
                 value={cur as number ?? ""}
                 onChange={(e) => { setValues((p) => ({ ...p, [key]: Number(e.target.value) })); setErrors((p) => p.filter((x) => x !== key)); }}
                 placeholder={def.description ?? key}
@@ -141,23 +170,45 @@ function SkillParamForm({ schema, executing, onExecute, onCancel }: ParamFormPro
             ) : (
               <input
                 type="text"
-                className={`param-input${hasError ? " error" : ""}`}
+                className={cn("h-7 rounded-md border bg-white px-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/50", hasError ? "border-red-300" : "border-slate-200")}
                 value={cur as string ?? ""}
                 onChange={(e) => { setValues((p) => ({ ...p, [key]: e.target.value })); setErrors((p) => p.filter((x) => x !== key)); }}
                 placeholder={def.description ?? key}
               />
             )}
-
-            {hasError && <div className="param-error-msg">必填项</div>}
+            {hasError && <div className="text-[10px] text-red-500">{t("rp.skills.required")}</div>}
           </div>
         );
       })}
-      <div className="param-form-actions">
-        <button className="param-confirm-btn" disabled={executing} onClick={handleExecute}>
-          {executing ? "执行中…" : "确认执行"}
-        </button>
-        <button className="param-cancel-btn" onClick={onCancel}>取消</button>
+      <div className="flex gap-2 mt-1">
+        <Button variant="primary" size="sm" disabled={executing} onClick={handleExecute}>
+          {executing ? t("rp.skills.executing") : t("rp.skills.confirm")}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCancel}>{t("rp.skills.cancelParam")}</Button>
       </div>
+    </div>
+  );
+}
+
+// ─── Shared card style ────────────────────────────────────────────────────────
+
+function Card({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <div className={cn("rounded-xl border border-slate-100 bg-slate-50/50 p-3", className)}>
+      {children}
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2 mt-4 first:mt-0">{children}</div>;
+}
+
+function KVRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-2 py-1.5 border-b border-slate-100 last:border-0">
+      <span className="text-xs text-slate-500 shrink-0">{label}</span>
+      <span className="text-xs font-medium text-slate-800 text-right">{value}</span>
     </div>
   );
 }
@@ -189,11 +240,9 @@ export function RightPanel(props: RightPanelProps) {
     onExecuteSkill
   } = props;
 
-  // ── Local state ──────────────────────────────────────────────────────────────
+  const { t } = useTranslation();
   const [c360Tab, setC360Tab] = useState<"base" | "history" | "orders" | "analysis">("base");
   const [paramSkillName, setParamSkillName] = useState<string | null>(null);
-
-  // Ticket form state
   const [showTicketForm, setShowTicketForm] = useState(false);
   const [ticketTitle, setTicketTitle] = useState("");
   const [ticketDesc, setTicketDesc] = useState("");
@@ -242,359 +291,530 @@ export function RightPanel(props: RightPanelProps) {
     return `${new Date(item.occurredAt).toLocaleDateString()} ${"★".repeat(score)}${"☆".repeat(5 - score)}`;
   });
 
+  const customerAnalysisLines = splitReadableParagraphs(customer360?.aiAnalysis.summary);
+  const topMemoryItems = (customer360?.memoryItems ?? []).slice(0, 4);
+  const topStateSnapshots = (customer360?.stateSnapshots ?? []).slice(0, 4);
+  const topKnowledgeRecommendations = (customer360?.knowledgeRecommendations ?? []).slice(0, 4);
+
+  const memoryTypeLabel = (memoryType: string): string =>
+    t(`rp.memoryType.${memoryType}`, { defaultValue: titleCaseLabel(memoryType) });
+
+  const taskStatusLabel = (status: Ticket["status"]): string =>
+    t(`rp.orders.status.${status}`, { defaultValue: status });
+
+  const taskStatusVariant = (status: Ticket["status"]): "default" | "success" | "warning" | "danger" | "info" => {
+    if (status === "done") return "success";
+    if (status === "cancelled") return "default";
+    if (status === "in_progress") return "info";
+    return "default";
+  };
+
+  const TABS: Array<{ key: RightTab; label: string }> = [
+    { key: "case",     label: t("rp.tabs.case") },
+    { key: "customer", label: t("rp.tabs.customer") },
+    { key: "copilot",  label: t("rp.tabs.copilot") },
+    { key: "skills",   label: t("rp.tabs.skills") },
+    { key: "orders",   label: t("rp.tabs.orders") }
+  ];
+
   return (
-    <aside className="right-panel">
-      {/* Icon tab bar */}
-      <div className="rp-tab-bar">
-        {TABS.map(({ key, icon, label }) => (
-          <button
-            key={key}
-            className={`rp-tab-btn${rightTab === key ? " active" : ""}`}
-            onClick={() => onTabChange(key)}
-          >
-            <span className="rp-tab-icon">{icon}</span>
-            <span>{label}</span>
-            {key === "orders" && tickets.length > 0 && (
-              <span className="rp-tab-badge">{tickets.length > 9 ? "9+" : tickets.length}</span>
-            )}
-          </button>
-        ))}
-      </div>
+    <aside
+      className="flex flex-col overflow-hidden bg-white border-l border-slate-200"
+      style={{ gridColumn: 4, gridRow: 2 }}
+    >
+      {/* Tab bar */}
+      <Tabs
+        value={rightTab}
+        onValueChange={(v) => onTabChange(v as RightTab)}
+        className="flex flex-col flex-1 overflow-hidden"
+      >
+        <TabsList className="shrink-0">
+          {TABS.map(({ key, label }) => (
+            <TabsTrigger key={key} value={key} className="relative">
+              {label}
+              {key === "orders" && tickets.length > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center h-3.5 min-w-[14px] px-0.5 rounded-full bg-blue-600 text-white text-[9px] font-bold leading-none">
+                  {tickets.length > 9 ? "9+" : tickets.length}
+                </span>
+              )}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <div className="rp-tab-body">
-
-        {rightTab === "case" && (
-          <div>
-            {!detail?.caseId ? (
-              <p className="rp-empty">当前线程暂无事项</p>
-            ) : (
-              <>
-                <ul className="rp-kv-list">
-                  <li><span>事项ID</span><b><code>{detail.caseId.slice(0, 8)}</code></b></li>
-                  <li><span>状态</span><b>{detail.caseStatus ?? "-"}</b></li>
-                  <li><span>类型</span><b>{detail.caseType ?? "-"}</b></li>
-                  <li><span>标题</span><b>{detail.caseTitle ?? "-"}</b></li>
-                  <li><span>打开时间</span><b>{detail.caseOpenedAt ? shortTime(detail.caseOpenedAt) : "-"}</b></li>
-                  <li><span>最近活动</span><b>{detail.caseLastActivityAt ? shortTime(detail.caseLastActivityAt) : "-"}</b></li>
-                </ul>
-                <div>
-                  <div className="rp-section-title">事项摘要</div>
-                  <div className="rp-block">{detail.caseSummary || "暂无事项摘要"}</div>
+        {/* ── Case ── */}
+        <TabsContent value="case" className="flex-1 overflow-y-auto p-3">
+          {!detail?.caseId ? (
+            <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 opacity-40">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              <p className="text-xs">{t("rp.case.empty")}</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-0">
+              <Card>
+                <KVRow label={t("rp.case.id")} value={<code className="text-xs bg-slate-100 px-1 rounded">{detail.caseId.slice(0, 8)}</code>} />
+                <KVRow label={t("rp.case.status")} value={detail.caseStatus ?? "-"} />
+                <KVRow label={t("rp.case.type")} value={detail.caseType ?? "-"} />
+                <KVRow label={t("rp.case.title")} value={detail.caseTitle ?? "-"} />
+                <KVRow label={t("rp.case.openedAt")} value={detail.caseOpenedAt ? shortTime(detail.caseOpenedAt) : "-"} />
+                <KVRow label={t("rp.case.lastActivity")} value={detail.caseLastActivityAt ? shortTime(detail.caseLastActivityAt) : "-"} />
+              </Card>
+              <SectionTitle>{t("rp.case.summary")}</SectionTitle>
+              <Card className="text-xs text-slate-700 leading-relaxed">
+                {detail.caseSummary || t("rp.case.noSummary")}
+              </Card>
+              <SectionTitle>{t("rp.case.tasks")}</SectionTitle>
+              {tickets.length === 0 ? (
+                <p className="text-xs text-slate-400">{t("rp.case.noTasks")}</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {tickets.map((ticket) => (
+                    <Badge key={ticket.ticketId} variant="outline" className="text-[10px]">
+                      {ticket.title} · {taskStatusLabel(ticket.status)}
+                    </Badge>
+                  ))}
                 </div>
-                <div>
-                  <div className="rp-section-title">事项任务</div>
-                  {tickets.length === 0 ? (
-                    <p className="rp-empty">当前事项暂无任务</p>
-                  ) : (
-                    <div className="rp-chips">
-                      {tickets.map((ticket) => (
-                        <span key={ticket.ticketId} className="rp-chip">
-                          {ticket.title} · {taskStatusLabel(ticket.status)}
+              )}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── Customer 360 ── */}
+        <TabsContent value="customer" className="flex-1 overflow-y-auto p-3">
+          {/* Sub-tabs */}
+          <div className="flex items-center gap-1 mb-3">
+            {(["base", "history", "orders", "analysis"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setC360Tab(tab)}
+                className={cn(
+                  "h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors",
+                  c360Tab === tab ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                )}
+              >
+                {t(`rp.customer.tabs.${tab}`)}
+              </button>
+            ))}
+          </div>
+
+          {c360Tab === "base" && (
+            <div>
+              <Card>
+                <KVRow label={t("rp.customer.name")} value={customer360?.customer.name ?? detail?.customerName ?? "-"} />
+                <KVRow label={t("rp.customer.customerId")} value={customer360?.customer.reference ?? detail?.customerRef ?? "-"} />
+                <KVRow label={t("rp.customer.tier")} value={(customer360?.customer.tier ?? detail?.customerTier ?? "standard").toUpperCase()} />
+                <KVRow label={t("rp.customer.channel")} value={customer360?.customer.channelType ?? detail?.channelType ?? "-"} />
+                <KVRow label={t("rp.customer.language")} value={customer360?.customer.language ?? detail?.customerLanguage ?? "-"} />
+                <KVRow label={t("rp.customer.firstContact")} value={customer360?.customer.firstContactAt ? new Date(customer360.customer.firstContactAt).toLocaleDateString() : "-"} />
+              </Card>
+              {(customer360?.customer.tags ?? []).length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {customer360!.customer.tags.map((tag) => (
+                    <Badge key={tag} variant="outline">{tag}</Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {c360Tab === "history" && (
+            <div className="flex flex-col gap-2">
+              {(customer360?.history ?? []).length === 0 && <p className="text-xs text-slate-400">{t("rp.customer.noHistory")}</p>}
+              {(customer360?.history ?? []).slice(0, 8).map((item) => (
+                <button
+                  key={item.caseId}
+                  type="button"
+                  onClick={() => onSelectConversation(item.conversationId)}
+                  className="text-left rounded-xl border border-slate-100 bg-slate-50/50 p-3 hover:border-blue-200 hover:bg-blue-50/30 transition-colors"
+                >
+                  <div className="text-[10px] text-slate-400 mb-1">{new Date(item.occurredAt).toLocaleString()}</div>
+                  <div className="text-xs text-slate-700 font-medium mb-1.5">
+                    {item.caseTitle || t("rp.customer.unnamed")}
+                    {item.summary ? ` · ${item.summary}` : ""}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant="outline">{item.caseId.slice(0, 8)}</Badge>
+                    <Badge variant="outline">{item.channelType}</Badge>
+                    {item.caseType && <Badge variant="outline">{item.caseType}</Badge>}
+                    <Badge variant="default">{item.status}</Badge>
+                    {item.sentiment && <Badge variant="outline">{item.sentiment}</Badge>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {c360Tab === "orders" && (
+            <div>
+              <SectionTitle>{t("rp.customer.orderClues")}</SectionTitle>
+              {(customer360?.orderClues ?? []).length === 0 && <p className="text-xs text-slate-400">{t("rp.customer.noOrderClues")}</p>}
+              <div className="flex flex-wrap gap-1.5">
+                {(customer360?.orderClues ?? []).map((id) => (
+                  <Badge key={id} variant="outline">{id}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {c360Tab === "analysis" && (
+            <div>
+              <Card className="mb-3">
+                <div className="text-[11px] font-semibold text-slate-700 mb-2">{t("rp.customer.analysisSummary")}</div>
+                <div className="text-xs text-slate-600 leading-relaxed space-y-1">
+                  {customerAnalysisLines.length === 0
+                    ? t("rp.customer.noAnalysis")
+                    : customerAnalysisLines.map((line, index) => (
+                        <p key={index}>{line}</p>
+                      ))}
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  <Badge variant="info">{t("rp.customer.currentIntent", { value: intentLabel(customer360?.aiAnalysis.intent ?? "general_inquiry") })}</Badge>
+                  <Badge variant="default">{t("rp.customer.currentSentiment", { value: sentimentLabel(customer360?.aiAnalysis.sentiment ?? "neutral") })}</Badge>
+                </div>
+              </Card>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {customer360?.customer.profileSummary && (
+                  <Card>
+                    <div className="text-[10px] font-semibold text-slate-500 mb-1">{t("rp.customer.profileSummary")}</div>
+                    <div className="text-[11px] text-slate-600">{compactReadableText(customer360.customer.profileSummary, t("rp.customer.noContent"))}</div>
+                  </Card>
+                )}
+                {customer360?.latestConversationIntelligence && (
+                  <Card>
+                    <div className="text-[10px] font-semibold text-slate-500 mb-1">{t("rp.customer.currentConversation")}</div>
+                    <div className="text-[11px] text-slate-600">{compactReadableText(customer360.latestConversationIntelligence.summary, t("rp.customer.noContent"))}</div>
+                  </Card>
+                )}
+                {topMemoryItems.length > 0 && (
+                  <Card>
+                    <div className="text-[10px] font-semibold text-slate-500 mb-1">{t("rp.customer.keyMemory")}</div>
+                    <div className="text-[11px] text-slate-600">{topMemoryItems.map((item) => item.title ?? memoryTypeLabel(item.memoryType)).join(" · ")}</div>
+                  </Card>
+                )}
+                {topStateSnapshots.length > 0 && (
+                  <Card>
+                    <div className="text-[10px] font-semibold text-slate-500 mb-1">{t("rp.customer.currentState")}</div>
+                    <div className="text-[11px] text-slate-600">{topStateSnapshots.map((item) => titleCaseLabel(item.stateType)).join(" · ")}</div>
+                  </Card>
+                )}
+              </div>
+
+              {(customer360?.aiAnalysis.suggestions ?? []).length > 0 && (
+                <>
+                  <SectionTitle>{t("rp.customer.agentSuggestion")}</SectionTitle>
+                  <div className="flex flex-col gap-1.5 mb-3">
+                    {customer360!.aiAnalysis.suggestions.map((item, index) => (
+                      <div key={`${item}-${index}`} className="text-xs text-slate-700 pl-3 border-l-2 border-blue-300">{cleanupReadableText(item)}</div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {(customer360?.memoryItems ?? []).length > 0 && (
+                <>
+                  <SectionTitle>{t("rp.customer.longTermMemory")}</SectionTitle>
+                  <div className="flex flex-col gap-2 mb-3">
+                    {topMemoryItems.map((item, index) => (
+                      <Card key={`${item.memoryType}-${index}`}>
+                        <div className="text-[11px] font-medium text-slate-700 mb-1">{item.title ?? memoryTypeLabel(item.memoryType)}</div>
+                        <div className="text-[11px] text-slate-500 mb-1.5">{cleanupReadableText(item.summary)}</div>
+                        <div className="flex gap-1">
+                          <Badge variant="outline">{memoryTypeLabel(item.memoryType)}</Badge>
+                          <Badge variant="outline">salience {item.salience}</Badge>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {(customer360?.stateSnapshots ?? []).length > 0 && (
+                <>
+                  <SectionTitle>{t("rp.customer.activeState")}</SectionTitle>
+                  <div className="flex flex-col gap-2 mb-3">
+                    {topStateSnapshots.map((item) => (
+                      <Card key={item.stateType}>
+                        <div className="text-[11px] font-medium text-slate-700 mb-1">{titleCaseLabel(item.stateType)}</div>
+                        <div className="text-[11px] text-slate-500">{formatStatePayload(item.payload) || t("rp.customer.noStateDetail")}</div>
+                      </Card>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {sentimentBars.length > 0 && (
+                <>
+                  <SectionTitle>{t("rp.customer.sentimentTrend")}</SectionTitle>
+                  <div className="flex flex-col gap-0.5 mb-3">
+                    {sentimentBars.map((line, idx) => (
+                      <span key={idx} className="text-[11px] text-slate-600 font-mono">{line}</span>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {(customer360?.knowledgeRecommendations ?? []).length > 0 && (
+                <>
+                  <SectionTitle>{t("rp.customer.knowledgeRec")}</SectionTitle>
+                  <div className="flex flex-col gap-2">
+                    {topKnowledgeRecommendations.map((kb) => (
+                      <Card key={kb.entryId}>
+                        <div className="text-[11px] font-medium text-slate-700 mb-1.5">{kb.title}</div>
+                        <div className="flex gap-1">
+                          <Badge variant="outline">{kb.category}</Badge>
+                          <Badge variant="outline">hit {kb.hitCount}</Badge>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── AI Copilot ── */}
+        <TabsContent value="copilot" className="flex-1 overflow-y-auto p-3">
+          <div className="flex flex-col gap-0">
+
+            {/* Summary */}
+            <SectionTitle>{t("rp.copilot.summary")}</SectionTitle>
+            <Card className="mb-3">
+              <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">
+                {copilot?.summary ?? t("rp.copilot.noSummary")}
+              </p>
+            </Card>
+
+            {/* Intent + Sentiment */}
+            <SectionTitle>{t("rp.copilot.intentSentiment")}</SectionTitle>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              <Badge variant="info">{intentLabel(copilot?.intent ?? "general_inquiry")}</Badge>
+              <Badge variant="default">{sentimentLabel(copilot?.sentiment ?? "neutral")}</Badge>
+            </div>
+
+            {/* AI Trace */}
+            <SectionTitle>{t("rp.copilot.aiTrace")}</SectionTitle>
+            {aiTraces.length === 0 && (
+              <p className="text-xs text-slate-400 mb-2">{t("rp.copilot.noTrace")}</p>
+            )}
+            <div className="flex flex-col gap-2">
+              {aiTraces.slice(0, 5).map((trace) => (
+                <div
+                  key={trace.traceId}
+                  className="rounded-xl border border-slate-100 bg-white p-3 overflow-hidden"
+                  style={{ borderLeft: `3px solid ${trace.error ? "#ef4444" : trace.handoffReason ? "#f59e0b" : "#6366f1"}` }}
+                >
+                  {/* Header row */}
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] text-slate-400">
+                      {new Date(trace.createdAt).toLocaleTimeString()}
+                    </span>
+                    <Badge variant={trace.error ? "danger" : "outline"} className="text-[10px] font-mono">
+                      {trace.totalDurationMs}ms · {trace.tokenUsage.total} tok
+                    </Badge>
+                  </div>
+
+                  {/* Skills called */}
+                  {trace.skillsCalled.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-1.5">
+                      {trace.skillsCalled.map((s) => (
+                        <span key={s} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-indigo-50 border border-indigo-100 text-[10px] text-indigo-700 font-medium">
+                          🔧 {s}
                         </span>
                       ))}
                     </div>
                   )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
 
-        {/* ── Customer 360 ── */}
-        {rightTab === "customer" && (
-          <div>
-            <div className="c360-tabs">
-              {(["base", "history", "orders", "analysis"] as const).map((t) => (
-                <button key={t} className={`c360-tab${c360Tab === t ? " active" : ""}`} onClick={() => setC360Tab(t)}>
-                  {t === "base" ? "基础" : t === "history" ? "历史" : t === "orders" ? "订单" : "AI分析"}
-                </button>
+                  {/* Handoff reason */}
+                  {trace.handoffReason && (
+                    <p className="text-[11px] text-amber-700 mb-1 leading-snug">
+                      ↪ <b>{t("rp.copilot.handoffLabel")}</b> {trace.handoffReason}
+                    </p>
+                  )}
+
+                  {/* Error */}
+                  {trace.error && (
+                    <p className="text-[11px] text-red-600 mb-1 leading-snug">
+                      ⚠ <b>{t("rp.copilot.errorLabel")}</b> {trace.error}
+                    </p>
+                  )}
+
+                  {/* Steps (collapsible) */}
+                  {trace.steps.length > 0 && (
+                    <details className="mt-1.5 group">
+                      <summary className="text-[10px] text-slate-400 cursor-pointer hover:text-slate-600 select-none list-none flex items-center gap-1">
+                        <span className="inline-block transition-transform group-open:rotate-90">▶</span>
+                        {t("rp.copilot.steps", { count: trace.steps.length })}
+                      </summary>
+                      <ol className="mt-1.5 flex flex-col gap-1 pl-3 border-l border-slate-100">
+                        {trace.steps.map((step, i) => (
+                          <li key={i} className="text-[10px] text-slate-500 leading-snug">
+                            <span className="font-semibold text-slate-600">{step.step}</span>
+                            {(step.toolName || step.output !== undefined) && (
+                              <span className="ml-1 opacity-70">
+                                {JSON.stringify(step.output ?? step.toolName ?? "").slice(0, 100)}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  )}
+                </div>
               ))}
             </div>
 
-            {c360Tab === "base" && (
-              <div>
-                <ul className="rp-kv-list">
-                  <li><span>姓名</span><b>{customer360?.customer.name ?? detail?.customerName ?? "-"}</b></li>
-                  <li><span>客户ID</span><b>{customer360?.customer.reference ?? detail?.customerRef ?? "-"}</b></li>
-                  <li><span>等级</span><b>{(customer360?.customer.tier ?? detail?.customerTier ?? "standard").toUpperCase()}</b></li>
-                  <li><span>渠道</span><b>{customer360?.customer.channelType ?? detail?.channelType ?? "-"}</b></li>
-                  <li><span>语言</span><b>{customer360?.customer.language ?? detail?.customerLanguage ?? "-"}</b></li>
-                  <li><span>首联</span><b>{customer360?.customer.firstContactAt ? new Date(customer360.customer.firstContactAt).toLocaleDateString() : "-"}</b></li>
-                </ul>
-                {(customer360?.customer.tags ?? []).length > 0 && (
-                  <div className="rp-chips">
-                    {customer360!.customer.tags.map((tag) => (
-                      <span key={tag} className="rp-chip">{tag}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {c360Tab === "history" && (
-              <div>
-                {(customer360?.history ?? []).length === 0 && <p className="rp-empty">暂无历史事项</p>}
-                {(customer360?.history ?? []).slice(0, 8).map((item) => (
-                  <div
-                    key={item.caseId}
-                    className="history-card"
-                    onClick={() => onSelectConversation(item.conversationId)}
-                  >
-                    <div className="history-time">{new Date(item.occurredAt).toLocaleString()}</div>
-                    <div className="history-summary">
-                      {item.caseTitle || "未命名事项"}
-                      {item.summary ? ` · ${item.summary}` : ""}
-                    </div>
-                    <div className="history-tags">
-                      <span className="history-tag">事项 {item.caseId.slice(0, 8)}</span>
-                      <span className="history-tag">{item.channelType}</span>
-                      {item.caseType && <span className="history-tag">{item.caseType}</span>}
-                      <span className="history-tag">{item.status}</span>
-                      {item.sentiment && <span className="history-tag">{item.sentiment}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {c360Tab === "orders" && (
-              <div>
-                <p className="rp-section-title">订单线索</p>
-                {(customer360?.orderClues ?? []).length === 0 && <p className="rp-empty">暂无订单线索</p>}
-                <div className="rp-chips">
-                  {(customer360?.orderClues ?? []).map((id) => (
-                    <span key={id} className="rp-chip">{id}</span>
-                  ))}
-                </div>
-
-              </div>
-            )}
-
-            {c360Tab === "analysis" && (
-              <div>
-                <p className="rp-section-title">AI分析</p>
-                <div className="rp-block">{customer360?.aiAnalysis.summary ?? copilot?.summary ?? "暂无分析"}</div>
-                <div className="rp-chips" style={{ marginBottom: 8 }}>
-                  <span className="rp-chip">意图: {intentLabel(customer360?.aiAnalysis.intent ?? copilot?.intent ?? "general_inquiry")}</span>
-                  <span className="rp-chip">情绪: {sentimentLabel(customer360?.aiAnalysis.sentiment ?? copilot?.sentiment ?? "neutral")}</span>
-                </div>
-
-                {sentimentBars.length > 0 && (
-                  <>
-                    <p className="rp-section-title">情绪趋势</p>
-                    {sentimentBars.map((line, idx) => (
-                      <span key={idx} className="sentiment-line">{line}</span>
-                    ))}
-                  </>
-                )}
-
-                {(customer360?.knowledgeRecommendations ?? []).length > 0 && (
-                  <>
-                    <p className="rp-section-title">知识推荐</p>
-                    {(customer360!.knowledgeRecommendations).slice(0, 5).map((kb) => (
-                      <div key={kb.entryId} className="history-card">
-                        <div className="history-time">{kb.title}</div>
-                        <div className="history-tags">
-                          <span className="history-tag">{kb.category}</span>
-                          <span className="history-tag">hit {kb.hitCount}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
           </div>
-        )}
-
-        {/* ── AI Copilot ── */}
-        {rightTab === "copilot" && (
-          <div>
-            <p className="rp-section-title">会话摘要</p>
-            <div className="rp-block">{copilot?.summary ?? "暂无摘要"}</div>
-
-            <p className="rp-section-title">意图 · 情绪</p>
-            <div className="rp-chips">
-              <span className="rp-chip">{intentLabel(copilot?.intent ?? "general_inquiry")}</span>
-              <span className="rp-chip">{sentimentLabel(copilot?.sentiment ?? "neutral")}</span>
-            </div>
-
-            <p className="rp-section-title">AI 推理轨迹</p>
-            {aiTraces.length === 0 && <p className="rp-empty">本会话未触发 AI 编排</p>}
-            {aiTraces.slice(0, 5).map((trace) => (
-              <div
-                key={trace.traceId}
-                className="trace-card"
-                style={{ borderLeft: `3px solid ${trace.error ? "#ef4444" : trace.handoffReason ? "#f59e0b" : "#6366f1"}` }}
-              >
-                <div className="trace-meta">
-                  <span className="trace-time">{new Date(trace.createdAt).toLocaleTimeString()}</span>
-                  <span className="trace-badge">{trace.totalDurationMs}ms · {trace.tokenUsage.total} tokens</span>
-                </div>
-                {trace.skillsCalled.length > 0 && (
-                  <p className="trace-skill">🔧 <b>技能:</b> {trace.skillsCalled.join(", ")}</p>
-                )}
-                {trace.handoffReason && (
-                  <p className="trace-handoff">↪ <b>转人工:</b> {trace.handoffReason}</p>
-                )}
-                {trace.error && (
-                  <p className="trace-error">⚠ <b>错误:</b> {trace.error}</p>
-                )}
-                <details className="trace-steps">
-                  <summary>步骤详情 ({trace.steps.length})</summary>
-                  <ul>
-                    {trace.steps.map((step, i) => (
-                      <li key={i}><b>{step.step}</b>: {JSON.stringify(step.output ?? step.toolName ?? "—").slice(0, 80)}</li>
-                    ))}
-                  </ul>
-                </details>
-              </div>
-            ))}
-          </div>
-        )}
+        </TabsContent>
 
         {/* ── Skills ── */}
-        {rightTab === "skills" && (
-          <div>
-            <p className="rp-section-title">AI 推荐技能</p>
-            <div className="skills-list">
-              {(skillRecommendation?.recommendations ?? []).map((item) => (
-                <div key={item.skillName} className="skill-card">
-                  <div className="skill-card-head">
-                    <span className="skill-name">{item.skillName}</span>
-                    <span style={{ fontSize: 10, color: "#8c8c8c" }}>score {item.score}</span>
-                  </div>
-                  <div className="skill-desc">{item.reasons.join(", ") || "context_match"}</div>
-                  <div className="skill-actions">
-                    <button type="button" className="skill-exec-btn secondary" onClick={() => onSetPreferredSkills([item.skillName])}>
-                      仅用
-                    </button>
-                    <button type="button" className="skill-exec-btn secondary" onClick={() => onSetPreferredSkills([...(skillRecommendation?.preferredSkillNames ?? []), item.skillName])}>
-                      加偏好
-                    </button>
-                    <button
-                      type="button"
-                      className="skill-exec-btn"
-                      disabled={skillExecuting === item.skillName}
-                      onClick={() => void onExecuteSkill(item.skillName, {})}
-                    >
-                      {skillExecuting === item.skillName ? "执行中…" : "执行"}
-                    </button>
-                  </div>
+        <TabsContent value="skills" className="flex-1 overflow-y-auto p-3">
+          <SectionTitle>{t("rp.skills.recommended")}</SectionTitle>
+          {(skillRecommendation?.recommendations ?? []).length === 0 && (
+            <p className="text-xs text-slate-400 mb-3">{t("rp.skills.noRecommendation")}</p>
+          )}
+          <div className="flex flex-col gap-2 mb-3">
+            {(skillRecommendation?.recommendations ?? []).map((item) => (
+              <Card key={item.skillName}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-slate-800">{item.skillName}</span>
+                  <span className="text-[10px] text-slate-400">score {item.score}</span>
                 </div>
-              ))}
-              {(skillRecommendation?.recommendations ?? []).length === 0 && <p className="rp-empty">暂无推荐技能</p>}
-            </div>
-
-            <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
-              <button type="button" className="rp-outline-btn" onClick={onApplyTopRecommendedSkills}>应用 Top3</button>
-              <button type="button" className="rp-outline-btn" onClick={() => onSetPreferredSkills([])}>清空偏好</button>
-            </div>
-
-            {lastSkillResult && (
-              <div className="skill-result-ok">
-                ✅ <b>{lastSkillResult.skillName}</b> 执行完成
-              </div>
-            )}
-
-            <p className="rp-section-title">可调用技能（已安装）</p>
-            <div className="skills-list">
-              {skillSchemas.length > 0 ? (
-                skillSchemas.map((schema) => {
-                  const hasProps = Object.keys(schema.parameters?.properties ?? {}).length > 0;
-                  const isExpanded = paramSkillName === schema.name;
-                  const isExecuting = skillExecuting === schema.name;
-
-                  return (
-                    <div key={schema.name} className="skill-card">
-                      <div className="skill-card-head">
-                        <div>
-                          <span className="skill-name">{schema.name}</span>
-                          {hasProps && <span className="skill-needs-param">需填参数</span>}
-                        </div>
-                        <button
-                          type="button"
-                          className={`skill-exec-btn${isExpanded ? " secondary" : ""}`}
-                          disabled={isExecuting && !isExpanded}
-                          onClick={() => {
-                            if (!hasProps) { void onExecuteSkill(schema.name, {}); return; }
-                            setParamSkillName(isExpanded ? null : schema.name);
-                          }}
-                        >
-                          {isExpanded ? "收起" : isExecuting ? "执行中…" : "执行"}
-                        </button>
-                      </div>
-                      <div className="skill-desc">{schema.description.slice(0, 60)}{schema.description.length > 60 ? "…" : ""}</div>
-
-                      {isExpanded && (
-                        <SkillParamForm
-                          schema={schema}
-                          executing={isExecuting}
-                          onExecute={(params) => {
-                            setParamSkillName(null);
-                            void onExecuteSkill(schema.name, params);
-                          }}
-                          onCancel={() => setParamSkillName(null)}
-                        />
-                      )}
-                    </div>
-                  );
-                })
-              ) : (
-                (skillRecommendation?.availableSkillNames ?? AVAILABLE_SKILLS.map((s) => s.code)).map((skillName) => (
-                  <div key={skillName} className="skill-card">
-                    <div className="skill-card-head">
-                      <span className="skill-name">{skillName}</span>
-                      <button
-                        type="button"
-                        className="skill-exec-btn"
-                        disabled={skillExecuting === skillName}
-                        onClick={() => void onExecuteSkill(skillName, {})}
-                      >
-                        {skillExecuting === skillName ? "执行中…" : "执行"}
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+                <div className="text-[11px] text-slate-500 mb-2">{item.reasons.join(", ") || "context_match"}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  <Button variant="outline" size="sm" onClick={() => onSetPreferredSkills([item.skillName])}>
+                    {t("rp.skills.useOnly")}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => onSetPreferredSkills([...(skillRecommendation?.preferredSkillNames ?? []), item.skillName])}>
+                    {t("rp.skills.addPref")}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={skillExecuting === item.skillName}
+                    onClick={() => void onExecuteSkill(item.skillName, {})}
+                  >
+                    {skillExecuting === item.skillName ? t("rp.skills.executing") : t("rp.skills.execute")}
+                  </Button>
+                </div>
+              </Card>
+            ))}
           </div>
-        )}
+
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            <Button variant="outline" size="sm" onClick={onApplyTopRecommendedSkills}>{t("rp.skills.applyTop3")}</Button>
+            <Button variant="outline" size="sm" onClick={() => onSetPreferredSkills([])}>{t("rp.skills.clearPrefs")}</Button>
+          </div>
+
+          {lastSkillResult && (
+            <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 mb-3">
+              <span className="text-emerald-600">✅</span>
+              <span className="text-xs text-emerald-700"><b>{lastSkillResult.skillName}</b> {t("rp.skills.skillDone")}</span>
+            </div>
+          )}
+
+          <SectionTitle>{t("rp.skills.installed")}</SectionTitle>
+          <div className="flex flex-col gap-2">
+            {skillSchemas.length > 0 ? (
+              skillSchemas.map((schema) => {
+                const hasProps = Object.keys(schema.parameters?.properties ?? {}).length > 0;
+                const isExpanded = paramSkillName === schema.name;
+                const isExecuting = skillExecuting === schema.name;
+                return (
+                  <Card key={schema.name}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-xs font-semibold text-slate-800 truncate">{schema.name}</span>
+                        {hasProps && <Badge variant="warning">{t("rp.skills.needsParams")}</Badge>}
+                      </div>
+                      <Button
+                        variant={isExpanded ? "ghost" : "primary"}
+                        size="sm"
+                        disabled={isExecuting && !isExpanded}
+                        onClick={() => {
+                          if (!hasProps) { void onExecuteSkill(schema.name, {}); return; }
+                          setParamSkillName(isExpanded ? null : schema.name);
+                        }}
+                      >
+                        {isExpanded ? t("rp.skills.collapse") : isExecuting ? t("rp.skills.executing") : t("rp.skills.execute")}
+                      </Button>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">{schema.description.slice(0, 60)}{schema.description.length > 60 ? "…" : ""}</div>
+                    {isExpanded && (
+                      <SkillParamForm
+                        schema={schema}
+                        executing={isExecuting}
+                        onExecute={(params) => { setParamSkillName(null); void onExecuteSkill(schema.name, params); }}
+                        onCancel={() => setParamSkillName(null)}
+                      />
+                    )}
+                  </Card>
+                );
+              })
+            ) : (
+              (skillRecommendation?.availableSkillNames ?? AVAILABLE_SKILLS.map((s) => s.code)).map((skillName) => (
+                <Card key={skillName}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-800">{skillName}</span>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={skillExecuting === skillName}
+                      onClick={() => void onExecuteSkill(skillName, {})}
+                    >
+                      {skillExecuting === skillName ? t("rp.skills.executing") : t("rp.skills.execute")}
+                    </Button>
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        </TabsContent>
 
         {/* ── Orders / Tasks ── */}
-        {rightTab === "orders" && (
-          <div>
-            <div className="section-action-row">
-              <p className="rp-section-title" style={{ margin: 0 }}>任务列表</p>
-              <button
-                type="button"
-                className={`rp-outline-btn${showTicketForm ? " active" : ""}`}
-                onClick={() => setShowTicketForm((v) => !v)}
-              >
-                {showTicketForm ? "取消" : "+ 创建任务"}
-              </button>
-            </div>
+        <TabsContent value="orders" className="flex-1 overflow-y-auto p-3">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{t("rp.orders.title")}</span>
+            <Button
+              variant={showTicketForm ? "ghost" : "outline"}
+              size="sm"
+              onClick={() => setShowTicketForm((v) => !v)}
+            >
+              {showTicketForm ? t("rp.orders.cancelCreate") : t("rp.orders.create")}
+            </Button>
+          </div>
 
-            {showTicketForm && (
-              <div className="ticket-form">
-                {ticketSourceMessagePreview && (
-                  <div className="rp-block" style={{ marginBottom: 8 }}>
-                    引用消息：{ticketSourceMessagePreview}
-                  </div>
-                )}
+          {showTicketForm && (
+            <Card className="mb-3">
+              {ticketSourceMessagePreview && (
+                <div className="text-[11px] text-slate-500 bg-blue-50 rounded-md px-2 py-1.5 mb-2 border border-blue-100">
+                  {t("rp.orders.quotedMsg", { preview: ticketSourceMessagePreview })}
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
                 <input
                   type="text"
-                  placeholder="任务标题 *"
+                  placeholder={t("rp.orders.titlePlaceholder")}
                   value={ticketTitle}
                   onChange={(e) => setTicketTitle(e.target.value)}
+                  className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                 />
                 <textarea
-                  placeholder="描述（可选）"
+                  placeholder={t("rp.orders.descPlaceholder")}
                   value={ticketDesc}
                   onChange={(e) => setTicketDesc(e.target.value)}
+                  className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 min-h-[64px] resize-none"
                 />
-                <select value={ticketAssigneeId} onChange={(e) => setTicketAssigneeId(e.target.value)}>
-                  <option value="">负责人（可选）</option>
+                <select
+                  value={ticketAssigneeId}
+                  onChange={(e) => setTicketAssigneeId(e.target.value)}
+                  className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                >
+                  <option value="">{t("rp.orders.assigneePlaceholder")}</option>
                   {colleagues.map((item) => (
                     <option key={item.agentId} value={item.agentId}>
                       {item.displayName}{item.employeeNo ? ` #${item.employeeNo}` : ""}
@@ -605,61 +825,78 @@ export function RightPanel(props: RightPanelProps) {
                   type="datetime-local"
                   value={ticketDueAt}
                   onChange={(e) => setTicketDueAt(e.target.value)}
+                  className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                 />
-                <div className="ticket-form-footer">
-                  <button
-                    className="ticket-submit-btn"
-                    disabled={ticketFormLoading || !ticketTitle.trim()}
-                    onClick={() => void handleCreateTicket()}
-                  >
-                    {ticketFormLoading ? "创建中…" : "确认创建"}
-                  </button>
-                </div>
+                <Button
+                  variant="primary"
+                  size="md"
+                  disabled={ticketFormLoading || !ticketTitle.trim()}
+                  onClick={() => void handleCreateTicket()}
+                  className="w-full"
+                >
+                  {ticketFormLoading ? t("rp.orders.creating") : t("rp.orders.confirm")}
+                </Button>
               </div>
-            )}
+            </Card>
+          )}
 
-            {(copilot?.entities.orderIds ?? []).length > 0 && (
-              <>
-                <p className="rp-section-title">订单标记</p>
-                <div className="rp-chips">
-                  {(copilot?.entities.orderIds ?? []).map((id) => (
-                    <span key={id} className="rp-chip">{id}</span>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {ticketLoading && <p className="rp-empty">加载任务中…</p>}
-            {!ticketLoading && tickets.length === 0 && <p className="rp-empty">暂无任务</p>}
-
-            {tickets.map((t) => (
-              <div key={t.ticketId} className="ticket-card">
-                <div className="ticket-head">
-                  <div className="ticket-info">
-                    <p className="ticket-title">{t.title}</p>
-                    <p className="ticket-meta">
-                      {taskStatusLabel(t.status)}
-                      {t.assigneeName ? ` · ${t.assigneeName}${t.assigneeEmployeeNo ? ` #${t.assigneeEmployeeNo}` : ""}` : ""}
-                      {t.slaDeadlineAt ? ` · 截止 ${shortTime(t.slaDeadlineAt)}` : ""}
-                    </p>
-                  </div>
-                  <div className="ticket-actions">
-                    {t.status === "open" && (
-                      <button type="button" onClick={() => void onPatchTicket(t.ticketId, { status: "in_progress" })}>开始</button>
-                    )}
-                    {t.status !== "done" && t.status !== "cancelled" && (
-                      <button type="button" onClick={() => void onPatchTicket(t.ticketId, { status: "done" })}>完成</button>
-                    )}
-                  </div>
-                </div>
-                {t.description && <p className="ticket-desc">{t.description}</p>}
-                {t.sourceMessagePreview && <p className="ticket-desc">引用：{t.sourceMessagePreview}</p>}
-                <p className="ticket-created-at">创建于 {shortTime(t.createdAt)}</p>
+          {(copilot?.entities.orderIds ?? []).length > 0 && (
+            <>
+              <SectionTitle>{t("rp.orders.orderMarks")}</SectionTitle>
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {(copilot?.entities.orderIds ?? []).map((id) => (
+                  <Badge key={id} variant="outline">{id}</Badge>
+                ))}
               </div>
+            </>
+          )}
+
+          {ticketLoading && <p className="text-xs text-slate-400">{t("rp.orders.loading")}</p>}
+          {!ticketLoading && tickets.length === 0 && <p className="text-xs text-slate-400">{t("rp.orders.empty")}</p>}
+
+          <div className="flex flex-col gap-2">
+            {tickets.map((ticket) => (
+              <Card key={ticket.ticketId}>
+                <div className="flex items-start justify-between gap-2 mb-1.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold text-slate-800 mb-1">{ticket.title}</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant={taskStatusVariant(ticket.status)}>{taskStatusLabel(ticket.status)}</Badge>
+                      {ticket.assigneeName && (
+                        <span className="text-[10px] text-slate-400">
+                          {ticket.assigneeName}{ticket.assigneeEmployeeNo ? ` #${ticket.assigneeEmployeeNo}` : ""}
+                        </span>
+                      )}
+                      {ticket.slaDeadlineAt && (
+                        <span className="text-[10px] text-slate-400">
+                          {t("rp.orders.dueAt", { time: shortTime(ticket.slaDeadlineAt) })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1 shrink-0">
+                    {ticket.status === "open" && (
+                      <Button variant="outline" size="sm" onClick={() => void onPatchTicket(ticket.ticketId, { status: "in_progress" })}>
+                        {t("rp.orders.start")}
+                      </Button>
+                    )}
+                    {ticket.status !== "done" && ticket.status !== "cancelled" && (
+                      <Button variant="ghost" size="sm" onClick={() => void onPatchTicket(ticket.ticketId, { status: "done" })}>
+                        {t("rp.orders.done")}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {ticket.description && <p className="text-[11px] text-slate-500 mb-1">{ticket.description}</p>}
+                {ticket.sourceMessagePreview && (
+                  <p className="text-[11px] text-slate-400 italic mb-1">{t("rp.orders.quoted", { preview: ticket.sourceMessagePreview })}</p>
+                )}
+                <p className="text-[10px] text-slate-400">{t("rp.orders.createdAt", { time: shortTime(ticket.createdAt) })}</p>
+              </Card>
             ))}
           </div>
-        )}
-      </div>
+        </TabsContent>
+      </Tabs>
     </aside>
   );
 }

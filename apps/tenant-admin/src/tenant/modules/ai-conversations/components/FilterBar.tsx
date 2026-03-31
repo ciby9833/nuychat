@@ -3,6 +3,7 @@
 // 作者：吴川
 
 import { Button, DatePicker, Select } from "antd";
+import { useTranslation } from "react-i18next";
 
 import type { TenantAIAgent } from "../../../types";
 import { S } from "../styles";
@@ -36,10 +37,11 @@ export function FilterBar({
   loading: boolean;
   onRefresh: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div style={S.filterBar}>
       <Select size="small" style={{ width: 200 }} value={selectedAiAgentId} onChange={onAiAgentChange}
-        options={[{ value: "all", label: "全部 AI 座席" }, ...aiAgents.map((a) => ({ value: a.aiAgentId, label: a.name }))]}
+        options={[{ value: "all", label: t("aiConversations.filter.allAiAgents") }, ...aiAgents.map((a) => ({ value: a.aiAgentId, label: a.name }))]}
       />
       <Select size="small" style={{ width: 140 }} value={selectedStatus} onChange={onStatusChange} options={STATUS_OPTIONS} />
       <Select size="small" style={{ width: 110 }} value={datePreset} onChange={(v) => onDatePresetChange(v as DatePreset)}
@@ -48,11 +50,11 @@ export function FilterBar({
       {datePreset === "custom" ? (
         <DatePicker.RangePicker size="small" value={customRange} onChange={(v) => onCustomRangeChange(v)} allowClear={false} />
       ) : null}
-      <Button size="small" onClick={onRefresh} loading={loading}>刷新</Button>
+      <Button size="small" onClick={onRefresh} loading={loading}>{t("aiConversations.filter.refresh")}</Button>
       <div style={S.filterRight}>
-        <span>会话 {summary.total}</span>
-        <span style={{ color: "#faad14" }}>待转 {summary.handoff}</span>
-        <span style={{ color: "#1677ff" }}>已转 {summary.transferred}</span>
+        <span>{t("aiConversations.filter.total", { count: summary.total })}</span>
+        <span style={{ color: "#faad14" }}>{t("aiConversations.filter.handoff", { count: summary.handoff })}</span>
+        <span style={{ color: "#1677ff" }}>{t("aiConversations.filter.transferred", { count: summary.transferred })}</span>
       </div>
     </div>
   );

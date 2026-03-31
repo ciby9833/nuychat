@@ -6,7 +6,7 @@
 
 ```env
 VITE_WEBCHAT_PUBLIC_KEY=demo-web
-VITE_WEBCHAT_API_BASE=http://localhost:3000
+VITE_WEBCHAT_API_BASE=http://localhost:3001
 ```
 
 - 不传 URL 参数时，会使用 `VITE_WEBCHAT_PUBLIC_KEY`。
@@ -15,9 +15,9 @@ VITE_WEBCHAT_API_BASE=http://localhost:3000
 ## 1. 嵌入代码
 
 ```html
-<script src="http://localhost:3000/webchat.js"
+<script src="http://localhost:3001/webchat.js"
         data-key="<publicChannelKey>"
-        data-api-base="http://localhost:3000"
+        data-api-base="http://localhost:3001"
         data-app-base="http://localhost:5176"
         data-source="widget"
         data-app-id="b2c-site"></script>

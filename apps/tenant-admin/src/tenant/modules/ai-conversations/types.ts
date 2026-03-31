@@ -2,20 +2,21 @@
 // 菜单路径: 客户中心 -> AI 会话监控
 // 作者：吴川
 
+import i18next from "i18next";
 import type { Dayjs } from "dayjs";
 
 export const STATUS_OPTIONS = [
-  { value: "all", label: "全部状态" },
-  { value: "bot_active", label: "AI 对话中" },
-  { value: "handoff_required", label: "待转人工" },
-  { value: "transferred", label: "已转人工" }
+  { value: "all", label: i18next.t("aiConversations.status.all") },
+  { value: "bot_active", label: i18next.t("aiConversations.status.bot_active") },
+  { value: "handoff_required", label: i18next.t("aiConversations.status.handoff_required") },
+  { value: "transferred", label: i18next.t("aiConversations.status.transferred") }
 ];
 
 export const DATE_PRESET_OPTIONS = [
-  { value: "today", label: "今天" },
-  { value: "yesterday", label: "昨天" },
-  { value: "last7d", label: "最近 7 天" },
-  { value: "custom", label: "自定义" }
+  { value: "today", label: i18next.t("aiConversations.datePreset.today") },
+  { value: "yesterday", label: i18next.t("aiConversations.datePreset.yesterday") },
+  { value: "last7d", label: i18next.t("aiConversations.datePreset.last7d") },
+  { value: "custom", label: i18next.t("aiConversations.datePreset.custom") }
 ] as const;
 
 export type DatePreset = (typeof DATE_PRESET_OPTIONS)[number]["value"];

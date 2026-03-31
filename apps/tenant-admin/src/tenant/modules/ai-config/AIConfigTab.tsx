@@ -1,12 +1,14 @@
-// 作用: AI 配置管理主入口页面，包含两个 Tab：AI 运行策略 / AI 配置
-// 菜单路径: 客户中心 -> AI 配置管理
+// 作用: AI 配置管理主入口页面，分为 AI 运行策略与模型配置两个独立 Tab
+// 菜单路径: 客户中心 -> AI 配置
 // 作者：吴川
 
 import { Alert, Form, Space, Tabs } from "antd";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { AIConfigProfile } from "../../types";
-import { AIRuntimePolicyCard } from "./components/AIRuntimePolicyCard";
+import { AIRuntimePolicyCard } from "./components/runtime-policy/AIRuntimePolicyCard";
+import { AISceneModelCard } from "./components/scene-model/AISceneModelCard";
 import { AIConfigTable } from "./components/AIConfigTable";
 import { useAIConfigData } from "./hooks/useAIConfigData";
 import { AIConfigDrawer } from "./modals/AIConfigDrawer";
@@ -14,12 +16,17 @@ import type { AIConfigFormValues, ConfigDrawerMode } from "./types";
 import { normalizeProvider } from "./types";
 
 export function AIConfigTab() {
+  const { t } = useTranslation();
   const [form] = Form.useForm<AIConfigFormValues>();
   const data = useAIConfigData(form);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<ConfigDrawerMode>("create");
+  const summary = data.summary;
+  const isPlatformManaged = summary?.aiModelAccessMode === "platform_managed";
+  const modelLabel = summary?.aiProvider && summary?.aiModel ? `${summary.aiProvider} / ${summary.aiModel}` : t("aiConfig.currentPlatformConfig");
 
   const onCreate = () => {
+    if (isPlatformManaged) return;
     data.setSelectedId(null);
     data.setApiKey("");
     setDrawerMode("create");
@@ -37,6 +44,7 @@ export function AIConfigTab() {
   };
 
   const onSelect = (cfg: AIConfigProfile) => {
+    if (isPlatformManaged) return;
     data.setSelectedId(cfg.config_id);
     data.setApiKey("");
     setDrawerMode("view");
@@ -54,6 +62,7 @@ export function AIConfigTab() {
   };
 
   const onEdit = (cfg: AIConfigProfile) => {
+    if (isPlatformManaged) return;
     onSelect(cfg);
     setDrawerMode("edit");
   };
@@ -69,55 +78,62 @@ export function AIConfigTab() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       {data.error ? <Alert type="error" showIcon message={data.error} /> : null}
-      {data.saved ? <Alert type="success" showIcon message="保存成功" /> : null}
+      {data.saved ? <Alert type="success" showIcon message={t("aiConfig.saved")} /> : null}
 
       <Tabs
         defaultActiveKey="runtime-policy"
         items={[
           {
             key: "runtime-policy",
-            label: "AI 运行策略",
+            label: t("aiConfig.tabs.runtimePolicy"),
             children: <AIRuntimePolicyCard />
           },
           {
-            key: "ai-config",
-            label: "AI 配置",
+            key: "scene-model",
+            label: t("aiConfig.tabs.sceneModel"),
+            children: <AISceneModelCard />
+          },
+          {
+            key: "model-config",
+            label: t("aiConfig.tabs.modelConfig"),
             children: (
-              <>
-                <AIConfigTable
-                  rows={data.rows}
-                  selectedId={data.selectedId}
-                  onCreate={onCreate}
-                  onSelect={onSelect}
-                  onEdit={onEdit}
-                  onSetDefault={(id) => { void data.onSetDefault(id); }}
-                  onDelete={(id) => { void data.onDelete(id); }}
-                />
-                <AIConfigDrawer
-                  open={drawerOpen}
-                  mode={drawerMode}
-                  selected={data.selected}
-                  selectedId={data.selectedId}
-                  form={form}
-                  apiKey={data.apiKey}
-                  busy={data.busy}
-                  onApiKeyChange={data.setApiKey}
-                  onClose={() => {
-                    setDrawerOpen(false);
-                    setDrawerMode("create");
-                    data.setApiKey("");
-                  }}
-                  onSave={handleSave}
-                  onSwitchToEdit={() => setDrawerMode("edit")}
-                  onSwitchToView={() => {
-                    setDrawerMode("view");
-                    data.setApiKey("");
-                  }}
-                />
-              </>
+              <AIConfigTable
+                rows={data.rows}
+                selectedId={data.selectedId}
+                readOnly={isPlatformManaged}
+                readOnlyMessage={isPlatformManaged ? t("aiConfig.platformManagedMessage", { model: modelLabel }) : undefined}
+                onCreate={onCreate}
+                onSelect={onSelect}
+                onEdit={onEdit}
+                onSetDefault={(id) => { void data.onSetDefault(id); }}
+                onDelete={(id) => { void data.onDelete(id); }}
+              />
             )
           }
         ]}
+      />
+
+      <AIConfigDrawer
+        open={drawerOpen}
+        mode={drawerMode}
+        selected={drawerMode === "create" ? null : data.selected}
+        selectedId={drawerMode === "create" ? null : data.selectedId}
+        canEdit={!isPlatformManaged}
+        form={form}
+        apiKey={data.apiKey}
+        busy={data.busy}
+        onApiKeyChange={data.setApiKey}
+        onClose={() => {
+          setDrawerOpen(false);
+          setDrawerMode("create");
+          data.setApiKey("");
+        }}
+        onSave={handleSave}
+        onSwitchToEdit={() => setDrawerMode("edit")}
+        onSwitchToView={() => {
+          setDrawerMode("view");
+          data.setApiKey("");
+        }}
       />
     </Space>
   );

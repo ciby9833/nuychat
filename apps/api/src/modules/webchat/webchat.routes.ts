@@ -4,6 +4,12 @@ import type { Knex } from "knex";
 
 import { db, withTenantTransaction } from "../../infra/db/client.js";
 import { inboundQueue } from "../../infra/queue/queues.js";
+import { isAllowedMimeType, saveUploadedFile } from "../../infra/storage/upload.service.js";
+import {
+  isInternalControlPayload,
+  normalizeStructuredActions,
+  normalizeStructuredMessage
+} from "../../shared/messaging/structured-message.js";
 import { findActiveWebChannelByPublicKey } from "../channel/channel.repository.js";
 import { ConversationService } from "../conversation/conversation.service.js";
 import { CustomerService } from "../customer/customer.service.js";
@@ -43,7 +49,7 @@ export async function webchatRoutes(app: FastifyInstance) {
         channelId: channel.channelId,
         channelType: "web",
         lastMessageAt: new Date(),
-        lastMessagePreview: null
+        lastMessagePreview: undefined
       });
 
       await patchWebClientMetadata(trx, {
@@ -173,6 +179,34 @@ export async function webchatRoutes(app: FastifyInstance) {
       publicChannelKey: publicKey,
       messageId
     };
+  });
+
+  app.post("/api/webchat/public/:publicKey/upload", async (req, reply) => {
+    const { publicKey } = req.params as { publicKey: string };
+    await resolveWebChannelByPublicKey(app, publicKey);
+
+    const file = await req.file();
+    if (!file) {
+      throw app.httpErrors.badRequest("No file uploaded");
+    }
+
+    const mimeType = file.mimetype ?? "application/octet-stream";
+    if (!isAllowedMimeType(mimeType)) {
+      throw app.httpErrors.badRequest(`File type ${mimeType} is not allowed`);
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of file.file) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+
+    if (file.file.truncated) {
+      throw (app.httpErrors as any).requestEntityTooLarge("File too large");
+    }
+
+    const uploaded = await saveUploadedFile(buffer, file.filename, mimeType);
+    return reply.code(201).send(uploaded);
   });
 
   app.get("/api/webchat/public/:publicKey/csat/pending", async (req) => {
@@ -339,7 +373,6 @@ type WebAttachmentInput = {
   name?: string;
   mimeType?: string;
   size?: number;
-  dataUrl?: string;
   url?: string;
 };
 
@@ -354,13 +387,10 @@ function serializeWebchatMessageRow(message: {
   const payload = typeof message.content === "object" && message.content
     ? (message.content as Record<string, unknown>)
     : {};
-  const text = typeof payload.text === "string" ? payload.text : "";
+  const text = typeof payload.text === "string" && !isInternalControlPayload(payload.text) ? payload.text : "";
   const payloadAttachments = Array.isArray(payload.attachments)
     ? (payload.attachments as Array<{ url?: string; mimeType?: string; fileName?: string }>)
     : [];
-  const metadata = payload.metadata && typeof payload.metadata === "object"
-    ? (payload.metadata as Record<string, unknown>)
-    : {};
   const attachments = payloadAttachments.length > 0
     ? payloadAttachments.map((item) => ({
         name: String(item.fileName ?? "file"),
@@ -368,16 +398,9 @@ function serializeWebchatMessageRow(message: {
         size: 0,
         url: typeof item.url === "string" ? item.url : undefined
       }))
-    : Array.isArray(metadata.attachments)
-    ? (metadata.attachments as Array<{ name?: string; mimeType?: string; size?: number; dataUrl?: string; url?: string }>)
-      .map((item) => ({
-        name: String(item.name ?? "file"),
-        mimeType: String(item.mimeType ?? "application/octet-stream"),
-        size: Number(item.size ?? 0),
-        dataUrl: typeof item.dataUrl === "string" ? item.dataUrl : undefined,
-        url: typeof item.url === "string" ? item.url : undefined
-      }))
     : [];
+  const structured = normalizeStructuredMessage(payload.structured);
+  const actions = normalizeStructuredActions(payload.actions);
 
   return {
     id: message.message_id,
@@ -385,6 +408,8 @@ function serializeWebchatMessageRow(message: {
     sender_type: message.sender_type ?? null,
     type: message.message_type,
     text,
+    structured,
+    actions,
     attachments,
     createdAt: new Date(message.created_at).toISOString()
   };
@@ -400,10 +425,9 @@ function normalizeAttachments(value: WebAttachmentInput[] | undefined) {
         ? item.mimeType.trim()
         : "application/octet-stream",
       size: Number.isFinite(Number(item.size)) ? Number(item.size) : 0,
-      dataUrl: typeof item.dataUrl === "string" ? item.dataUrl : undefined,
       url: typeof item.url === "string" ? item.url : undefined
     }))
-    .filter((item) => item.dataUrl || item.url);
+    .filter((item) => item.url);
 }
 
 function readClientContext(
@@ -478,14 +502,17 @@ function clampNumber(value: unknown, min: number, max: number) {
 }
 
 function buildWebchatWidgetScript() {
+  const defaultApiBase = readRequiredBaseUrlEnv("API_PUBLIC_BASE");
+  const defaultAppBase = readRequiredBaseUrlEnv("WEBCHAT_APP_BASE");
+
   return `
 (function () {
   var script = document.currentScript;
   if (!script) return;
   var key = script.getAttribute("data-key");
   if (!key) { console.error("[NuyChat] data-key is required"); return; }
-  var apiBase = script.getAttribute("data-api-base") || (new URL(script.src)).origin;
-  var appBase = script.getAttribute("data-app-base") || apiBase.replace(":3000", ":5176");
+  var apiBase = script.getAttribute("data-api-base") || ${JSON.stringify(defaultApiBase)};
+  var appBase = script.getAttribute("data-app-base") || ${JSON.stringify(defaultAppBase)};
   var source = script.getAttribute("data-source") || "widget";
   var appId = script.getAttribute("data-app-id") || "web";
   var button = document.createElement("button");
@@ -496,7 +523,7 @@ function buildWebchatWidgetScript() {
   var iframe = document.createElement("iframe");
   iframe.allow = "camera; microphone; clipboard-read; clipboard-write";
   iframe.style.cssText = "width:100%;height:100%;border:none;";
-  iframe.src = appBase + "/?k=" + encodeURIComponent(key) + "&mode=widget&apiBase=" + encodeURIComponent(apiBase) + "&source=" + encodeURIComponent(source) + "&app=" + encodeURIComponent(appId);
+  iframe.src = appBase + "/?k=" + encodeURIComponent(key) + "&mode=widget&source=" + encodeURIComponent(source) + "&app=" + encodeURIComponent(appId);
   panel.appendChild(iframe);
   var isOpen = false;
   function applyMobileLayout() {
@@ -525,3 +552,4 @@ function buildWebchatWidgetScript() {
   document.body.appendChild(panel);
 })();`;
 }
+import { readRequiredBaseUrlEnv } from "../../infra/env.js";

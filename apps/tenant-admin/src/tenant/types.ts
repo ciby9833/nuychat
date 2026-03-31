@@ -41,22 +41,16 @@ export type OverviewData = {
   agents: { total: number };
 };
 
-export type IntegrationConfig = {
-  endpoint?: string;
-  apiKey?: string;
-  timeout?: number;
-};
-
 export type PreReplyPolicyRule = {
   ruleId: string;
   name: string;
   enabled: boolean;
-  requiredSkills: string[];
+  requiredChecks: string[];
   intents: string[];
   keywords: string[];
   onMissing: "handoff" | "defer";
   reason: string | null;
-  augmentPreferredSkills: boolean;
+  augmentPreferredChecks: boolean;
 };
 
 export type PreReplyPolicySet = {
@@ -72,13 +66,73 @@ export type AIConfig = {
   temperature: number;
   max_tokens: number;
   system_prompt_override: string | null;
-  integrations: Record<string, IntegrationConfig>;
   has_api_key?: boolean;
   base_url?: string | null;
   is_default?: boolean;
   is_active?: boolean;
   created_at?: string;
   updated_at?: string;
+};
+
+export type CapabilityListItem = {
+  capabilityId: string;
+  code: string;
+  name: string;
+  description: string | null;
+  category: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CapabilityDetail = CapabilityListItem & {
+  metadata: Record<string, unknown>;
+  skillMarkdown: string;
+  formsMarkdown: string;
+  referenceMarkdown: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  scripts: Array<{
+    scriptId: string;
+    scriptKey: string;
+    name: string;
+    fileName: string;
+    language: string;
+    sourceCode: string;
+    requirements: string[];
+    envRefs: string[];
+    envBindings: Array<{
+      envKey: string;
+      envValue: string;
+    }>;
+    enabled: boolean;
+  }>;
+};
+
+export type CapabilityUpsertInput = {
+  code: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  status?: string | null;
+  skillMarkdown?: string | null;
+  formsMarkdown?: string | null;
+  referenceMarkdown?: string | null;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  scripts?: Array<{
+    scriptKey: string;
+    name: string;
+    fileName?: string | null;
+    language?: string | null;
+    sourceCode: string;
+    requirements?: string[];
+    envBindings?: Array<{
+      envKey: string;
+      envValue: string;
+    }>;
+    enabled?: boolean;
+  }>;
 };
 
 export type AIConfigProfile = AIConfig & {
@@ -93,6 +147,11 @@ export type AIRuntimePolicy = {
   policy_id: string | null;
   tenant_id: string;
   pre_reply_policies: PreReplyPolicySet;
+  model_scene_config: {
+    aiSeatConfigId: string | null;
+    agentAssistConfigId: string | null;
+    toolDefaultConfigId: string | null;
+  };
   created_at: string | null;
   updated_at: string | null;
 };
@@ -295,7 +354,23 @@ export type AIConversationDetail = {
     direction: string;
     senderType: string;
     messageType: string;
-    content: unknown;
+    content: {
+      text?: string;
+      structured?: {
+        version: "2026-03-28";
+        blocks: Array<
+          | { type: "paragraph"; text: string }
+          | { type: "list"; ordered: boolean; items: string[] }
+          | { type: "key_value"; items: Array<{ label: string; value: string }> }
+          | {
+              type: "records";
+              items: Array<{ title?: string; fields: Array<{ label: string; value: string }> }>;
+            }
+        >;
+      } | null;
+      actions?: Array<{ type?: "button" | "list" | "postback"; label: string; value: string }>;
+      attachments?: Array<{ url?: string; mimeType?: string; fileName?: string; mediaId?: string }>;
+    };
     preview: string;
     replyToMessageId?: string | null;
     replyToPreview?: string | null;
@@ -380,7 +455,23 @@ export type HumanConversationDetail = {
     senderType: string;
     senderName: string | null;
     messageType: string;
-    content: unknown;
+    content: {
+      text?: string;
+      structured?: {
+        version: "2026-03-28";
+        blocks: Array<
+          | { type: "paragraph"; text: string }
+          | { type: "list"; ordered: boolean; items: string[] }
+          | { type: "key_value"; items: Array<{ label: string; value: string }> }
+          | {
+              type: "records";
+              items: Array<{ title?: string; fields: Array<{ label: string; value: string }> }>;
+            }
+        >;
+      } | null;
+      actions?: Array<{ type?: "button" | "list" | "postback"; label: string; value: string }>;
+      attachments?: Array<{ url?: string; mimeType?: string; fileName?: string; mediaId?: string }>;
+    };
     preview: string;
     replyToMessageId?: string | null;
     replyToPreview?: string | null;
@@ -477,7 +568,6 @@ export type PermissionKey =
   | "channels.manage"
   | "kb.manage"
   | "ai.manage"
-  | "marketplace.manage"
   | "analytics.read";
 
 export type PermissionPolicyItem = {
@@ -847,48 +937,6 @@ export type CustomerListResponse = {
   items: CustomerListItem[];
 };
 
-export type MarketplaceCatalogSkill = {
-  skillId: string;
-  slug: string;
-  name: string;
-  description: string;
-  tier: "official" | "private" | "third_party";
-  status: "draft" | "published" | "deprecated";
-  latestVersion: string;
-  latestRelease: { releaseId: string; version: string; publishedAt: string } | null;
-  installed: { installId: string; releaseId: string; status: "active" | "disabled" } | null;
-};
-
-export type MarketplaceInstall = {
-  installId: string;
-  skillId: string;
-  skillName: string;
-  skillSlug: string;
-  skillTier: "official" | "private" | "third_party";
-  releaseId: string;
-  releaseVersion: string;
-  status: "active" | "disabled";
-  enabledModules: string[];
-  enabledSkillGroups: string[];
-  enabledForAi: boolean;
-  enabledForAgent: boolean;
-  rateLimitPerMinute: number;
-  aiWhitelisted: boolean;
-  installedAt: string;
-  updatedAt: string;
-};
-
-export type MarketplaceGovernancePatchInput = {
-  status?: "active" | "disabled";
-  releaseId?: string;
-  enabledModules?: string[];
-  enabledSkillGroups?: string[];
-  enabledForAi?: boolean;
-  enabledForAgent?: boolean;
-  rateLimitPerMinute?: number;
-  aiWhitelisted?: boolean;
-};
-
 export type DispatchExecutionListItem = {
   executionId: string;
   caseId: string | null;
@@ -1050,11 +1098,10 @@ export type Tab =
   | "dispatch-audit"
   | "tasks"
   | "ai"
+  | "capabilities"
   | "kb"
   | "routing"
   | "channels"
-  | "marketplace"
-  | "integrations"
   | "analytics";
 
 // ─── Analytics ────────────────────────────────────────────────────────────────

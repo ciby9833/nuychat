@@ -1,6 +1,11 @@
-// 作用: AI 座席数据加载与 CRUD 操作 hook
-// 菜单路径: 客户中心 -> AI 座席管理
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> AI 座席
+ * 文件职责: 负责 AI 座席列表与摘要数据加载，以及新建、编辑、启停、删除动作。
+ * 主要交互文件:
+ * - ../AISeatsTab.tsx: 消费 rows、summary、error、busy 和动作方法。
+ * - ../types.ts: 提供 AISeatsFormValues 和错误文案转换。
+ * - ../../../api: 提供 list/create/patch/delete AI 座席接口。
+ */
 
 import { useCallback, useEffect, useState } from "react";
 

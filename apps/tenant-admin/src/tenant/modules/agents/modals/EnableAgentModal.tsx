@@ -1,15 +1,12 @@
-// 作用: 启用接待资格弹窗（为成员开通坐席）
-// 菜单路径: 系统设置 -> 坐席与成员管理 -> 启用接待资格
-// 作者：吴川
-
 import { UserOutlined } from "@ant-design/icons";
 import { Form, InputNumber, Modal, Select, Space, Switch, message } from "antd";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { createAgent } from "../../../api";
 import type { MemberListItem } from "../../../types";
 import type { EnableAgentForm } from "../types";
-import { SENIORITY_LABEL, getActionErrorMessage } from "../types";
+import { getActionErrorMessage, seniorityOptions } from "../types";
 
 export function EnableAgentModal({
   open,
@@ -22,6 +19,7 @@ export function EnableAgentModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const { t } = useTranslation();
   const [form] = Form.useForm<EnableAgentForm>();
   const [saving, setSaving] = useState(false);
   const candidates = useMemo(() => members.filter((member) => !member.agentId), [members]);
@@ -31,17 +29,17 @@ export function EnableAgentModal({
     setSaving(true);
     try {
       await createAgent({
-        membershipId: values.membershipId,
+        membershipId:   values.membershipId,
         seniorityLevel: values.seniorityLevel,
         maxConcurrency: values.maxConcurrency,
-        allowAiAssist: values.allowAiAssist
+        allowAiAssist:  values.allowAiAssist
       });
-      message.success("已开通座席");
+      void message.success(t("agents.enable.success"));
       form.resetFields();
       onCreated();
       onClose();
     } catch (err) {
-      message.error(getActionErrorMessage(err, "agent_enable"));
+      void message.error(getActionErrorMessage(err, "agent_enable"));
     } finally {
       setSaving(false);
     }
@@ -49,12 +47,12 @@ export function EnableAgentModal({
 
   return (
     <Modal
-      title={<Space><UserOutlined />启用接待资格</Space>}
+      title={<Space><UserOutlined />{t("agents.enable.title")}</Space>}
       open={open}
       onCancel={() => { form.resetFields(); onClose(); }}
       onOk={() => { void handleOk(); }}
-      okText="启用"
-      cancelText="取消"
+      okText={t("agents.enable.okText")}
+      cancelText={t("common.cancel")}
       confirmLoading={saving}
       destroyOnHidden
       width={520}
@@ -65,7 +63,11 @@ export function EnableAgentModal({
         style={{ marginTop: 16 }}
         initialValues={{ seniorityLevel: "junior", maxConcurrency: 6, allowAiAssist: true }}
       >
-        <Form.Item label="选择成员" name="membershipId" rules={[{ required: true, message: "请选择成员" }]}>
+        <Form.Item
+          label={t("agents.enable.selectMember")}
+          name="membershipId"
+          rules={[{ required: true, message: t("agents.enable.required") }]}
+        >
           <Select
             showSearch
             optionFilterProp="label"
@@ -73,17 +75,17 @@ export function EnableAgentModal({
               value: member.membershipId,
               label: `${member.displayName ?? member.email}${member.employeeNo ? ` / ${member.employeeNo}` : ""}`
             }))}
-            placeholder={candidates.length === 0 ? "没有可开通的成员" : "请选择成员"}
+            placeholder={candidates.length === 0 ? t("agents.enable.noMembers") : t("agents.enable.selectMember")}
           />
         </Form.Item>
-        <Form.Item label="资历级别" name="seniorityLevel">
-          <Select options={Object.entries(SENIORITY_LABEL).map(([v, l]) => ({ value: v, label: l }))} />
+        <Form.Item label={t("agents.enable.seniority")} name="seniorityLevel">
+          <Select options={seniorityOptions()} />
         </Form.Item>
-        <Form.Item label="最大并发会话数" name="maxConcurrency">
+        <Form.Item label={t("agents.enable.maxConcurrency")} name="maxConcurrency">
           <InputNumber min={1} max={20} style={{ width: "100%" }} />
         </Form.Item>
-        <Form.Item label="允许 AI 辅助" name="allowAiAssist" valuePropName="checked">
-          <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+        <Form.Item label={t("agents.enable.aiAssist")} name="allowAiAssist" valuePropName="checked">
+          <Switch checkedChildren={t("common.on")} unCheckedChildren={t("common.off")} />
         </Form.Item>
       </Form>
     </Modal>

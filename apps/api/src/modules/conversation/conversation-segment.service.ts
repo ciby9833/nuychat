@@ -2,6 +2,11 @@ import type { Knex } from "knex";
 
 type OwnerType = "system" | "human" | "ai";
 
+function fitSegmentReason(value: string | null | undefined) {
+  if (!value) return null;
+  return value.length > 80 ? value.slice(0, 80) : value;
+}
+
 export class ConversationSegmentService {
   async ensureSystemSegment(
     db: Knex | Knex.Transaction,
@@ -16,7 +21,7 @@ export class ConversationSegmentService {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       customerId: input.customerId,
-      caseId: conversation.current_case_id,
+      caseId: conversation.current_case_id!,
       ownerType: "system",
       reason: input.reason ?? null
     });
@@ -37,7 +42,7 @@ export class ConversationSegmentService {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       customerId: input.customerId,
-      caseId: conversation.current_case_id,
+      caseId: conversation.current_case_id!,
       ownerType: "human",
       ownerAgentId: input.agentId,
       reason: input.reason ?? null
@@ -59,7 +64,7 @@ export class ConversationSegmentService {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       customerId: input.customerId,
-      caseId: conversation.current_case_id,
+      caseId: conversation.current_case_id!,
       ownerType: "ai",
       ownerAiAgentId: input.aiAgentId,
       reason: input.reason ?? null
@@ -75,7 +80,7 @@ export class ConversationSegmentService {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       customerId: input.customerId,
-      caseId: conversation.current_case_id,
+      caseId: conversation.current_case_id!,
       ownerType: "system",
       reason: input.reason ?? null
     });
@@ -98,7 +103,7 @@ export class ConversationSegmentService {
       .where({ tenant_id: input.tenantId, segment_id: conversation.current_segment_id })
       .update({
         status: input.status,
-        closed_reason: input.reason ?? null,
+        closed_reason: fitSegmentReason(input.reason),
         ended_at: db.fn.now(),
         updated_at: db.fn.now()
       });
@@ -150,7 +155,7 @@ export class ConversationSegmentService {
         .where({ tenant_id: input.tenantId, segment_id: currentSegmentId })
         .update({
           status: input.ownerType === "human" ? "transferred" : "closed",
-          closed_reason: input.reason ?? null,
+          closed_reason: fitSegmentReason(input.reason),
           ended_at: db.fn.now(),
           updated_at: db.fn.now()
         });
@@ -193,7 +198,7 @@ export class ConversationSegmentService {
         owner_agent_id: input.ownerAgentId ?? null,
         owner_ai_agent_id: input.ownerAiAgentId ?? null,
         status: "active",
-        opened_reason: input.reason ?? null,
+        opened_reason: fitSegmentReason(input.reason),
         transferred_from_segment_id: input.transferredFromSegmentId ?? null
       })
       .returning(["segment_id"]);

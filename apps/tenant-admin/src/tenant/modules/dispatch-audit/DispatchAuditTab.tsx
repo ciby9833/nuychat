@@ -1,8 +1,16 @@
-// 作用: 调度审计主入口（筛选 + 运营建议 + 执行列表 + 详情抽屉）
-// 菜单路径: 客户中心 -> 调度审计
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 调度审计
+ * 文件职责: 模块主入口，负责串联筛选栏、运营建议、执行列表与详情抽屉。
+ * 主要交互文件:
+ * - ./components/FilterBar.tsx
+ * - ./components/ExecutionTable.tsx
+ * - ./components/SuggestionGroup.tsx
+ * - ./hooks/useDispatchAuditData.ts
+ * - ./modals/DetailDrawer.tsx
+ */
 
 import { Card, Space, Typography } from "antd";
+import { useTranslation } from "react-i18next";
 
 import { ExecutionTable } from "./components/ExecutionTable";
 import { FilterBar } from "./components/FilterBar";
@@ -11,6 +19,7 @@ import { useDispatchAuditData } from "./hooks/useDispatchAuditData";
 import { DetailDrawer } from "./modals/DetailDrawer";
 
 export function DispatchAuditTab() {
+  const { t } = useTranslation();
   const data = useDispatchAuditData();
 
   return (
@@ -31,14 +40,14 @@ export function DispatchAuditTab() {
         onRefresh={() => { void data.load(); }}
       />
 
-      <Card title="调度运营建议">
+      <Card title={t("dispatchAudit.ops.title")}>
         {data.suggestions.aiAgents.length === 0 && data.suggestions.teams.length === 0 && data.suggestions.customerSegments.length === 0 ? (
-          <Typography.Text type="secondary">当前时间范围内暂无明显建议。</Typography.Text>
+          <Typography.Text type="secondary">{t("dispatchAudit.ops.empty")}</Typography.Text>
         ) : (
           <Space direction="vertical" size="small" style={{ width: "100%" }}>
-            <SuggestionGroup title="按 AI 座席" items={data.suggestions.aiAgents} />
-            <SuggestionGroup title="按团队" items={data.suggestions.teams} />
-            <SuggestionGroup title="按客户等级 / 渠道" items={data.suggestions.customerSegments} />
+            <SuggestionGroup title={t("dispatchAudit.ops.aiAgents")} items={data.suggestions.aiAgents} />
+            <SuggestionGroup title={t("dispatchAudit.ops.teams")} items={data.suggestions.teams} />
+            <SuggestionGroup title={t("dispatchAudit.ops.customerSegments")} items={data.suggestions.customerSegments} />
           </Space>
         )}
       </Card>

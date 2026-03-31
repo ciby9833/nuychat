@@ -252,6 +252,44 @@ button:disabled {
   border: 1px solid #e5e7eb;
 }
 
+.structured-message {
+  display: grid;
+  gap: 10px;
+}
+
+.structured-message p,
+.structured-message ul,
+.structured-message ol {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.structured-message ul,
+.structured-message ol {
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.structured-kv,
+.structured-records {
+  display: grid;
+  gap: 8px;
+}
+
+.structured-record {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+}
+
+.structured-kv-row {
+  display: grid;
+  gap: 2px;
+}
+
 .image-preview-overlay {
   position: fixed;
   inset: 0;

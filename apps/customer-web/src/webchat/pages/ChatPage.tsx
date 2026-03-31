@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { createWebchatSession, fetchWebchatMessages, sendWebchatMessage, WebchatApiError } from "../api";
+import { createWebchatSession, fetchWebchatMessages, sendWebchatMessage, uploadWebchatAttachment, WebchatApiError } from "../api";
 import { resolvePublicChannelKey } from "../config";
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatHeader } from "../components/ChatHeader";
 import { ChatMessages } from "../components/ChatMessages";
-import type { WebchatAttachment, WebchatClientContext, WebchatMessage, WebchatSession } from "../types";
+import type { WebchatClientContext, WebchatMessage, WebchatSession } from "../types";
 
 const SESSION_STORAGE_KEY = "nuychat.webchat.session";
 
@@ -159,16 +159,23 @@ export function ChatPage() {
     void ensureSession();
   }, [ensureSession]);
 
-  const onSend = async (payload: { text?: string; attachments?: WebchatAttachment[] }) => {
+  const onSend = async (payload: { text?: string; attachments?: File[] }) => {
     if (!session) return;
 
     setError("");
     try {
+      const attachments = payload.attachments?.length
+        ? await Promise.all(payload.attachments.map((file) => uploadWebchatAttachment({
+            publicKey: session.publicChannelKey,
+            file
+          })))
+        : undefined;
+
       await sendWebchatMessage({
         publicKey: session.publicChannelKey,
         customerRef: session.customerRef,
         text: payload.text,
-        attachments: payload.attachments,
+        attachments,
         client
       });
       await pullMessages(session);

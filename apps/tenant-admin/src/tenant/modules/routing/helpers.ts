@@ -1,4 +1,15 @@
+/**
+ * 菜单路径与名称: 客户中心 -> 路由
+ * 文件职责: 提供路由规则读写、摘要展示与接口提交 payload 拼装能力。
+ * 主要交互文件:
+ * - ./components/RuleTable.tsx
+ * - ./hooks/useRoutingData.ts
+ * - ./modals/RuleEditorDrawer.tsx
+ * - ./types.ts
+ */
+
 import type { DepartmentItem, RoutingRule, TeamItem } from "../../types";
+import i18next from "i18next";
 import type { RuleFormValues } from "./types";
 import { STRATEGY_OPTIONS } from "./types";
 
@@ -60,16 +71,16 @@ export function buildRuleSummary(rule: RoutingRule, departments: DepartmentItem[
 
   return {
     executionMode: readExecutionMode(rule),
-    channel: rule.conditions.channelType ?? "任意",
-    language: rule.conditions.customerLanguage ?? "任意",
-    tier: rule.conditions.customerTier ?? "任意",
-    departmentName: team?.departmentName ?? department?.name ?? "任意部门",
-    teamName: team?.name ?? "自动选团队",
+    channel: rule.conditions.channelType ?? i18next.t("routing.summary.any"),
+    language: rule.conditions.customerLanguage ? i18next.t(`routing.options.language.${rule.conditions.customerLanguage}`, { defaultValue: rule.conditions.customerLanguage }) : i18next.t("routing.summary.any"),
+    tier: rule.conditions.customerTier ?? i18next.t("routing.summary.any"),
+    departmentName: team?.departmentName ?? department?.name ?? i18next.t("routing.summary.anyDepartment"),
+    teamName: team?.name ?? i18next.t("routing.summary.autoTeam"),
     skillGroupCode: humanTarget.targetSkillGroupCode ?? "-",
     aiAgentId: readAiAgentId(rule) ?? null,
-    aiStrategy: STRATEGY_OPTIONS.find((item) => item.value === readAiAssignmentStrategy(rule))?.label ?? "最小负载",
-    strategy: STRATEGY_OPTIONS.find((item) => item.value === humanTarget.assignmentStrategy)?.label ?? "轮询",
-    fallbackSkillGroupCode: fallback.fallbackSkillGroupCode ?? "沿用人工目标",
+    aiStrategy: i18next.t(`routing.options.strategy.${readAiAssignmentStrategy(rule)}`, { defaultValue: STRATEGY_OPTIONS.find((item) => item.value === readAiAssignmentStrategy(rule))?.labelKey ?? readAiAssignmentStrategy(rule) }),
+    strategy: i18next.t(`routing.options.strategy.${humanTarget.assignmentStrategy}`, { defaultValue: STRATEGY_OPTIONS.find((item) => item.value === humanTarget.assignmentStrategy)?.labelKey ?? humanTarget.assignmentStrategy }),
+    fallbackSkillGroupCode: fallback.fallbackSkillGroupCode ?? i18next.t("routing.summary.reuseHumanTarget"),
     humanToAiThresholdPct: rule.actions.overflowPolicy?.humanToAiThresholdPct ?? null,
     aiToHumanThresholdPct: rule.actions.overflowPolicy?.aiToHumanThresholdPct ?? null,
     hybridStrategy: rule.actions.hybridPolicy?.strategy ?? null

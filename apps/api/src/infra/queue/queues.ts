@@ -1,14 +1,18 @@
 import { Queue } from "bullmq";
 
 import { redisConnection } from "../redis/client.js";
+import type { StructuredMessage, StructuredMessageAction } from "../../shared/types/structured-message.js";
 
-export const inboundQueue = new Queue("inbound", { connection: redisConnection });
-export const outboundQueue = new Queue("outbound", { connection: redisConnection });
-export const analyticsQueue = new Queue("analytics", { connection: redisConnection });
-export const routingQueue = new Queue("routing", { connection: redisConnection });
-export const taskEngineQueue = new Queue("task-engine", { connection: redisConnection });
-export const customerProfileRefreshQueue = new Queue("customer-profile-refresh", { connection: redisConnection });
-export const conversationTimeoutQueue = new Queue("conversation-timeout", { connection: redisConnection });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const conn = redisConnection as any;
+export const inboundQueue = new Queue("inbound", { connection: conn });
+export const outboundQueue = new Queue("outbound", { connection: conn });
+export const analyticsQueue = new Queue("analytics", { connection: conn });
+export const routingQueue = new Queue("routing", { connection: conn });
+export const taskBackgroundQueue = new Queue("task-background", { connection: conn });
+export const taskScriptQueue = new Queue("task-script", { connection: conn });
+export const customerProfileRefreshQueue = new Queue("customer-profile-refresh", { connection: conn });
+export const conversationTimeoutQueue = new Queue("conversation-timeout", { connection: conn });
 
 export type InboundJobPayload = {
   tenantId: string;
@@ -31,6 +35,8 @@ export type OutboundJobPayload = {
   channelType: string;
   message: {
     text: string;
+    structured?: StructuredMessage | null;
+    actions?: StructuredMessageAction[];
     agentId?: string;
     /** Populated for AI-generated replies; causes sender_type="bot" in DB */
     aiAgentName?: string;

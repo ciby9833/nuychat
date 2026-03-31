@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/server.ts",
     "build": "tsup src/server.ts --format esm --dts",
-    "test": "vitest run",
+    "test": "tsx --env-file=.env ./node_modules/vitest/vitest.mjs run",
     "db:check": "tsx --env-file=.env src/scripts/db-check.ts",
     "db:backfill:conversation-segments": "tsx --env-file=.env src/scripts/backfill-conversation-segments.ts",
     "db:backfill:conversation-cases": "tsx --env-file=.env src/scripts/backfill-conversation-cases.ts",

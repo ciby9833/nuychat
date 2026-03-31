@@ -1,28 +1,16 @@
-// 作用: 成员账号列表面板（成员表格 + 编辑弹窗 + 重置密码 + 离职操作）
-// 菜单路径: 系统设置 -> 坐席与成员管理 -> 成员账号 Tab
-// 作者：吴川
-
 import { LockOutlined, PlusOutlined, UserOutlined } from "@ant-design/icons";
 import {
-  Button,
-  Form,
-  Input,
-  Modal,
-  Popconfirm,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Typography,
-  message
+  Button, Form, Input, Modal, Popconfirm,
+  Select, Space, Table, Tag, Typography, message
 } from "antd";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { patchMember, resetMemberPassword, resignMember } from "../../../api";
 import type { MemberListItem } from "../../../types";
 import { ResetPasswordModal } from "../modals/ResetPasswordModal";
 import type { EditMemberForm } from "../types";
-import { ROLE_COLOR, ROLE_OPTIONS, getActionErrorMessage } from "../types";
+import { ROLE_COLOR, getActionErrorMessage, roleLabel, roleOptions } from "../types";
 
 export function MembersPane({
   members,
@@ -37,6 +25,7 @@ export function MembersPane({
   onCreate: () => void;
   onEnableAgent: () => void;
 }) {
+  const { t } = useTranslation();
   const [editMember, setEditMember] = useState<MemberListItem | null>(null);
   const [passwordMember, setPasswordMember] = useState<MemberListItem | null>(null);
   const [editForm] = Form.useForm<EditMemberForm>();
@@ -46,23 +35,25 @@ export function MembersPane({
   const openEdit = (member: MemberListItem) => {
     setEditMember(member);
     editForm.setFieldsValue({
-      role: member.role,
-      status: member.status,
+      role:        member.role,
+      status:      member.status,
       displayName: member.displayName ?? "",
-      employeeNo: member.employeeNo ?? undefined,
-      phone: member.phone ?? undefined,
-      idNumber: member.idNumber ?? undefined
+      employeeNo:  member.employeeNo ?? undefined,
+      phone:       member.phone ?? undefined,
+      idNumber:    member.idNumber ?? undefined
     });
   };
 
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-        <Typography.Text type="secondary">共 {members.length} 位成员账号</Typography.Text>
+        <Typography.Text type="secondary">
+          {t("agents.member.totalCount", { count: members.length })}
+        </Typography.Text>
         <Space>
-          <Button onClick={onReload} loading={loading}>刷新</Button>
-          <Button onClick={onEnableAgent}>启用接待资格</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>新增成员</Button>
+          <Button onClick={onReload} loading={loading}>{t("common.refresh")}</Button>
+          <Button onClick={onEnableAgent}>{t("agents.enableBtn")}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>{t("agents.member.addMember")}</Button>
         </Space>
       </div>
 
@@ -74,7 +65,7 @@ export function MembersPane({
           pagination={members.length > 15 ? { pageSize: 15, size: "small" } : false}
           columns={[
             {
-              title: "成员",
+              title: t("agents.member.name"),
               render: (_, row) => (
                 <Space>
                   <UserOutlined style={{ color: "#8c8c8c" }} />
@@ -90,53 +81,61 @@ export function MembersPane({
                 </Space>
               )
             },
-            { title: "角色", dataIndex: "role", width: 160, render: (value: string) => <Tag color={ROLE_COLOR[value] ?? "default"}>{value}</Tag> },
+            { title: t("agents.role"), dataIndex: "role", width: 160, render: (value: string) => <Tag color={ROLE_COLOR[value] ?? "default"}>{roleLabel(value)}</Tag> },
             {
-              title: "账号状态",
+              title: t("agents.member.accountStatus"),
               dataIndex: "status",
               width: 120,
               render: (value: string, row: MemberListItem) => {
-                if (row.resignedAt) return <Tag color="default">已离职</Tag>;
-                return <Tag color={value === "active" ? "green" : value === "inactive" ? "default" : "red"}>
-                  {value === "active" ? "正常" : value === "inactive" ? "停用" : value === "suspended" ? "封禁" : value}
-                </Tag>;
+                if (row.resignedAt) return <Tag color="default">{t("agents.member.resigned")}</Tag>;
+                return (
+                  <Tag color={value === "active" ? "green" : value === "inactive" ? "default" : "red"}>
+                    {value === "active" ? t("common.active") : value === "inactive" ? t("common.inactive") : value === "suspended" ? t("agents.member.suspended") : value}
+                  </Tag>
+                );
               }
             },
             {
-              title: "座席档案",
+              title: t("agents.member.agentProfile"),
               width: 120,
-              render: (_, row) => row.agentId ? <Tag color="blue">已启用</Tag> : <Tag>未启用</Tag>
+              render: (_, row) => row.agentId
+                ? <Tag color="blue">{t("agents.member.agentEnabled")}</Tag>
+                : <Tag>{t("agents.member.agentDisabled")}</Tag>
             },
             {
-              title: "操作",
+              title: t("common.action"),
               width: 280,
               render: (_, row) => (
                 <Space wrap>
-                  <Button size="small" onClick={() => openEdit(row)}>编辑</Button>
-                  <Button size="small" icon={<LockOutlined />} onClick={() => setPasswordMember(row)}>重置密码</Button>
+                  <Button size="small" onClick={() => openEdit(row)}>{t("common.edit")}</Button>
+                  <Button size="small" icon={<LockOutlined />} onClick={() => setPasswordMember(row)}>
+                    {t("agents.member.resetPassword")}
+                  </Button>
                   {!row.resignedAt && (
                     <Popconfirm
-                      title="确认办理离职？"
-                      description="账号将被停用，座席状态将设为离线，此操作不可自动撤销。"
-                      okText="确认离职"
+                      title={t("agents.member.confirmResign")}
+                      description={t("agents.member.resignDesc")}
+                      okText={t("agents.member.confirmResignOk")}
                       okButtonProps={{ danger: true }}
-                      cancelText="取消"
+                      cancelText={t("common.cancel")}
                       onConfirm={() => {
                         void (async () => {
                           setResigningId(row.membershipId);
                           try {
                             await resignMember(row.membershipId);
-                            message.success(`${row.displayName ?? row.email} 已办理离职`);
+                            void message.success(t("agents.member.resignedSuccess", { name: row.displayName ?? row.email }));
                             onReload();
                           } catch (err) {
-                            message.error((err as Error).message);
+                            void message.error((err as Error).message);
                           } finally {
                             setResigningId(null);
                           }
                         })();
                       }}
                     >
-                      <Button size="small" danger loading={resigningId === row.membershipId}>离职</Button>
+                      <Button size="small" danger loading={resigningId === row.membershipId}>
+                        {t("agents.member.resign")}
+                      </Button>
                     </Popconfirm>
                   )}
                 </Space>
@@ -147,7 +146,7 @@ export function MembersPane({
       </div>
 
       <Modal
-        title={`编辑成员: ${editMember?.displayName ?? editMember?.email ?? ""}`}
+        title={`${t("agents.member.editTitle")}: ${editMember?.displayName ?? editMember?.email ?? ""}`}
         open={!!editMember}
         onCancel={() => setEditMember(null)}
         onOk={() => {
@@ -157,50 +156,50 @@ export function MembersPane({
             setSaving(true);
             try {
               await patchMember(editMember.membershipId, {
-                role: values.role,
-                status: values.status,
+                role:        values.role,
+                status:      values.status,
                 displayName: values.displayName.trim(),
-                employeeNo: values.employeeNo?.trim() || null,
-                phone: values.phone?.trim() || null,
-                idNumber: values.idNumber?.trim() || null
+                employeeNo:  values.employeeNo?.trim() || null,
+                phone:       values.phone?.trim() || null,
+                idNumber:    values.idNumber?.trim() || null
               });
-              message.success("成员信息已更新");
+              void message.success(t("agents.member.infoUpdated"));
               setEditMember(null);
               onReload();
             } catch (err) {
-              message.error(getActionErrorMessage(err, "member_upgrade"));
+              void message.error(getActionErrorMessage(err, "member_upgrade"));
             } finally {
               setSaving(false);
             }
           })();
         }}
-        okText="保存"
-        cancelText="取消"
+        okText={t("common.save")}
+        cancelText={t("common.cancel")}
         confirmLoading={saving}
         destroyOnHidden
         width={420}
       >
         <Form form={editForm} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item label="姓名" name="displayName" rules={[{ required: true, message: "请输入姓名" }]}>
+          <Form.Item label={t("agents.member.name")} name="displayName" rules={[{ required: true, message: t("agents.member.nameRequired") }]}>
             <Input />
           </Form.Item>
-          <Form.Item label="工号" name="employeeNo">
+          <Form.Item label={t("agents.member.employeeNo")} name="employeeNo">
             <Input />
           </Form.Item>
-          <Form.Item label="手机号码" name="phone">
+          <Form.Item label={t("agents.member.phone")} name="phone">
             <Input placeholder="138xxxxxxxx" />
           </Form.Item>
-          <Form.Item label="证件号码" name="idNumber">
-            <Input placeholder="身份证或其他证件号" />
+          <Form.Item label={t("agents.member.idNumber")} name="idNumber">
+            <Input placeholder={t("agents.member.idPlaceholder")} />
           </Form.Item>
-          <Form.Item label="角色" name="role">
-            <Select options={ROLE_OPTIONS} />
+          <Form.Item label={t("agents.role")} name="role">
+            <Select options={roleOptions()} />
           </Form.Item>
-          <Form.Item label="账号状态" name="status">
+          <Form.Item label={t("agents.member.accountStatus")} name="status">
             <Select options={[
-              { value: "active", label: "正常" },
-              { value: "inactive", label: "停用" },
-              { value: "suspended", label: "封禁" }
+              { value: "active",    label: t("common.active") },
+              { value: "inactive",  label: t("common.inactive") },
+              { value: "suspended", label: t("agents.member.suspended") }
             ]} />
           </Form.Item>
         </Form>
@@ -213,9 +212,9 @@ export function MembersPane({
           if (!passwordMember) return;
           try {
             await resetMemberPassword(passwordMember.membershipId, password);
-            message.success("密码已重置");
+            void message.success(t("agents.member.passwordReset"));
           } catch (err) {
-            message.error((err as Error).message);
+            void message.error((err as Error).message);
           }
         }}
       />

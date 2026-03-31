@@ -1,11 +1,11 @@
 import type { WebchatMessage } from "../types";
 import { useEffect, useMemo, useState } from "react";
 import { resolveApiBase } from "../config";
+import { StructuredMessageContent } from "./StructuredMessageContent";
 
 const API_BASE = resolveApiBase();
 
-function resolveAttachmentUrl(url?: string, dataUrl?: string) {
-  if (dataUrl) return dataUrl;
+function resolveAttachmentUrl(url?: string) {
   if (!url) return undefined;
   if (/^(?:https?:|data:|blob:)/i.test(url)) return url;
   return new URL(url, API_BASE).toString();
@@ -50,11 +50,11 @@ export function ChatMessages(props: { messages: WebchatMessage[]; loading: boole
         return (
           <div key={message.id} className={`bubble-row ${outbound ? "outbound" : "inbound"}`}>
             <div className="bubble">
-              <p>{text || "[非文本消息]"}</p>
+              <StructuredMessageContent structured={message.structured} fallbackText={text} />
               {message.attachments?.length ? (
                 <div className="bubble-attachments">
                   {message.attachments.map((file, idx) => {
-                    const fileUrl = resolveAttachmentUrl(file.url, file.dataUrl);
+                    const fileUrl = resolveAttachmentUrl(file.url);
                     const isImage = file.mimeType.startsWith("image/");
 
                     return (

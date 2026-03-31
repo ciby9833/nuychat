@@ -1,6 +1,18 @@
+/**
+ * 菜单路径与名称: 座席工作台 / 工作台主页 / 会话与技能辅助状态管理
+ * 文件职责: 负责会话列表、详情、消息、技能推荐、技能辅助卡片、工单草稿与工作台交互状态。
+ * 主要交互文件:
+ * - ../pages/DashboardPage.tsx: 消费整个工作台视图模型。
+ * - ../components/TimelinePanel.tsx: 消费技能辅助、消息时间线和手动技能执行状态。
+ * - ../components/MessageComposer.tsx: 消费自动技能辅助卡片并插入回复。
+ * - ../components/SkillAssistCard.tsx: 展示本 hook 产出的技能辅助数据。
+ * - ../api.ts: 提供会话、消息、技能辅助、工单等接口。
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
+import i18next from "i18next";
 
 import {
   apiFetch,
@@ -22,8 +34,10 @@ import {
   getConversationCustomer360,
   listColleagues,
   transferConversation,
-  uploadFile
+  uploadFile,
+  requestConversationSkillAssist
 } from "../api";
+import { API_BASE_URL } from "../api";
 import { readSession, writeSession } from "../session";
 import type {
   AgentColleague,
@@ -39,6 +53,7 @@ import type {
   Session,
   Ticket,
   SkillExecuteResult,
+  ComposerSkillAssist,
   AiTrace,
   SkillSchema,
   ConversationViewSummaries
@@ -104,6 +119,10 @@ export function useWorkspaceDashboard() {
   // ── Skill execute ────────────────────────────────────────────────────────────
   const [skillExecuting, setSkillExecuting] = useState<string | null>(null);
   const [lastSkillResult, setLastSkillResult] = useState<SkillExecuteResult | null>(null);
+  const [composerSkillAssist, setComposerSkillAssist] = useState<ComposerSkillAssist | null>(null);
+  const autoSkillLookupKeyRef = useRef<string | null>(null);
+  const autoSkillLookupAttemptsRef = useRef<Map<string, number>>(new Map());
+  const [composerAiSuggestions, setComposerAiSuggestions] = useState<string[]>([]);
 
   // ── AI Traces ────────────────────────────────────────────────────────────────
   const [aiTraces, setAiTraces] = useState<AiTrace[]>([]);
@@ -238,8 +257,10 @@ export function useWorkspaceDashboard() {
     try {
       const data = await apiFetch<CopilotData>(`/api/conversations/${id}/copilot`, session);
       setCopilot(data);
+      setComposerAiSuggestions(data.suggestions ?? []);
     } catch {
       setCopilot(null);
+      setComposerAiSuggestions([]);
     }
   }, [session]);
 
@@ -377,6 +398,17 @@ export function useWorkspaceDashboard() {
     }
   }, [loadMessages, rememberRealtimeEventId]);
 
+  const handleTaskUpdatedEvent = useCallback((ev: {
+    eventId?: string;
+    conversationId?: string | null;
+  }) => {
+    rememberRealtimeEventId(ev.eventId);
+    if (ev.conversationId && ev.conversationId === selectedIdRef.current) {
+      void loadMessages(ev.conversationId);
+      void loadTickets(ev.conversationId);
+    }
+  }, [loadMessages, loadTickets, rememberRealtimeEventId]);
+
   const replayRealtimeGap = useCallback(async () => {
     const currentSession = sessionRef.current;
     if (!currentSession) return;
@@ -398,12 +430,14 @@ export function useWorkspaceDashboard() {
           handleMessageSentEvent(item.payload as { eventId?: string; conversationId: string });
         } else if (item.event === "message.updated") {
           handleMessageUpdatedEvent(item.payload as { eventId?: string; conversationId: string });
+        } else if (item.event === "task.updated") {
+          handleTaskUpdatedEvent(item.payload as { eventId?: string; conversationId?: string | null });
         }
       }
     } catch {
       // noop
     }
-  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent]);
+  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent, handleTaskUpdatedEvent]);
 
   // ── Keep selectedIdRef in sync — NEVER put selectedId in socket effect deps ──
   useEffect(() => {
@@ -428,7 +462,7 @@ export function useWorkspaceDashboard() {
   useEffect(() => {
     if (!session) return;
 
-    const socket = io("http://localhost:3000", {
+    const socket = io(API_BASE_URL, {
       transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -474,6 +508,7 @@ export function useWorkspaceDashboard() {
     socket.on("message.received", handleMessageReceivedEvent);
     socket.on("message.sent", handleMessageSentEvent);
     socket.on("message.updated", handleMessageUpdatedEvent);
+    socket.on("task.updated", handleTaskUpdatedEvent);
 
     return () => {
       socket.close();
@@ -481,7 +516,7 @@ export function useWorkspaceDashboard() {
     // selectedId intentionally NOT in deps — use selectedIdRef.current instead.
     // loadConversations intentionally NOT in deps — has its own effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent, loadAiTraces, loadCopilot, loadDetail, loadMessages, loadSkillRecommendation, replayRealtimeGap, session]);
+  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent, handleTaskUpdatedEvent, loadAiTraces, loadCopilot, loadDetail, loadMessages, loadSkillRecommendation, replayRealtimeGap, session]);
 
   useEffect(() => {
     if (!session) return;
@@ -591,18 +626,20 @@ export function useWorkspaceDashboard() {
       setDetail(null);
       setMessages([]);
       setCopilot(null);
+      setComposerAiSuggestions([]);
       setSkillRecommendation(null);
       setTickets([]);
       setLastSkillResult(null);
       setAiTraces([]);
       setSkillSchemas([]);
       setCustomer360(null);
+      setComposerSkillAssist(null);
+      autoSkillLookupKeyRef.current = null;
       return;
     }
 
     void loadDetail(selectedId);
     void loadMessages(selectedId);
-    void loadCopilot(selectedId);
     void loadSkillRecommendation(selectedId);
     void loadTickets(selectedId);
     void loadAiTraces(selectedId);
@@ -781,6 +818,82 @@ export function useWorkspaceDashboard() {
     setTaskDraft(null);
   }, [selectedId]);
 
+  useEffect(() => {
+    if (!session || !selectedId) return;
+
+    const latestCustomerMessage = [...messages]
+      .reverse()
+      .find((message) =>
+        message.direction === "inbound"
+        && message.sender_type === "customer"
+        && typeof message.content?.text === "string"
+        && message.content.text.trim().length > 0
+      );
+
+    if (!latestCustomerMessage) {
+      setComposerSkillAssist(null);
+      autoSkillLookupKeyRef.current = null;
+      autoSkillLookupAttemptsRef.current.clear();
+      void loadCopilot(selectedId);
+      return;
+    }
+
+    const sourceText = latestCustomerMessage.content.text?.trim() ?? "";
+    const lookupKey = `${selectedId}:${latestCustomerMessage.message_id}:${sourceText}`;
+    if (autoSkillLookupKeyRef.current === lookupKey) {
+      return;
+    }
+    const attemptCount = autoSkillLookupAttemptsRef.current.get(lookupKey) ?? 0;
+    if (attemptCount >= 2) {
+      return;
+    }
+    autoSkillLookupKeyRef.current = lookupKey;
+    autoSkillLookupAttemptsRef.current.set(lookupKey, attemptCount + 1);
+
+    setComposerSkillAssist({
+      skillName: "pending",
+      title: i18next.t("skillAssist.loadingTitle"),
+      sourceMessageId: latestCustomerMessage.message_id,
+      sourceMessagePreview: sourceText,
+      status: "loading"
+    });
+    setCopilot(null);
+    setComposerAiSuggestions([]);
+
+    void requestConversationSkillAssist(selectedId, latestCustomerMessage.message_id, session)
+      .then((response) => {
+        if (!response.assist) {
+          setComposerSkillAssist(null);
+          void loadCopilot(selectedId);
+          return;
+        }
+
+        setComposerSkillAssist({
+          skillName: response.assist.skillName,
+          title: humanizeSkillAssistTitle(response.assist.skillName),
+          sourceMessageId: response.assist.sourceMessageId,
+          sourceMessagePreview: response.assist.sourceMessagePreview,
+          status: "ready",
+          parameters: response.assist.parameters,
+          result: response.assist.result
+        });
+        void loadCopilot(selectedId);
+      })
+      .catch((error) => {
+        setComposerSkillAssist(null);
+        autoSkillLookupKeyRef.current = null;
+        setComposerSkillAssist({
+          skillName: "skill_assist",
+          title: i18next.t("skillAssist.fallbackTitle"),
+          sourceMessageId: latestCustomerMessage.message_id,
+          sourceMessagePreview: sourceText,
+          status: "error",
+          error: (error as Error).message
+        });
+        void loadCopilot(selectedId);
+      });
+  }, [loadCopilot, messages, selectedId, session]);
+
   // Note: explicit "reopen" is no longer surfaced in the UI.
   // Sending a message to a resolved conversation is sufficient — the outbound
   // worker transparently reactivates it and assigns it to the sending agent.
@@ -899,6 +1012,24 @@ export function useWorkspaceDashboard() {
     [selectedId, session]
   );
 
+  const onManualSkillAssist = useCallback(
+    async (messageId: string, skillSlug: string) => {
+      if (!session || !selectedId || !messageId || !skillSlug) return null;
+      const response = await requestConversationSkillAssist(selectedId, messageId, session, skillSlug);
+      if (!response.assist) return null;
+      return {
+        skillName: response.assist.skillName,
+        title: humanizeSkillAssistTitle(response.assist.skillName),
+        sourceMessageId: response.assist.sourceMessageId,
+        sourceMessagePreview: response.assist.sourceMessagePreview,
+        status: "ready" as const,
+        parameters: response.assist.parameters,
+        result: response.assist.result
+      };
+    },
+    [selectedId, session]
+  );
+
   return {
     session,
     isLoggedIn,
@@ -922,6 +1053,7 @@ export function useWorkspaceDashboard() {
     messages,
     copilot,
     skillRecommendation,
+    composerAiSuggestions,
     reply,
     pendingAttachments,
     replyTargetMessageId,
@@ -959,11 +1091,24 @@ export function useWorkspaceDashboard() {
     setTaskDraft,
     skillExecuting,
     lastSkillResult,
+    composerSkillAssist,
+    onManualSkillAssist,
     doExecuteSkill,
     aiTraces,
     skillSchemas,
     customer360
   };
+}
+
+function humanizeSkillAssistTitle(skillName: string) {
+  if (skillName === "cargo_trace") return i18next.t("skillAssist.skillTitles.cargo_trace");
+  if (skillName === "track_shipment") return i18next.t("skillAssist.skillTitles.track_shipment");
+  if (skillName === "lookup_order") return i18next.t("skillAssist.skillTitles.lookup_order");
+  if (skillName === "search_knowledge_base") return i18next.t("skillAssist.skillTitles.search_knowledge_base");
+  return skillName
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim() || i18next.t("skillAssist.fallbackTitle");
 }
 
 function mapConversationRow(r: Record<string, unknown>): ConversationItem {

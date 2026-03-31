@@ -1,9 +1,15 @@
-// 作用: 模块列表表格组件
-// 菜单名称: 模块列表
-// 作者：吴川
-// 创建时间：2024-06-20 15:00
+/**
+ * 菜单路径与名称: 客户中心 -> 路由 -> 模块管理
+ * 文件职责: 展示模块列表，并提供编辑与删除入口。
+ * 主要交互文件:
+ * - ../RoutingTab.tsx
+ * - ../modals/ModuleEditorModal.tsx
+ * - ../types.ts
+ */
+
 import { DeleteOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Table, Tag } from "antd";
+import { useTranslation } from "react-i18next";
 
 import type { ModuleItem } from "../../../types";
 import { MODULE_MODE_OPTIONS } from "../types";
@@ -19,6 +25,8 @@ export function ModuleTable({
   onEdit: (item: ModuleItem) => void;
   onDelete: (moduleId: string) => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <Table<ModuleItem>
       rowKey="moduleId"
@@ -27,29 +35,29 @@ export function ModuleTable({
       pagination={false}
       size="middle"
       columns={[
-        { title: "模块", render: (_, row) => `${row.name} (${row.code})` },
+        { title: t("routing.table.module"), render: (_, row) => `${row.name} (${row.code})` },
         {
-          title: "运行模式",
+          title: t("routing.table.operatingMode"),
           dataIndex: "operatingMode",
           width: 140,
           render: (value: string) =>
-            MODULE_MODE_OPTIONS.find((o) => o.value === value)?.label ?? value
+            t(`routing.options.moduleMode.${value}`, { defaultValue: MODULE_MODE_OPTIONS.find((o) => o.value === value)?.labelKey ?? value })
         },
         {
-          title: "状态",
+          title: t("routing.table.status"),
           dataIndex: "isActive",
           width: 90,
-          render: (value: boolean) => (value ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>)
+          render: (value: boolean) => (value ? <Tag color="green">{t("routing.state.active")}</Tag> : <Tag>{t("routing.state.inactive")}</Tag>)
         },
         {
-          title: "操作",
+          title: t("common.action"),
           width: 130,
           render: (_, row) => (
             <Space size={4}>
-              <Button size="small" onClick={() => onEdit(row)}>编辑</Button>
+              <Button size="small" onClick={() => onEdit(row)}>{t("common.edit")}</Button>
               <Popconfirm
-                title="删除这个模块？"
-                description="删除前需先清空该模块下的技能组。"
+                title={t("routing.confirm.deleteModuleTitle")}
+                description={t("routing.confirm.deleteModuleDescription")}
                 onConfirm={() => onDelete(row.moduleId)}
               >
                 <Button size="small" danger icon={<DeleteOutlined />} />

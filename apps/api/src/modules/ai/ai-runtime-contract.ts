@@ -43,17 +43,15 @@ export function normalizeAIInteractionContract(
   }
 ): AIInteractionContract {
   const parsed = safeParseJson(raw);
-  const legacyHandoff = parseLegacyHandoff(raw);
-  const action = normalizeAction(parsed.action, legacyHandoff ? "handoff" : fallback.defaultAction ?? "reply");
+  const action = normalizeAction(parsed.action, fallback.defaultAction ?? "reply");
   const inferredIntent = inferConversationIntent(fallback.chatHistory);
   const inferredSentiment = inferConversationSentiment(fallback.chatHistory);
   const parsedIntent = normalizeIntent(parsed.intent);
   const parsedSentiment = normalizeSentiment(parsed.sentiment);
   const parsedResponse = asNonEmptyString(parsed.response);
-  const legacyResponse = legacyHandoff ? null : asNonEmptyString(raw);
-  const response = action === "reply" ? (parsedResponse ?? legacyResponse) : null;
+  const response = action === "reply" ? parsedResponse : null;
   const handoffReason = action === "handoff"
-    ? (asNonEmptyString(parsed.handoffReason) ?? legacyHandoff ?? "human_review_required")
+    ? (asNonEmptyString(parsed.handoffReason) ?? "human_review_required")
     : null;
   const confidence = clampConfidence(parsed.confidence, action === "handoff" ? 0.9 : 0.75);
   const intent = action === "handoff"
@@ -145,11 +143,6 @@ function clampConfidence(value: unknown, fallback: number): number {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
   return Math.max(0, Math.min(1, num));
-}
-
-function parseLegacyHandoff(raw: string): string | null {
-  if (!raw.startsWith("HANDOFF_REQUIRED:")) return null;
-  return raw.replace("HANDOFF_REQUIRED:", "").trim() || "human_review_required";
 }
 
 function safeParseJson(raw: string): Record<string, unknown> {

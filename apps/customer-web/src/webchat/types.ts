@@ -15,7 +15,6 @@ export type WebchatAttachment = {
   name: string;
   mimeType: string;
   size: number;
-  dataUrl?: string;
   url?: string;
 };
 
@@ -36,6 +35,19 @@ export type WebchatMessage = {
   direction: "inbound" | "outbound";
   type: string;
   text: string;
+  structured?: {
+    version: "2026-03-28";
+    blocks: Array<
+      | { type: "paragraph"; text: string }
+      | { type: "list"; ordered: boolean; items: string[] }
+      | { type: "key_value"; items: Array<{ label: string; value: string }> }
+      | {
+          type: "records";
+          items: Array<{ title?: string; fields: Array<{ label: string; value: string }> }>;
+        }
+    >;
+  } | null;
+  actions?: Array<{ type?: "button" | "list" | "postback"; label: string; value: string }>;
   attachments?: WebchatAttachment[];
   createdAt: string;
 };

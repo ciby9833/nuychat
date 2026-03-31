@@ -1,8 +1,14 @@
-// 作用: 渠道配置编辑弹窗（Web/Webhook 配置表单）
-// 菜单路径: 客户中心 -> 渠道配置 -> 编辑渠道
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 渠道配置 -> 编辑渠道
+ * 文件职责: 渲染渠道配置编辑弹窗，承载 Web 与 Webhook 渠道的配置表单。
+ * 主要交互文件:
+ * - ../ChannelsTab.tsx: 负责控制弹窗开关与提交。
+ * - ../types.ts: 提供表单字段类型。
+ * - ../hooks/useChannelsData.ts: 提供 form、saving、editing 和保存动作。
+ */
 
 import { Form, Input, Modal, Switch } from "antd";
+import { useTranslation } from "react-i18next";
 
 import type { ChannelConfig } from "../../../types";
 import type { ChannelFormValues } from "../types";
@@ -20,39 +26,42 @@ export function ChannelEditModal({
   onClose: () => void;
   onSave: () => void;
 }) {
+  const { t } = useTranslation();
   const canEditIdentifier = editing?.channel_type !== "webhook";
 
   return (
     <Modal
-      title={editing ? `编辑渠道配置 · ${editing.channel_type}` : "编辑渠道配置"}
+      title={editing ? t("channelsModule.modal.titleWithType", { type: editing.channel_type }) : t("channelsModule.modal.title")}
       open={!!editing}
       onCancel={onClose}
       onOk={onSave}
       okButtonProps={{ loading: saving }}
+      okText={t("common.save")}
+      cancelText={t("common.cancel")}
       destroyOnHidden
     >
       <Form form={form} layout="vertical">
-        <Form.Item label="渠道ID" name="channel_id" rules={[{ required: true, message: "请输入渠道ID" }]}>
-          <Input placeholder="例如：web-demo / whatsapp-demo" disabled={!canEditIdentifier} />
+        <Form.Item label={t("channelsModule.modal.channelId")} name="channel_id" rules={[{ required: true, message: t("channelsModule.modal.channelIdRequired") }]}>
+          <Input placeholder={t("channelsModule.modal.channelIdPlaceholder")} disabled={!canEditIdentifier} />
         </Form.Item>
-        <Form.Item label="启用状态" name="is_active" valuePropName="checked">
-          <Switch checkedChildren="启用" unCheckedChildren="停用" />
+        <Form.Item label={t("channelsModule.modal.active")} name="is_active" valuePropName="checked">
+          <Switch checkedChildren={t("common.active")} unCheckedChildren={t("common.inactive")} />
         </Form.Item>
 
         {editing?.channel_type === "web" ? (
           <>
-            <Form.Item label="Widget 名称" name="widget_name">
-              <Input placeholder="例如：NuyChat Web" />
+            <Form.Item label={t("channelsModule.modal.widgetName")} name="widget_name">
+              <Input placeholder={t("channelsModule.modal.widgetNamePlaceholder")} />
             </Form.Item>
             <Form.Item
-              label="Web 标识 (publicChannelKey)"
+              label={t("channelsModule.modal.publicChannelKey")}
               name="public_channel_key"
-              rules={[{ required: true, message: "请输入 publicChannelKey" }]}
+              rules={[{ required: true, message: t("channelsModule.modal.publicChannelKeyRequired") }]}
             >
-              <Input placeholder="例如：demo-web-public" />
+              <Input placeholder={t("channelsModule.modal.publicChannelKeyPlaceholder")} />
             </Form.Item>
-            <Form.Item label="允许来源 (逗号分隔)" name="allowed_origins">
-              <Input placeholder="例如：http://localhost:5176,https://www.example.com" />
+            <Form.Item label={t("channelsModule.modal.allowedOrigins")} name="allowed_origins">
+              <Input placeholder={t("channelsModule.modal.allowedOriginsPlaceholder")} />
             </Form.Item>
           </>
         ) : null}
@@ -62,7 +71,7 @@ export function ChannelEditModal({
             <Form.Item label="Verify Token" name="verify_token">
               <Input />
             </Form.Item>
-            <Form.Item label="第三方出站回调地址" name="outbound_webhook_url">
+            <Form.Item label={t("channelsModule.modal.thirdPartyOutboundUrl")} name="outbound_webhook_url">
               <Input placeholder="https://example.com/webhook/outbound" />
             </Form.Item>
             <Form.Item label="Webhook Secret" name="webhook_secret">

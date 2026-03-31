@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 
 import type { ResolvedChannelConfig } from "../../channel.repository.js";
+import { readRequiredBaseUrlEnv } from "../../../../infra/env.js";
+import { normalizeStructuredActions, normalizeStructuredMessage, structuredToPlainText } from "../../../../shared/messaging/structured-message.js";
+import type { StructuredMessageAction } from "../../../../shared/types/structured-message.js";
 import type { UnifiedMessage } from "../../../../shared/types/unified-message.js";
 import { assertWhatsAppMessagingConfigured } from "../../whatsapp-platform-config.js";
 
@@ -137,6 +140,8 @@ export const whatsappAdapter = {
   async sendMessage(
     input: {
       text: string;
+      structured?: unknown;
+      actions?: unknown;
       to: string;
       attachment?: { url: string; mimeType: string; fileName?: string };
       contextMessageId?: string;
@@ -155,6 +160,10 @@ export const whatsappAdapter = {
       throw new Error("Missing WhatsApp phoneNumberId or META_SYSTEM_USER_ACCESS_TOKEN");
     }
 
+    const structured = normalizeStructuredMessage(input.structured);
+    const actions = normalizeStructuredActions(input.actions);
+    const resolvedText = structuredToPlainText(structured, input.text);
+
     let requestBody: Record<string, unknown>;
 
     if (input.reactionEmoji && input.reactionMessageId) {
@@ -172,7 +181,7 @@ export const whatsappAdapter = {
       // Ensure absolute URL for WhatsApp Cloud API (it needs a publicly accessible URL)
       const mediaUrl = input.attachment.url.startsWith("http")
         ? input.attachment.url
-        : `${process.env.PUBLIC_API_URL ?? "http://localhost:3000"}${input.attachment.url}`;
+        : `${readRequiredBaseUrlEnv("API_PUBLIC_BASE")}${input.attachment.url}`;
 
       if (mediaType === "sticker") {
         requestBody = {
@@ -182,13 +191,13 @@ export const whatsappAdapter = {
       } else if (mediaType === "image") {
         requestBody = {
           messaging_product: "whatsapp", to: input.to, type: "image",
-          image: { link: mediaUrl, caption: input.text || undefined },
+          image: { link: mediaUrl, caption: resolvedText || undefined },
           context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       } else if (mediaType === "video") {
         requestBody = {
           messaging_product: "whatsapp", to: input.to, type: "video",
-          video: { link: mediaUrl, caption: input.text || undefined },
+          video: { link: mediaUrl, caption: resolvedText || undefined },
           context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       } else if (mediaType === "audio") {
@@ -200,16 +209,23 @@ export const whatsappAdapter = {
       } else {
         requestBody = {
           messaging_product: "whatsapp", to: input.to, type: "document",
-          document: { link: mediaUrl, caption: input.text || undefined, filename: input.attachment.fileName },
+          document: { link: mediaUrl, caption: resolvedText || undefined, filename: input.attachment.fileName },
           context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       }
+    } else if (actions.length > 0) {
+      requestBody = buildInteractiveRequestBody({
+        to: input.to,
+        text: resolvedText,
+        actions,
+        contextMessageId: input.contextMessageId
+      });
     } else {
       requestBody = {
         messaging_product: "whatsapp",
         to: input.to,
         type: "text",
-        text: { body: input.text },
+        text: { body: resolvedText },
         context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
       };
     }
@@ -237,6 +253,60 @@ export const whatsappAdapter = {
     };
   }
 };
+
+function buildInteractiveRequestBody(input: {
+  to: string;
+  text: string;
+  actions: StructuredMessageAction[];
+  contextMessageId?: string;
+}) {
+  const bodyText = input.text || "请选择下一步";
+  if (input.actions.length <= 3) {
+    return {
+      messaging_product: "whatsapp",
+      to: input.to,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: bodyText.slice(0, 1024) },
+        action: {
+          buttons: input.actions.slice(0, 3).map((action) => ({
+            type: "reply",
+            reply: {
+              id: action.value.slice(0, 256),
+              title: action.label.slice(0, 20)
+            }
+          }))
+        }
+      },
+      context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
+    };
+  }
+
+  return {
+    messaging_product: "whatsapp",
+    to: input.to,
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: bodyText.slice(0, 1024) },
+      action: {
+        button: "查看选项",
+        sections: [
+          {
+            title: "可选操作",
+            rows: input.actions.slice(0, 10).map((action) => ({
+              id: action.value.slice(0, 200),
+              title: action.label.slice(0, 24),
+              description: ""
+            }))
+          }
+        ]
+      }
+    },
+    context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
+  };
+}
 
 function buildMediaPayload(message: WhatsAppRawMessage) {
   const payload = message.image ?? message.audio ?? message.video ?? message.document ?? message.sticker;

@@ -1,0 +1,266 @@
+import skillAssist from "./modules/zh/skill-assist";
+
+export default {
+  login: {
+    subtitle: "需开启接待权限方可登录",
+    emailLabel: "邮箱",
+    emailPlaceholder: "请输入邮箱",
+    passwordLabel: "密码",
+    passwordPlaceholder: "请输入密码",
+    loading: "登录中…",
+    submit: "进入工作台",
+    noAgentAccess: "当前账号未开通接待资格"
+  },
+  header: {
+    title: "NuyChat 工作台",
+    agent: "坐席",
+    unbound: "未绑定",
+    socket: {
+      connected: "实时连接正常",
+      error: "连接失败",
+      disconnected: "已断开",
+      connecting: "连接中…"
+    },
+    language: "语言",
+    logout: "退出登录"
+  },
+  inbox: {
+    views: { all: "全部", mine: "我的", follow_up: "跟进" },
+    search: "搜索客户、消息…",
+    tier: { all: "全部", vip: "VIP", premium: "高级", standard: "标准" },
+    followUpHint: "含开放工单的会话",
+    empty: "暂无会话",
+    unknown: "未知客户",
+    noMessage: "(暂无消息)",
+    myOpenTicket: "有开放工单",
+    loading: "加载中…"
+  },
+  timeline: {
+    selectConversation: "请从左侧选择会话",
+    processing: "处理中…",
+    assign: "接管",
+    handoff: "退回 AI",
+    transfer: "转移",
+    transferring: "转移中…",
+    resolve: "解决",
+    resolved: "✓ 已解决",
+    lockedBanner: "🔒 只读模式 · 已分配其他客服",
+    resolveBanner: "有 {{count}} 个未完成任务",
+    endConversation: "结束会话",
+    cancel: "取消",
+    transferTitle: "转移会话给：",
+    selectAgent: "— 选择客服 —",
+    transferNote: "备注（可选）",
+    confirmTransfer: "确认转移",
+    closePreview: "关闭图片预览",
+    copyFailed: "复制失败，请检查浏览器权限。",
+    deleted: "[已删除]",
+    attachment: "[附件]",
+    message: "[消息]",
+    nonText: "[非文本消息]"
+  },
+  composer: {
+    replyPrefix: "回复:",
+    cancelReply: "取消回复",
+    removeAttachment: "移除此附件",
+    clearAttachments: "清空附件",
+    clear: "清空",
+    retry: "重试",
+    retryUpload: "重试上传",
+    uploadFailed: "失败: {{error}}",
+    placeholderLocked: "只读模式，无法回复",
+    placeholderResolved: "发送消息将重新激活此会话…",
+    placeholderOwned: "输入消息…",
+    placeholderNotOwned: "请先接管会话",
+    emoji: "表情",
+    addAttachment: "添加附件",
+    sticker: "贴纸",
+    send: "发送",
+    enterToSend: "Enter 发送",
+    charCount: "{{count}}字",
+    tools: {
+      summary: "摘要",
+      summaryTitle: "总结客户诉求",
+      polish: "润色",
+      polishTitle: "优化当前草稿",
+      translate: "翻译",
+      translateTitle: "翻译为客户语言"
+    }
+  },
+  msgList: {
+    selectHint: "选择会话开始协作",
+    noMessages: "暂无消息",
+    replyLabel: "回复",
+    react: "表情回复",
+    moreActions: "更多操作",
+    quoteReply: "引用回复",
+    addToTask: "添加到任务",
+    copyContent: "复制内容",
+    attachment: "附件",
+    unknown: "未知",
+    preview: "预览",
+    download: "下载",
+    msgStatus: {
+      read: "已读",
+      delivered: "已送达",
+      sent: "已发送",
+      failed: "失败",
+      deleted: "已删除"
+    }
+  },
+  rp: {
+    tabs: { case: "事项", customer: "客户", copilot: "AI", skills: "技能", orders: "任务" },
+    case: {
+      empty: "暂无事项",
+      id: "事项ID",
+      status: "状态",
+      type: "类型",
+      title: "标题",
+      openedAt: "打开时间",
+      lastActivity: "最近活动",
+      summary: "摘要",
+      noSummary: "暂无摘要",
+      tasks: "事项任务",
+      noTasks: "暂无任务"
+    },
+    customer: {
+      tabs: { base: "基础", history: "历史", orders: "订单", analysis: "AI分析" },
+      name: "姓名",
+      customerId: "客户ID",
+      tier: "等级",
+      channel: "渠道",
+      language: "语言",
+      firstContact: "首联",
+      noHistory: "暂无历史",
+      unnamed: "未命名",
+      orderClues: "订单线索",
+      noOrderClues: "暂无订单",
+      analysisSummary: "客户分析摘要",
+      noAnalysis: "暂无分析",
+      currentIntent: "意图: {{value}}",
+      currentSentiment: "情绪: {{value}}",
+      profileSummary: "画像摘要",
+      currentConversation: "当前会话",
+      keyMemory: "重点记忆",
+      currentState: "当前状态",
+      agentSuggestion: "座席建议",
+      longTermMemory: "长期记忆",
+      activeState: "活跃状态",
+      noStateDetail: "暂无详情",
+      sentimentTrend: "情绪趋势",
+      knowledgeRec: "知识推荐",
+      noContent: "暂无内容"
+    },
+    copilot: {
+      summary: "会话摘要",
+      noSummary: "暂无摘要",
+      intentSentiment: "意图 · 情绪",
+      aiTrace: "AI 推理轨迹",
+      noTrace: "未触发 AI 编排",
+      skillsLabel: "技能:",
+      handoffLabel: "转人工:",
+      errorLabel: "错误:",
+      steps: "步骤详情 ({{count}})"
+    },
+    skills: {
+      recommended: "AI 推荐技能",
+      noRecommendation: "暂无推荐",
+      useOnly: "仅用",
+      addPref: "加偏好",
+      execute: "执行",
+      executing: "执行中…",
+      applyTop3: "应用 Top3",
+      clearPrefs: "清空偏好",
+      skillDone: "执行完成",
+      installed: "已安装技能",
+      needsParams: "需填参数",
+      collapse: "收起",
+      required: "必填",
+      confirm: "确认执行",
+      cancelParam: "取消"
+    },
+    orders: {
+      title: "任务列表",
+      create: "+ 创建任务",
+      cancelCreate: "取消",
+      quotedMsg: "引用：{{preview}}",
+      titlePlaceholder: "任务标题 *",
+      descPlaceholder: "描述（可选）",
+      assigneePlaceholder: "负责人（可选）",
+      confirm: "确认创建",
+      creating: "创建中…",
+      orderMarks: "订单标记",
+      loading: "加载中…",
+      empty: "暂无任务",
+      start: "开始",
+      done: "完成",
+      dueAt: "截止 {{time}}",
+      createdAt: "创建于 {{time}}",
+      quoted: "引用：{{preview}}",
+      status: {
+        open: "待处理",
+        in_progress: "进行中",
+        done: "已完成",
+        cancelled: "已取消"
+      }
+    },
+    memoryType: {
+      unresolved_issue: "待跟进问题",
+      preference: "客户偏好",
+      fact: "客户事实",
+      commitment: "已承诺",
+      outcome: "处理结果",
+      risk_flag: "风险提示",
+      profile_trait: "画像特征"
+    }
+  },
+  emoji: {
+    search: "搜索表情…",
+    searchResults: "搜索结果",
+    empty: "暂无表情",
+    recent: "最近",
+    recentUsed: "最近使用",
+    categories: {
+      smileys: "表情",
+      hands: "手势",
+      animals: "动物",
+      food: "美食",
+      activities: "活动",
+      travel: "旅行",
+      objects: "物品",
+      symbols: "符号"
+    }
+  },
+  utils: {
+    today: "今天",
+    yesterday: "昨天",
+    convStatus: {
+      open: "进行中",
+      queued: "排队中",
+      bot_active: "AI处理中",
+      human_active: "人工处理中",
+      resolved: "已解决"
+    },
+    sentiment: {
+      positive: "积极",
+      neutral: "中性",
+      negative: "负面",
+      angry: "愤怒"
+    },
+    intent: {
+      order_inquiry: "订单查询",
+      delivery_inquiry: "物流查询",
+      refund_request: "退款",
+      cancellation: "取消",
+      complaint: "投诉",
+      payment_inquiry: "付款",
+      general_inquiry: "咨询"
+    }
+  },
+  validation: {
+    stickerOnlyWebp: "贴纸仅支持 WEBP 格式",
+    unsupportedType: "当前文件类型不支持",
+    fileTooLarge: "文件超出限制：最大 {{size}}MB"
+  },
+  ...skillAssist
+} as const;

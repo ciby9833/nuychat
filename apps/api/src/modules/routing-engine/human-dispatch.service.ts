@@ -201,6 +201,69 @@ export class HumanDispatchService {
       excludeAgentIds: input.excludeAgentIds ?? []
     });
   }
+
+  async decideForAnyAvailableTarget(
+    db: Knex | Knex.Transaction,
+    input: {
+      tenantId: string;
+      departmentId?: string | null;
+      teamId?: string | null;
+      strategy?: HumanRoutingAssignmentStrategy | null;
+      priority?: number;
+      reason?: string;
+      auditSource?: {
+        ruleId: string | null;
+        ruleName: string | null;
+        matchedConditions: Record<string, unknown>;
+      };
+      excludeSkillGroupCodes?: string[];
+      excludeAgentIds?: string[];
+    }
+  ): Promise<HumanDispatchDecision | null> {
+    const excludedCodes = new Set((input.excludeSkillGroupCodes ?? []).filter(Boolean));
+    const groups = await db("skill_groups")
+      .where({ tenant_id: input.tenantId, is_active: true })
+      .select("skill_group_id", "module_id", "code")
+      .orderBy("priority", "asc")
+      .orderBy("created_at", "asc") as Array<{ skill_group_id: string; module_id: string | null; code: string }>;
+
+    for (const group of groups) {
+      if (excludedCodes.has(group.code)) continue;
+      const capacity = await this.inspectTarget(db, {
+        tenantId: input.tenantId,
+        target: {
+          departmentId: input.departmentId ?? null,
+          departmentCode: null,
+          teamId: input.teamId ?? null,
+          teamCode: null,
+          skillGroupCode: group.code,
+          assignmentStrategy: input.strategy ?? "least_busy"
+        },
+        priority: input.priority
+      });
+
+      if (capacity.totalAgents === 0 || capacity.eligibleAgents === 0) continue;
+
+      return assignWithinScope(db, {
+        tenantId: input.tenantId,
+        moduleId: capacity.moduleId,
+        skillGroupId: capacity.skillGroupId as string,
+        departmentId: capacity.departmentId,
+        teamId: capacity.teamId,
+        strategy: capacity.strategy,
+        priority: input.priority ?? 100,
+        fallbackReason: input.reason ?? "fallback_any_human_target",
+        auditSource: input.auditSource ?? {
+          ruleId: null,
+          ruleName: "fallback_any_human_target",
+          matchedConditions: {}
+        },
+        excludeAgentIds: input.excludeAgentIds ?? []
+      });
+    }
+
+    return null;
+  }
 }
 
 export async function getPrimaryTeamContext(
@@ -507,7 +570,7 @@ async function loadCandidateEvaluations(
       .whereNotNull("case_id")
       .whereRaw("(created_at AT TIME ZONE 'Asia/Jakarta')::date = ?", [jakartaDate])
       .whereRaw("status_plan->>'selectedOwnerType' = 'human'")
-      .whereIn(db.raw("target_snapshot->>'agentId'"), agentIds)
+      .whereIn(db.raw("target_snapshot->>'agentId'") as unknown as string, agentIds)
       .groupByRaw("target_snapshot->>'agentId'")
       .select(db.raw("target_snapshot->>'agentId' as agent_id"))
       .countDistinct<{ agent_id: string; today_new_case_count: string }[]>("case_id as today_new_case_count")

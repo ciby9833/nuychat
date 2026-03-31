@@ -7,12 +7,14 @@ import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 
+import { readCorsOriginEnv, readRequiredEnv } from "./infra/env.js";
 import { getMaxFileSize, getUploadsDir } from "./infra/storage/upload.service.js";
 
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { agentRoutes } from "./modules/agent/agent.routes.js";
 import { channelAdminRoutes } from "./modules/channel/channel-admin.routes.js";
 import { channelGateway } from "./modules/channel/channel.gateway.js";
+import { capabilityAdminRoutes } from "./modules/capability-admin/index.js";
 import { conversationRoutes } from "./modules/conversation/conversation.routes.js";
 import { closeDatabase } from "./infra/db/client.js";
 import { platformRoutes } from "./modules/platform/platform.routes.js";
@@ -33,6 +35,11 @@ import { webchatRoutes } from "./modules/webchat/webchat.routes.js";
 
 type CrossOriginResourcePolicyValue = "same-origin" | "same-site" | "cross-origin";
 
+function resolveBodyLimit() {
+  const value = Number(process.env.FASTIFY_BODY_LIMIT ?? 1_048_576);
+  return Number.isFinite(value) && value > 0 ? value : 1_048_576;
+}
+
 function resolveHelmetCrossOriginResourcePolicy() {
   const value = process.env.HELMET_CROSS_ORIGIN_RESOURCE_POLICY?.trim();
   if (!value) return undefined;
@@ -47,6 +54,7 @@ function resolveHelmetCrossOriginResourcePolicy() {
 
 export async function buildApp() {
   const app = Fastify({
+    bodyLimit: resolveBodyLimit(),
     logger: {
       transport: { target: "pino-pretty" },
       level: process.env.LOG_LEVEL ?? "info"
@@ -54,7 +62,7 @@ export async function buildApp() {
   });
 
   await app.register(cors, {
-    origin: process.env.CORS_ORIGIN ?? "*",
+    origin: readCorsOriginEnv(),
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
   });
@@ -63,7 +71,7 @@ export async function buildApp() {
   });
   await app.register(sensible);
   await app.register(jwt, {
-    secret: process.env.JWT_SECRET ?? "dev-secret-change-me"
+    secret: readRequiredEnv("JWT_SECRET")
   });
   await app.register(rawBody, {
     field: "rawBody",
@@ -98,6 +106,7 @@ export async function buildApp() {
   await app.register(opsWorkforceRoutes);
   await app.register(supervisorAdminRoutes);
   await app.register(taskAdminRoutes);
+  await app.register(capabilityAdminRoutes);
   await app.register(adminGovernanceRoutes);
   await app.register(orgAdminRoutes);
   await app.register(qualityAdminRoutes);

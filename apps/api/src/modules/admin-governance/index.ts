@@ -57,10 +57,16 @@ export async function adminGovernanceRoutes(app: FastifyInstance) {
         .whereNotNull("qa.assigned_ai_agent_id")
         .modify((builder) => {
           if (aiAgentId) builder.where("qa.assigned_ai_agent_id", aiAgentId);
-          if (status === "handoff_required") builder.where("qa.handoff_required", true);
-          else if (status === "transferred") builder.where("c.current_handler_type", "human");
-          else if (status) builder.where("c.status", status);
-          builder.whereBetween(activityAtExpr, [dateRange.startIso, dateRange.endIso]);
+          if (status === "handoff_required") {
+            builder.where("qa.handoff_required", true);
+          } else if (status === "transferred") {
+            builder.where("c.current_handler_type", "human");
+          } else if (status) {
+            builder.where("c.status", status);
+          } else {
+            builder.where("c.current_handler_type", "ai").whereIn("c.status", ["open", "bot_active"]);
+          }
+          builder.whereBetween(activityAtExpr as unknown as string, [dateRange.startIso, dateRange.endIso]);
         })
         .select(
           "qa.assignment_id",
@@ -89,11 +95,11 @@ export async function adminGovernanceRoutes(app: FastifyInstance) {
       const tracesByConversation = await getLatestAITracesByConversation(
         trx,
         tenantId,
-        rows.map((row) => String(row.conversation_id))
+        rows.map((row: any) => String(row.conversation_id))
       );
 
       return {
-        items: rows.map((row) => ({
+        items: rows.map((row: any) => ({
           ...deriveAIRisk({
             handoffRequired: Boolean(row.handoff_required),
             handoffReason: (row.handoff_reason as string | null) ?? null,
@@ -312,269 +318,6 @@ export async function adminGovernanceRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get("/api/admin/marketplace/catalog", async (req) => {
-    const tenantId = req.tenant?.tenantId;
-    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-
-    const query = req.query as { tier?: string; search?: string; status?: string };
-    const status = query.status?.trim() || "published";
-    const tiers = query.tier?.trim() ? [query.tier.trim()] : ["official", "private", "third_party"];
-
-    return withTenantTransaction(tenantId, async (trx) => {
-      const skills = await trx("marketplace_skills as s")
-        .select("s.skill_id", "s.slug", "s.name", "s.description", "s.tier", "s.status", "s.latest_version", "s.owner_tenant_id")
-        .modify((qb) => {
-          qb.where((scope) => {
-            scope.whereIn("s.tier", tiers.filter((t) => t !== "private"));
-            if (tiers.includes("private")) {
-              scope.orWhere((privateScope) => privateScope.where("s.tier", "private").andWhere("s.owner_tenant_id", tenantId));
-            }
-          });
-          if (status) qb.andWhere("s.status", status);
-          if (query.search?.trim()) {
-            const like = `%${query.search.trim()}%`;
-            qb.andWhere((searchScope) => searchScope.whereILike("s.name", like).orWhereILike("s.slug", like).orWhereILike("s.description", like));
-          }
-        })
-        .orderBy("s.tier", "asc")
-        .orderBy("s.name", "asc");
-
-      const skillIds = skills.map((row: Record<string, unknown>) => row.skill_id as string);
-      if (skillIds.length === 0) return { skills: [] };
-
-      const [releases, installs] = await Promise.all([
-        trx("marketplace_skill_releases").select("release_id", "skill_id", "version", "published_at").whereIn("skill_id", skillIds).andWhere("is_active", true).orderBy("published_at", "desc"),
-        trx("marketplace_skill_installs").select("install_id", "skill_id", "release_id", "status").where({ tenant_id: tenantId }).whereIn("skill_id", skillIds)
-      ]);
-
-      const latestReleaseBySkill = new Map<string, { releaseId: string; version: string; publishedAt: string }>();
-      for (const release of releases) {
-        const sid = release.skill_id as string;
-        if (!latestReleaseBySkill.has(sid)) {
-          latestReleaseBySkill.set(sid, {
-            releaseId: release.release_id as string,
-            version: release.version as string,
-            publishedAt: new Date(release.published_at as string).toISOString()
-          });
-        }
-      }
-
-      const installBySkill = new Map(
-        installs.map((row) => [
-          row.skill_id as string,
-          { installId: row.install_id as string, releaseId: row.release_id as string, status: row.status as "active" | "disabled" }
-        ])
-      );
-
-      return {
-        skills: skills.map((row: Record<string, unknown>) => ({
-          skillId: row.skill_id,
-          slug: row.slug,
-          name: row.name,
-          description: row.description,
-          tier: row.tier,
-          status: row.status,
-          latestVersion: row.latest_version,
-          latestRelease: latestReleaseBySkill.get(row.skill_id as string) ?? null,
-          installed: installBySkill.get(row.skill_id as string) ?? null
-        }))
-      };
-    });
-  });
-
-  app.get("/api/admin/marketplace/installs", async (req) => {
-    const tenantId = req.tenant?.tenantId;
-    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-
-    return withTenantTransaction(tenantId, async (trx) => {
-      const rows = await trx("marketplace_skill_installs as mi")
-        .join("marketplace_skills as s", "s.skill_id", "mi.skill_id")
-        .join("marketplace_skill_releases as r", "r.release_id", "mi.release_id")
-        .select(
-          "mi.install_id",
-          "mi.skill_id",
-          "s.name as skill_name",
-          "s.slug as skill_slug",
-          "s.tier as skill_tier",
-          "mi.release_id",
-          "r.version as release_version",
-          "mi.status",
-          "mi.enabled_modules",
-          "mi.enabled_skill_groups",
-          "mi.enabled_for_ai",
-          "mi.enabled_for_agent",
-          "mi.rate_limit_per_minute",
-          "mi.ai_whitelisted",
-          "mi.installed_at",
-          "mi.updated_at"
-        )
-        .where({ "mi.tenant_id": tenantId })
-        .orderBy("mi.installed_at", "desc");
-
-      return {
-        installs: rows.map((row) => ({
-          installId: row.install_id,
-          skillId: row.skill_id,
-          skillName: row.skill_name,
-          skillSlug: row.skill_slug,
-          skillTier: row.skill_tier,
-          releaseId: row.release_id,
-          releaseVersion: row.release_version,
-          status: row.status,
-          enabledModules: parseJsonStringArray(row.enabled_modules),
-          enabledSkillGroups: parseJsonStringArray(row.enabled_skill_groups),
-          enabledForAi: Boolean(row.enabled_for_ai),
-          enabledForAgent: Boolean(row.enabled_for_agent),
-          rateLimitPerMinute: Number(row.rate_limit_per_minute ?? 60),
-          aiWhitelisted: Boolean(row.ai_whitelisted ?? true),
-          installedAt: new Date(row.installed_at as string).toISOString(),
-          updatedAt: new Date(row.updated_at as string).toISOString()
-        }))
-      };
-    });
-  });
-
-  app.post("/api/admin/marketplace/catalog/:skillId/install", async (req) => {
-    const tenantId = req.tenant?.tenantId;
-    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-
-    const { skillId } = req.params as { skillId: string };
-    const body = req.body as { releaseId?: string };
-
-    return withTenantTransaction(tenantId, async (trx) => {
-      const skill = await trx("marketplace_skills")
-        .where({ skill_id: skillId })
-        .select("skill_id", "tier", "owner_tenant_id", "status")
-        .first<{ skill_id: string; tier: string; owner_tenant_id: string | null; status: string }>();
-
-      if (!skill) throw app.httpErrors.notFound("Marketplace skill not found");
-      if (skill.status !== "published") throw app.httpErrors.conflict("Only published skills can be installed");
-      if (skill.tier === "private" && skill.owner_tenant_id !== tenantId) {
-        throw app.httpErrors.forbidden("Private skill can only be installed by the owner tenant");
-      }
-
-      const release = body.releaseId
-        ? await trx("marketplace_skill_releases").where({ release_id: body.releaseId, skill_id: skillId, is_active: true }).select("release_id", "version").first<{ release_id: string; version: string }>()
-        : await trx("marketplace_skill_releases").where({ skill_id: skillId, is_active: true }).orderBy("published_at", "desc").select("release_id", "version").first<{ release_id: string; version: string }>();
-
-      if (!release) throw app.httpErrors.notFound("Active release not found");
-
-      const [installed] = await trx("marketplace_skill_installs")
-        .insert({
-          tenant_id: tenantId,
-          skill_id: skillId,
-          release_id: release.release_id,
-          status: "active",
-          installed_by_identity_id: req.auth?.sub ?? null,
-          enabled_modules: JSON.stringify([]),
-          enabled_skill_groups: JSON.stringify([]),
-          enabled_for_ai: true,
-          enabled_for_agent: true,
-          rate_limit_per_minute: 60,
-          ai_whitelisted: true
-        })
-        .onConflict(["tenant_id", "skill_id"])
-        .merge({ release_id: release.release_id, status: "active", updated_at: trx.fn.now() })
-        .returning(["install_id", "tenant_id", "skill_id", "release_id", "status", "installed_at", "updated_at"]);
-
-      return {
-        installId: installed.install_id,
-        tenantId: installed.tenant_id,
-        skillId: installed.skill_id,
-        releaseId: installed.release_id,
-        releaseVersion: release.version,
-        status: installed.status,
-        installedAt: new Date(installed.installed_at as string).toISOString(),
-        updatedAt: new Date(installed.updated_at as string).toISOString()
-      };
-    });
-  });
-
-  app.patch("/api/admin/marketplace/installs/:installId/governance", async (req) => {
-    const tenantId = req.tenant?.tenantId;
-    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-
-    const { installId } = req.params as { installId: string };
-    const body = req.body as {
-      status?: "active" | "disabled";
-      releaseId?: string;
-      enabledModules?: string[];
-      enabledSkillGroups?: string[];
-      enabledForAi?: boolean;
-      enabledForAgent?: boolean;
-      rateLimitPerMinute?: number;
-      aiWhitelisted?: boolean;
-    };
-
-    return withTenantTransaction(tenantId, async (trx) => {
-      const existing = await trx("marketplace_skill_installs")
-        .where({ install_id: installId, tenant_id: tenantId })
-        .select("install_id", "skill_id")
-        .first<{ install_id: string; skill_id: string }>();
-
-      if (!existing) throw app.httpErrors.notFound("Marketplace install not found");
-
-      if (body.enabledSkillGroups && body.enabledSkillGroups.length > 0) {
-        const rows = await trx("skill_groups")
-          .where({ tenant_id: tenantId })
-          .whereIn("skill_group_id", body.enabledSkillGroups)
-          .count("skill_group_id as cnt")
-          .first<{ cnt: string }>();
-        if (Number(rows?.cnt ?? 0) !== body.enabledSkillGroups.length) {
-          throw app.httpErrors.badRequest("enabledSkillGroups contains unknown group id");
-        }
-      }
-
-      if (body.releaseId) {
-        const release = await trx("marketplace_skill_releases")
-          .where({ release_id: body.releaseId, skill_id: existing.skill_id, is_active: true })
-          .first();
-        if (!release) throw app.httpErrors.badRequest("releaseId is invalid for this install");
-      }
-
-      const updates: Record<string, unknown> = { updated_at: trx.fn.now() };
-      if (body.status !== undefined) updates.status = body.status;
-      if (body.releaseId !== undefined) updates.release_id = body.releaseId;
-      if (body.enabledModules !== undefined) updates.enabled_modules = JSON.stringify(normalizeStringArray(body.enabledModules));
-      if (body.enabledSkillGroups !== undefined) updates.enabled_skill_groups = JSON.stringify(normalizeStringArray(body.enabledSkillGroups));
-      if (body.enabledForAi !== undefined) updates.enabled_for_ai = body.enabledForAi;
-      if (body.enabledForAgent !== undefined) updates.enabled_for_agent = body.enabledForAgent;
-      if (body.rateLimitPerMinute !== undefined) updates.rate_limit_per_minute = Math.max(1, Math.min(10000, Math.floor(body.rateLimitPerMinute)));
-      if (body.aiWhitelisted !== undefined) updates.ai_whitelisted = body.aiWhitelisted;
-
-      const [updated] = await trx("marketplace_skill_installs")
-        .where({ install_id: installId, tenant_id: tenantId })
-        .update(updates)
-        .returning(["install_id", "tenant_id", "skill_id", "release_id", "status", "enabled_modules", "enabled_skill_groups", "enabled_for_ai", "enabled_for_agent", "rate_limit_per_minute", "ai_whitelisted", "updated_at"]);
-
-      return {
-        installId: updated.install_id,
-        tenantId: updated.tenant_id,
-        skillId: updated.skill_id,
-        releaseId: updated.release_id,
-        status: updated.status,
-        enabledModules: parseJsonStringArray(updated.enabled_modules),
-        enabledSkillGroups: parseJsonStringArray(updated.enabled_skill_groups),
-        enabledForAi: Boolean(updated.enabled_for_ai),
-        enabledForAgent: Boolean(updated.enabled_for_agent),
-        rateLimitPerMinute: Number(updated.rate_limit_per_minute ?? 60),
-        aiWhitelisted: Boolean(updated.ai_whitelisted ?? true),
-        updatedAt: new Date(updated.updated_at as string).toISOString()
-      };
-    });
-  });
-
-  app.delete("/api/admin/marketplace/installs/:installId", async (req) => {
-    const tenantId = req.tenant?.tenantId;
-    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-    const { installId } = req.params as { installId: string };
-    return withTenantTransaction(tenantId, async (trx) => {
-      const deleted = await trx("marketplace_skill_installs").where({ install_id: installId, tenant_id: tenantId }).del();
-      if (!deleted) throw app.httpErrors.notFound("Marketplace install not found");
-      return { success: true, installId };
-    });
-  });
-
   app.get("/api/admin/analytics/daily", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
@@ -626,7 +369,7 @@ export async function adminGovernanceRoutes(app: FastifyInstance) {
           this.on("raia.ai_agent_id", "=", "qa.assigned_ai_agent_id").andOn("raia.tenant_id", "=", "qa.tenant_id");
         })
         .leftJoin("tenant_ai_agents as chaia", function joinCurrentHandlerAi() {
-          this.on(trx.raw("chaia.ai_agent_id::text"), "=", trx.ref("c.current_handler_id")).andOn("chaia.tenant_id", "=", "c.tenant_id");
+          this.on(trx.raw("chaia.ai_agent_id::text") as unknown as string, "=", trx.ref("c.current_handler_id")).andOn("chaia.tenant_id", "=", "c.tenant_id");
         })
         .where("cc.tenant_id", tenantId)
         .modify((qb) => {

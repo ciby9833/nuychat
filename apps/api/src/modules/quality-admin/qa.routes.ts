@@ -117,7 +117,7 @@ export async function registerQAAdminRoutes(app: FastifyInstance) {
         .orderBy("c.updated_at", "desc")
         .limit(limit);
 
-      return rows.map((row) => ({
+      return rows.map((row: any) => ({
         conversationId: row.conversation_id,
         caseId: row.case_id,
         status: row.status,
@@ -176,7 +176,7 @@ export async function registerQAAdminRoutes(app: FastifyInstance) {
         page,
         pageSize,
         total: Number(countRow?.cnt ?? 0),
-        items: rows.map((row) => ({
+        items: rows.map((row: any) => ({
           reviewId: row.review_id,
           conversationId: row.conversation_id,
           caseId: row.case_id,

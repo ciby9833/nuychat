@@ -1,4 +1,15 @@
+/**
+ * 菜单路径与名称: 客户中心 -> 路由
+ * 文件职责: 负责路由规则、模块、技能组及依赖数据的加载、提交与删除逻辑。
+ * 主要交互文件:
+ * - ../RoutingTab.tsx
+ * - ../helpers.ts
+ * - ../types.ts
+ * - ../../../api
+ */
+
 import { message } from "antd";
+import i18next from "i18next";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -68,10 +79,10 @@ export function useRoutingData() {
       const payload = buildRulePayload(values);
       if (editingRule) {
         await patchRoutingRule(editingRule.rule_id, payload);
-        message.success("调度规则已更新");
+        message.success(i18next.t("routing.messages.ruleUpdated"));
       } else {
         await createRoutingRule(payload);
-        message.success("调度规则已创建");
+        message.success(i18next.t("routing.messages.ruleCreated"));
       }
       await load();
       return true;
@@ -79,7 +90,7 @@ export function useRoutingData() {
       const errorMessage = (err as Error).message;
       if (editingRule && /404|not found|不存在/i.test(errorMessage)) {
         await load();
-        message.error("当前规则不存在或已不属于，列表已刷新，请重新选择后再试。");
+        message.error(i18next.t("routing.messages.ruleMissing"));
         return true;
       }
       message.error(errorMessage);
@@ -93,7 +104,7 @@ export function useRoutingData() {
     setSaving(true);
     try {
       await deleteRoutingRule(ruleId);
-      message.success("调度规则已删除");
+      message.success(i18next.t("routing.messages.ruleDeleted"));
       await load();
     } catch (err) {
       message.error((err as Error).message);
@@ -107,10 +118,10 @@ export function useRoutingData() {
     try {
       if (editingModule) {
         await patchModule(editingModule.moduleId, values);
-        message.success("模块已更新");
+        message.success(i18next.t("routing.messages.moduleUpdated"));
       } else {
         await createModule(values);
-        message.success("模块已创建");
+        message.success(i18next.t("routing.messages.moduleCreated"));
       }
       await load();
       return true;
@@ -125,7 +136,7 @@ export function useRoutingData() {
   const removeModule = async (moduleId: string) => {
     try {
       await deleteModule(moduleId);
-      message.success("模块已删除");
+      message.success(i18next.t("routing.messages.moduleDeleted"));
       await load();
     } catch (err) {
       message.error((err as Error).message);
@@ -137,10 +148,10 @@ export function useRoutingData() {
     try {
       if (editingItem) {
         await patchSkillGroup(editingItem.skill_group_id, values);
-        message.success("技能组已更新");
+        message.success(i18next.t("routing.messages.skillGroupUpdated"));
       } else {
         await createSkillGroup(values);
-        message.success("技能组已创建");
+        message.success(i18next.t("routing.messages.skillGroupCreated"));
       }
       await load();
       return true;
@@ -155,7 +166,7 @@ export function useRoutingData() {
   const removeSkillGroup = async (skillGroupId: string) => {
     try {
       await deleteSkillGroup(skillGroupId);
-      message.success("技能组已删除");
+      message.success(i18next.t("routing.messages.skillGroupDeleted"));
       await load();
     } catch (err) {
       message.error((err as Error).message);

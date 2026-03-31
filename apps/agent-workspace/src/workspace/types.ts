@@ -81,6 +81,19 @@ export type MessageItem = {
   message_type: string;
   content: {
     text?: string;
+    structured?: {
+      version: "2026-03-28";
+      blocks: Array<
+        | { type: "paragraph"; text: string }
+        | { type: "list"; ordered: boolean; items: string[] }
+        | { type: "key_value"; items: Array<{ label: string; value: string }> }
+        | {
+            type: "records";
+            items: Array<{ title?: string; fields: Array<{ label: string; value: string }> }>;
+          }
+      >;
+    } | null;
+    actions?: Array<{ type?: "button" | "list" | "postback"; label: string; value: string }>;
     aiAgentName?: string | null;
     attachments?: Array<{ url?: string; mimeType?: string; fileName?: string; mediaId?: string }>;
     location?: { latitude: number; longitude: number; name?: string; address?: string };
@@ -224,6 +237,17 @@ export type SkillExecuteResult = {
   messageId: string;
 };
 
+export type ComposerSkillAssist = {
+  skillName: string;
+  title: string;
+  sourceMessageId: string;
+  sourceMessagePreview: string;
+  status: "loading" | "ready" | "error";
+  parameters?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: string;
+};
+
 // ── Skill schema types ──────────────────────────────────────────────────────
 
 export type SkillSchemaParam = {
@@ -258,7 +282,21 @@ export type Customer360Data = {
     metadata: Record<string, unknown>;
     firstContactAt: string;
     updatedAt: string;
+    profileSummary?: string | null;
+    soulProfile?: Record<string, unknown>;
+    operatingNotes?: Record<string, unknown>;
+    stateSnapshot?: Record<string, unknown>;
   };
+  latestConversationIntelligence: {
+    summary: string;
+    intent: string;
+    sentiment: string;
+    keyEntities: {
+      orderIds: string[];
+      phones: string[];
+      addresses: string[];
+    };
+  } | null;
   history: Array<{
     caseId: string;
     caseTitle: string | null;
@@ -270,6 +308,18 @@ export type Customer360Data = {
     intent: string | null;
     sentiment: string | null;
     occurredAt: string;
+  }>;
+  memoryItems: Array<{
+    memoryType: string;
+    title: string | null;
+    summary: string;
+    salience: number;
+    updatedAt: string;
+  }>;
+  stateSnapshots: Array<{
+    stateType: string;
+    payload: Record<string, unknown>;
+    updatedAt: string;
   }>;
   orderClues: string[];
   customerTickets: Array<{

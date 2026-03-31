@@ -1,41 +1,25 @@
+import i18next from "i18next";
+import { getLocale } from "../i18n";
+
 export function statusLabel(v: string): string {
-  return {
-    open: "进行中",
-    queued: "排队中",
-    bot_active: "AI处理中",
-    human_active: "人工处理中",
-    resolved: "已解决"
-  }[v] ?? v;
+  return i18next.t(`utils.convStatus.${v}`, { defaultValue: v });
 }
 
 export function sentimentLabel(v: string): string {
-  return {
-    positive: "积极",
-    neutral: "中性",
-    negative: "负面",
-    angry: "愤怒"
-  }[v] ?? v;
+  return i18next.t(`utils.sentiment.${v}`, { defaultValue: v });
 }
 
 export function intentLabel(v: string): string {
-  return {
-    order_inquiry: "订单查询",
-    delivery_inquiry: "物流查询",
-    refund_request: "退款",
-    cancellation: "取消",
-    complaint: "投诉",
-    payment_inquiry: "付款",
-    general_inquiry: "咨询"
-  }[v] ?? v;
+  return i18next.t(`utils.intent.${v}`, { defaultValue: v });
 }
 
 export function shortTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleString();
+  return d.toLocaleString(getLocale());
 }
 
-/** Returns a Chinese date group label: 今天 / 昨天 / 周X / M月D日 / YYYY年M月D日 */
+/** Returns a locale-aware date group label: Today / Yesterday / weekday / M/D / Y/M/D */
 export function dateGroupLabel(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -44,20 +28,21 @@ export function dateGroupLabel(iso: string): string {
   const yesterday = new Date(today.getTime() - 86_400_000);
   const itemDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
-  if (itemDay.getTime() === today.getTime()) return "今天";
-  if (itemDay.getTime() === yesterday.getTime()) return "昨天";
+  if (itemDay.getTime() === today.getTime()) return i18next.t("utils.today");
+  if (itemDay.getTime() === yesterday.getTime()) return i18next.t("utils.yesterday");
 
+  const locale = getLocale();
   const diffDays = Math.floor((today.getTime() - itemDay.getTime()) / 86_400_000);
   if (diffDays < 7) {
-    return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
+    return new Intl.DateTimeFormat(locale, { weekday: "short" }).format(d);
   }
   if (d.getFullYear() === now.getFullYear()) {
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
+    return new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" }).format(d);
   }
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+  return new Intl.DateTimeFormat(locale, { year: "numeric", month: "numeric", day: "numeric" }).format(d);
 }
 
-/** Short timestamp for inbox list items (HH:mm today / 昨天 / 周X / M/D) */
+/** Short timestamp for inbox list items */
 export function listTimestamp(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -65,14 +50,15 @@ export function listTimestamp(iso: string): string {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today.getTime() - 86_400_000);
   const itemDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const locale = getLocale();
 
   if (itemDay.getTime() === today.getTime()) {
-    return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
   }
-  if (itemDay.getTime() === yesterday.getTime()) return "昨天";
+  if (itemDay.getTime() === yesterday.getTime()) return i18next.t("utils.yesterday");
   const diffDays = Math.floor((today.getTime() - itemDay.getTime()) / 86_400_000);
   if (diffDays < 7) {
-    return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
+    return new Intl.DateTimeFormat(locale, { weekday: "short" }).format(d);
   }
   if (d.getFullYear() === now.getFullYear()) {
     return `${d.getMonth() + 1}/${d.getDate()}`;
@@ -80,11 +66,11 @@ export function listTimestamp(iso: string): string {
   return `${String(d.getFullYear()).slice(2)}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-/** HH:mm bubble timestamp (shown below message bubbles) */
+/** HH:mm bubble timestamp */
 export function bubbleTimestamp(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return d.toLocaleTimeString(getLocale(), { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 /** Full date + time for message attribution: YYYY/MM/DD HH:mm:ss */

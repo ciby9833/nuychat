@@ -1,14 +1,11 @@
-// 作用: 新增成员账号弹窗
-// 菜单路径: 系统设置 -> 坐席与成员管理 -> 新增成员
-// 作者：吴川
-
 import { TeamOutlined } from "@ant-design/icons";
 import { Form, Input, Modal, Select, Space, message } from "antd";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { createMember } from "../../../api";
 import type { NewMemberForm } from "../types";
-import { ROLE_OPTIONS, getActionErrorMessage } from "../types";
+import { getActionErrorMessage, roleOptions } from "../types";
 
 export function NewMemberModal({
   open,
@@ -19,6 +16,7 @@ export function NewMemberModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const { t } = useTranslation();
   const [form] = Form.useForm<NewMemberForm>();
   const [saving, setSaving] = useState(false);
 
@@ -27,21 +25,21 @@ export function NewMemberModal({
     setSaving(true);
     try {
       await createMember({
-        email: values.email.trim().toLowerCase(),
-        password: values.password,
+        email:       values.email.trim().toLowerCase(),
+        password:    values.password,
         displayName: values.displayName.trim(),
-        employeeNo: values.employeeNo?.trim() || null,
-        phone: values.phone?.trim() || null,
-        idNumber: values.idNumber?.trim() || null,
-        role: values.role,
-        status: "active"
+        employeeNo:  values.employeeNo?.trim() || null,
+        phone:       values.phone?.trim() || null,
+        idNumber:    values.idNumber?.trim() || null,
+        role:        values.role,
+        status:      "active"
       });
-      message.success(`成员 ${values.displayName} 已创建`);
+      void message.success(t("agents.member.created", { name: values.displayName }));
       form.resetFields();
       onCreated();
       onClose();
     } catch (err) {
-      message.error(getActionErrorMessage(err, "member_create"));
+      void message.error(getActionErrorMessage(err, "member_create"));
     } finally {
       setSaving(false);
     }
@@ -49,45 +47,51 @@ export function NewMemberModal({
 
   return (
     <Modal
-      title={<Space><TeamOutlined />新增成员账号</Space>}
+      title={<Space><TeamOutlined />{t("agents.member.title")}</Space>}
       open={open}
       onCancel={() => { form.resetFields(); onClose(); }}
       onOk={() => { void handleOk(); }}
-      okText="创建"
-      cancelText="取消"
+      okText={t("common.create")}
+      cancelText={t("common.cancel")}
       confirmLoading={saving}
       destroyOnHidden
       width={520}
     >
       <Form form={form} layout="vertical" style={{ marginTop: 16 }} initialValues={{ role: "readonly" }}>
-        <Form.Item label="姓名" name="displayName" rules={[{ required: true, message: "请输入姓名" }]}>
-          <Input placeholder="张三" />
+        <Form.Item label={t("agents.member.name")} name="displayName" rules={[{ required: true, message: t("agents.member.nameRequired") }]}>
+          <Input placeholder={t("agents.member.namePlaceholder")} />
         </Form.Item>
-        <Form.Item label="工号" name="employeeNo">
+        <Form.Item label={t("agents.member.employeeNo")} name="employeeNo">
           <Input placeholder="A1024" />
         </Form.Item>
-        <Form.Item label="手机号码" name="phone">
+        <Form.Item label={t("agents.member.phone")} name="phone">
           <Input placeholder="138xxxxxxxx" />
         </Form.Item>
-        <Form.Item label="证件号码" name="idNumber">
-          <Input placeholder="身份证或其他证件号" />
+        <Form.Item label={t("agents.member.idNumber")} name="idNumber">
+          <Input placeholder={t("agents.member.idPlaceholder")} />
         </Form.Item>
         <Form.Item
-          label="登录邮箱"
+          label={t("agents.member.email")}
           name="email"
-          rules={[{ required: true, message: "请输入邮箱" }, { type: "email", message: "邮箱格式不正确" }]}
+          rules={[
+            { required: true, message: t("agents.member.emailRequired") },
+            { type: "email",  message: t("agents.member.emailInvalid") }
+          ]}
         >
           <Input placeholder="member@example.com" autoComplete="off" />
         </Form.Item>
         <Form.Item
-          label="初始密码"
+          label={t("agents.member.password")}
           name="password"
-          rules={[{ required: true, message: "请输入密码" }, { min: 6, message: "密码至少 6 位" }]}
+          rules={[
+            { required: true, message: t("agents.member.passwordRequired") },
+            { min: 6,          message: t("agents.member.passwordMin") }
+          ]}
         >
-          <Input.Password placeholder="至少 6 位" autoComplete="new-password" />
+          <Input.Password placeholder={t("agents.member.passwordPlaceholder")} autoComplete="new-password" />
         </Form.Item>
-        <Form.Item label="角色" name="role">
-          <Select options={ROLE_OPTIONS} />
+        <Form.Item label={t("agents.member.role")} name="role">
+          <Select options={roleOptions()} />
         </Form.Item>
       </Form>
     </Modal>

@@ -1,5 +1,10 @@
 import type { Knex } from "knex";
 
+import {
+  isInternalControlPayload,
+  normalizeStructuredMessage,
+  structuredToPlainText
+} from "../../shared/messaging/structured-message.js";
 import { CUSTOMER_MESSAGE_SENDER_TYPE, SERVICE_REPLY_SENDER_TYPES } from "../message/message.constants.js";
 import { normalizeRoutingRuleActions } from "../routing-engine/routing-rule-schema.js";
 import { isDateString, toIsoString } from "../tenant/tenant-admin.shared.js";
@@ -26,7 +31,13 @@ export function extractMessagePreview(content: unknown): string {
 
   if (content && typeof content === "object" && !Array.isArray(content)) {
     const record = content as Record<string, unknown>;
-    if (typeof record.text === "string" && record.text.trim()) return record.text.trim();
+    const structured = normalizeStructuredMessage(record.structured);
+    if (structured) {
+      return structuredToPlainText(structured, "-");
+    }
+    if (typeof record.text === "string" && record.text.trim()) {
+      return isInternalControlPayload(record.text) ? "-" : record.text.trim();
+    }
     if (Array.isArray(record.attachments) && record.attachments.length > 0) return "[media]";
   }
 
@@ -717,7 +728,7 @@ export async function buildSupervisorConversationWorkbenchRows(
       this.on("current_ai.ai_agent_id", "=", "cc.current_owner_id").andOn("current_ai.tenant_id", "=", "cc.tenant_id");
     })
     .leftJoin("tenant_ai_agents as current_handler_ai", function joinCurrentHandlerAi() {
-      this.on(trx.raw("current_handler_ai.ai_agent_id::text"), "=", trx.ref("c.current_handler_id"))
+      this.on(trx.raw("current_handler_ai.ai_agent_id::text") as unknown as string, "=", trx.ref("c.current_handler_id"))
         .andOn("current_handler_ai.tenant_id", "=", "c.tenant_id");
     })
     .leftJoin("agent_profiles as reserved_ap", function joinReservedAgent() {
@@ -894,6 +905,27 @@ function resolveSupervisorCurrentResponsible(row: Record<string, unknown>) {
 }
 
 function resolveSupervisorReservedResponsible(row: Record<string, unknown>) {
+  const queueStatus = readNullableString(row.queue_status);
+  const queueAssignmentIsActive = queueStatus === "pending" || queueStatus === "assigned" || queueStatus === "accepted";
+  if (!queueAssignmentIsActive) {
+    const conversationAssignedAgentId = readNullableString(row.conversation_assigned_agent_id);
+    if (conversationAssignedAgentId) {
+      return { ownerType: "agent", ownerId: conversationAssignedAgentId, ownerName: readNullableString(row.reserved_owner_agent_name) };
+    }
+
+    const currentHandlerType = readNullableString(row.current_handler_type);
+    const currentHandlerId = readNullableString(row.current_handler_id);
+    if (currentHandlerType === "ai" && currentHandlerId) {
+      return {
+        ownerType: "ai",
+        ownerId: currentHandlerId,
+        ownerName: readNullableString(row.current_handler_ai_name) ?? readNullableString(row.current_owner_ai_name)
+      };
+    }
+
+    return { ownerType: null, ownerId: null, ownerName: null };
+  }
+
   const assignedAgentId = readNullableString(row.assigned_agent_id);
   if (assignedAgentId) {
     return { ownerType: "agent", ownerId: assignedAgentId, ownerName: readNullableString(row.reserved_owner_agent_name) };
@@ -902,21 +934,6 @@ function resolveSupervisorReservedResponsible(row: Record<string, unknown>) {
   const assignedAiAgentId = readNullableString(row.assigned_ai_agent_id);
   if (assignedAiAgentId) {
     return { ownerType: "ai", ownerId: assignedAiAgentId, ownerName: readNullableString(row.reserved_owner_ai_name) };
-  }
-
-  const conversationAssignedAgentId = readNullableString(row.conversation_assigned_agent_id);
-  if (conversationAssignedAgentId) {
-    return { ownerType: "agent", ownerId: conversationAssignedAgentId, ownerName: readNullableString(row.reserved_owner_agent_name) };
-  }
-
-  const currentHandlerType = readNullableString(row.current_handler_type);
-  const currentHandlerId = readNullableString(row.current_handler_id);
-  if (currentHandlerType === "ai" && currentHandlerId) {
-    return {
-      ownerType: "ai",
-      ownerId: currentHandlerId,
-      ownerName: readNullableString(row.current_handler_ai_name) ?? readNullableString(row.current_owner_ai_name)
-    };
   }
 
   return { ownerType: null, ownerId: null, ownerName: null };

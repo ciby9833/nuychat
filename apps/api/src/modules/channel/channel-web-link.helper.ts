@@ -1,3 +1,5 @@
+import { readRequiredBaseUrlEnv } from "../../infra/env.js";
+
 export function buildWebChannelLinkInfo(input: {
   channelId: string;
   publicChannelKey: string | null;
@@ -34,11 +36,9 @@ export function buildWebhookChannelLinkInfo(input: {
 }
 
 function resolveWebchatApiBase(): string {
-  const value = process.env.API_PUBLIC_BASE?.trim();
-  return value || "http://localhost:3000";
+  return readRequiredBaseUrlEnv("API_PUBLIC_BASE");
 }
 
 function resolveWebchatAppBase(): string {
-  const value = process.env.WEBCHAT_APP_BASE?.trim() || process.env.CUSTOMER_WEB_BASE?.trim();
-  return value || "http://localhost:5176";
+  return readRequiredBaseUrlEnv("WEBCHAT_APP_BASE");
 }

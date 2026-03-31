@@ -1,27 +1,30 @@
 import { buildApp } from "./app.js";
 import { assertExpectedDevelopmentDatabase } from "./infra/db/config.js";
-// Register all built-in skills before workers start
-import "./modules/skills/index.js";
+import { readRequiredEnv, readRequiredIntEnv } from "./infra/env.js";
 import { createRealtimeGateway } from "./modules/realtime/realtime.gateway.js";
 import { createInboundWorker } from "./workers/inbound.worker.js";
 import { createOutboundWorker } from "./workers/outbound.worker.js";
 import { createRoutingWorker } from "./workers/routing.worker.js";
-import { createTaskEngineWorker } from "./workers/task-engine.worker.js";
+import {
+  createTaskBackgroundWorker,
+  createTaskScriptWorker
+} from "./workers/task-engine.worker.js";
 import { createCustomerProfileRefreshWorker } from "./workers/customer-profile-refresh.worker.js";
 import { createConversationTimeoutWorker } from "./workers/conversation-timeout.worker.js";
 import { initClickhouseTables } from "./infra/clickhouse/client.js";
 import { customerProfileRefreshQueue } from "./infra/queue/queues.js";
 import { recoverOverdueAssignmentAcceptTimeouts } from "./modules/sla/conversation-sla.service.js";
 
-const port = Number(process.env.PORT ?? 3000);
-const host = process.env.HOST ?? "0.0.0.0";
+const port = readRequiredIntEnv("PORT");
+const host = readRequiredEnv("HOST");
 const dbSummary = assertExpectedDevelopmentDatabase();
 
 const app = await buildApp();
 const inboundWorker = createInboundWorker();
 const outboundWorker = createOutboundWorker();
 const routingWorker = createRoutingWorker();
-const taskEngineWorker = createTaskEngineWorker();
+const taskBackgroundWorker = createTaskBackgroundWorker();
+const taskScriptWorker = createTaskScriptWorker();
 const customerProfileRefreshWorker = createCustomerProfileRefreshWorker();
 const conversationTimeoutWorker = createConversationTimeoutWorker();
 createRealtimeGateway(app);
@@ -54,7 +57,8 @@ try {
   await inboundWorker.close();
   await outboundWorker.close();
   await routingWorker.close();
-  await taskEngineWorker.close();
+  await taskBackgroundWorker.close();
+  await taskScriptWorker.close();
   await customerProfileRefreshWorker.close();
   await conversationTimeoutWorker.close();
   process.exit(1);
@@ -64,7 +68,8 @@ const shutdown = async () => {
   await inboundWorker.close();
   await outboundWorker.close();
   await routingWorker.close();
-  await taskEngineWorker.close();
+  await taskBackgroundWorker.close();
+  await taskScriptWorker.close();
   await customerProfileRefreshWorker.close();
   await conversationTimeoutWorker.close();
   await app.close();

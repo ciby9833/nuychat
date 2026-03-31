@@ -63,6 +63,7 @@ export class RoutingDecisionService {
       ? await aiDispatchService.selectForTarget(db, {
           tenantId: context.tenantId,
           customerId: context.customerId,
+          conversationId: context.conversationId,
           aiTarget: normalized.aiTarget
         })
       : {
@@ -146,7 +147,7 @@ export class RoutingDecisionService {
           matchedConditions: matchedRule?.conditions ?? {},
           reason: aiSelection.selectionReason,
           selectionMode: matchedRule ? "rule" : "fallback",
-          strategy: aiSelection.strategy,
+          strategy: aiSelection.strategy as ("round_robin" | "least_busy" | "sticky" | null),
           candidates: aiSelection.candidates
         }
       }
@@ -171,6 +172,7 @@ export class RoutingDecisionService {
       aiDispatchService.selectForTarget(db, {
         tenantId: context.tenantId,
         customerId: context.customerId,
+        conversationId: context.conversationId,
         aiTarget: normalized.aiTarget
       }),
       buildFallbackDecision(db, context, normalized, matchedRule)
@@ -249,8 +251,114 @@ export class RoutingDecisionService {
           matchedConditions: matchedRule?.conditions ?? {},
           reason: aiSelection.selectionReason,
           selectionMode: matchedRule ? "rule" : "fallback",
-          strategy: aiSelection.strategy,
+          strategy: aiSelection.strategy as ("round_robin" | "least_busy" | "sticky" | null),
           candidates: aiSelection.candidates
+        }
+      }
+    };
+  }
+
+  async createAiHandoffHumanPlan(
+    db: Knex | Knex.Transaction,
+    context: RoutingContext
+  ): Promise<RoutingPlan> {
+    const matchedRule = await findMatchedRule(db, context);
+    const normalized = normalizeRoutingRuleActions(matchedRule?.actions ?? {});
+
+    let humanDecision = await humanDispatchService.decideForTarget(db, {
+      tenantId: context.tenantId,
+      target: normalized.humanTarget,
+      priority: matchedRule?.priority ?? 100,
+      reason: "ai_handoff_human_dispatch",
+      auditSource: buildAuditSource(matchedRule)
+    });
+
+    if (!humanDecision.assignedAgentId) {
+      const fallbackHumanDecision = await humanDispatchService.decideForAnyAvailableTarget(db, {
+        tenantId: context.tenantId,
+        departmentId: normalized.humanTarget.departmentId,
+        teamId: normalized.humanTarget.teamId,
+        strategy: normalized.humanTarget.assignmentStrategy ?? "least_busy",
+        priority: matchedRule?.priority ?? 100,
+        reason: "ai_handoff_human_dispatch_fallback_any_group",
+        auditSource: buildAuditSource(matchedRule),
+        excludeSkillGroupCodes: normalized.humanTarget.skillGroupCode ? [normalized.humanTarget.skillGroupCode] : []
+      });
+      if (fallbackHumanDecision) {
+        humanDecision = fallbackHumanDecision;
+      }
+    }
+
+    const fallbackDecision = await buildFallbackDecision(db, context, normalized, matchedRule);
+
+    const action: RoutingPlanAction = humanDecision.assignedAgentId ? "assign_specific_owner" : "enqueue_for_human";
+    const decisionReason = humanDecision.assignedAgentId
+      ? "ai_handoff:human_assigned"
+      : "ai_handoff:human_queue";
+
+    return {
+      tenantId: context.tenantId,
+      conversationId: context.conversationId,
+      customerId: context.customerId,
+      caseId: context.caseId,
+      segmentId: context.segmentId,
+      triggerType: "ai_handoff",
+      mode: "human_first",
+      action,
+      currentOwner: {
+        ownerType: context.currentHandlerType === "ai" ? "ai" : context.currentHandlerType === "human" ? "agent" : "system",
+        ownerId: context.currentHandlerId ?? null
+      },
+      target: {
+        moduleId: humanDecision.moduleId,
+        skillGroupId: humanDecision.skillGroupId,
+        departmentId: humanDecision.departmentId,
+        teamId: humanDecision.teamId,
+        agentId: humanDecision.assignedAgentId,
+        aiAgentId: null,
+        aiAgentName: null,
+        strategy: humanDecision.strategy,
+        priority: humanDecision.priority
+      },
+      fallback: fallbackDecision,
+      statusPlan: {
+        conversationStatus: "queued",
+        queueStatus: humanDecision.assignedAgentId ? "assigned" : "pending",
+        handoffRequired: true,
+        selectedOwnerType: "human"
+      },
+      trace: {
+        issueSummary: context.issueSummary,
+        decision: {
+          routingRuleId: matchedRule?.rule_id ?? null,
+          routingRuleName: matchedRule?.name ?? null,
+          planAction: action,
+          matchedConditions: matchedRule?.conditions ?? {},
+          selectedOwnerType: "human",
+          reason: decisionReason,
+          overrideReason: "ai_handoff_forced_human",
+          capacity: {
+            humanLoadPct: null,
+            humanAvailableAgents: humanDecision.assignedAgentId ? 1 : 0,
+            aiLoadPct: null,
+            aiAvailableAgents: 0
+          }
+        },
+        humanDispatch: {
+          routingRuleId: matchedRule?.rule_id ?? null,
+          routingRuleName: matchedRule?.name ?? null,
+          matchedConditions: matchedRule?.conditions ?? {},
+          reason: humanDecision.reason,
+          candidates: humanDecision.audit.candidates
+        },
+        aiSelection: {
+          routingRuleId: matchedRule?.rule_id ?? null,
+          routingRuleName: matchedRule?.name ?? null,
+          matchedConditions: matchedRule?.conditions ?? {},
+          reason: "ai_handoff_forced_human",
+          selectionMode: "none",
+          strategy: null,
+          candidates: []
         }
       }
     };

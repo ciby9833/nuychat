@@ -27,7 +27,7 @@ class OpenAIProvider {
             throw new Error("OpenAI provider requires apiKey");
         }
         this.apiKey = config.apiKey;
-        this.baseUrl = stripTrailingSlash(config.baseUrl ?? "https://api.openai.com");
+        this.baseUrl = normalizeVersionedBaseUrl(config.baseUrl ?? "https://api.openai.com", "/v1");
         this.defaultModel = config.defaultModel ?? "gpt-4o-mini";
     }
     async complete(request) {
@@ -82,7 +82,7 @@ class AnthropicProvider {
             throw new Error("Anthropic provider requires apiKey");
         }
         this.apiKey = config.apiKey;
-        this.baseUrl = stripTrailingSlash(config.baseUrl ?? "https://api.anthropic.com");
+        this.baseUrl = normalizeVersionedBaseUrl(config.baseUrl ?? "https://api.anthropic.com", "/v1");
         this.defaultModel = config.defaultModel ?? "claude-3-5-haiku-latest";
     }
     async complete(request) {
@@ -272,6 +272,12 @@ class GeminiProvider {
 function stripTrailingSlash(url) {
     return url.endsWith("/") ? url.slice(0, -1) : url;
 }
+function normalizeVersionedBaseUrl(url, versionSuffix) {
+    const normalized = stripTrailingSlash(url);
+    return normalized.endsWith(versionSuffix)
+        ? normalized.slice(0, normalized.length - versionSuffix.length)
+        : normalized;
+}
 function randomId() {
     return Math.random().toString(36).slice(2, 10);
 }
@@ -292,7 +298,7 @@ function toOpenAIMessage(message) {
     }
     return {
         role: message.role,
-        content: message.content
+        content: toOpenAIContent(message.content)
     };
 }
 function toAnthropicMessage(message) {
@@ -311,7 +317,7 @@ function toAnthropicMessage(message) {
     if (message.role === "assistant" && "toolCalls" in message) {
         const blocks = [];
         if (message.content) {
-            blocks.push({ type: "text", text: message.content });
+            blocks.push(...toAnthropicBlocks(message.content));
         }
         for (const call of message.toolCalls) {
             blocks.push({
@@ -325,7 +331,7 @@ function toAnthropicMessage(message) {
     }
     return {
         role: message.role,
-        content: message.content
+        content: toAnthropicBlocks(message.content)
     };
 }
 function toGeminiContent(message) {
@@ -333,16 +339,19 @@ function toGeminiContent(message) {
         const toolText = message.toolCalls
             .map((call) => `Tool Call: ${call.function.name}\nArgs: ${call.function.arguments}`)
             .join("\n\n");
-        const text = [message.content ?? "", toolText].filter(Boolean).join("\n\n").trim();
-        return text ? { role: "model", parts: [{ text }] } : null;
+        const parts = normalizeContentParts(message.content);
+        if (toolText) {
+            parts.push({ type: "text", text: toolText });
+        }
+        return parts.length > 0 ? { role: "model", parts: toGeminiParts(parts) } : null;
     }
     if (message.role === "tool") {
         return { role: "user", parts: [{ text: `Tool Result (${message.toolCallId}): ${message.content}` }] };
     }
     if (message.role === "assistant") {
-        return { role: "model", parts: [{ text: message.content }] };
+        return { role: "model", parts: toGeminiParts(normalizeContentParts(message.content)) };
     }
-    return { role: "user", parts: [{ text: message.content }] };
+    return { role: "user", parts: toGeminiParts(normalizeContentParts(message.content)) };
 }
 function safeParseJson(raw) {
     try {
@@ -351,4 +360,49 @@ function safeParseJson(raw) {
     catch {
         return {};
     }
+}
+function normalizeContentParts(content) {
+    if (Array.isArray(content))
+        return [...content];
+    if (typeof content === "string" && content.trim()) {
+        return [{ type: "text", text: content }];
+    }
+    return [];
+}
+function toOpenAIContent(content) {
+    const parts = normalizeContentParts(content);
+    if (parts.length === 0)
+        return typeof content === "string" ? content : null;
+    if (parts.length === 1 && parts[0]?.type === "text")
+        return parts[0].text;
+    return parts.map((part) => (part.type === "text"
+        ? { type: "text", text: part.text }
+        : {
+            type: "image_url",
+            image_url: {
+                url: part.imageUrl
+            }
+        }));
+}
+function toAnthropicBlocks(content) {
+    return normalizeContentParts(content).map((part) => (part.type === "text"
+        ? { type: "text", text: part.text }
+        : {
+            type: "image",
+            source: {
+                type: "url",
+                url: part.imageUrl,
+                media_type: part.mimeType ?? "image/jpeg"
+            }
+        }));
+}
+function toGeminiParts(content) {
+    return content.map((part) => (part.type === "text"
+        ? { text: part.text }
+        : {
+            file_data: {
+                mime_type: part.mimeType ?? "image/jpeg",
+                file_uri: part.imageUrl
+            }
+        }));
 }

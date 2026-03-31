@@ -14,7 +14,8 @@ export type AnalyticsEventType =
   | "message_received"
   | "message_sent"
   | "skill_executed"
-  | "conversation_resolved";
+  | "conversation_resolved"
+  | "conversation_reopened";
 
 export interface AnalyticsEvent {
   eventType: AnalyticsEventType;

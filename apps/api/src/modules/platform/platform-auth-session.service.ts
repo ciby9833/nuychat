@@ -132,7 +132,7 @@ export async function listPlatformSessions(filter?: {
     )
     .orderBy("created_at", "desc");
 
-  return rows.map((r) => ({
+  return rows.map((r: any) => ({
     sessionId: r.session_id,
     identityId: r.identity_id,
     status: r.status,

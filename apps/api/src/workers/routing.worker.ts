@@ -25,13 +25,27 @@ import { OrchestratorService } from "../modules/orchestrator/orchestrator.servic
 import { realtimeEventBus } from "../modules/realtime/realtime.events.js";
 import { RoutingPlanRepository } from "../modules/routing-engine/routing-plan.repository.js";
 import { RoutingPlanStepService } from "../modules/routing-engine/routing-plan-step.service.js";
+import { RoutingContextService } from "../modules/routing-engine/routing-context.service.js";
+import { UnifiedRoutingEngineService } from "../modules/routing-engine/unified-routing-engine.service.js";
 import { scheduleAssignmentAcceptTimeout } from "../modules/sla/conversation-sla.service.js";
+import {
+  inferStructuredMessageFromText,
+  isInternalControlPayload,
+  structuredToPlainText
+} from "../shared/messaging/structured-message.js";
 
 const orchestrator = new OrchestratorService();
 const ownershipService = new OwnershipService();
 const dispatchAuditService = new DispatchAuditService();
 const routingPlanRepository = new RoutingPlanRepository();
 const routingPlanStepService = new RoutingPlanStepService();
+const routingContextService = new RoutingContextService();
+const unifiedRoutingEngineService = new UnifiedRoutingEngineService();
+
+function fitAiTraceReason(value: string | null | undefined) {
+  if (!value) return null;
+  return value.length > 100 ? value.slice(0, 100) : value;
+}
 
 export function createRoutingWorker() {
   const workerConnection = duplicateRedisConnection();
@@ -149,7 +163,7 @@ export function createRoutingWorker() {
               skillGroupId: plan.fallback?.skillGroupId ?? plan.target.skillGroupId,
               departmentId: plan.fallback?.departmentId ?? plan.target.departmentId,
               teamId: plan.fallback?.teamId ?? plan.target.teamId,
-              strategy: plan.fallback?.strategy ?? plan.target.strategy,
+              strategy: (plan.fallback?.strategy ?? plan.target.strategy) as ("round_robin" | "least_busy" | "sticky"),
               priority: plan.fallback?.priority ?? plan.target.priority
             }
           })
@@ -160,6 +174,7 @@ export function createRoutingWorker() {
           planId,
           conversationId,
           customerId,
+          channelType,
           conversation,
           executionId: selectedExecutionId,
           handoffTarget,
@@ -234,12 +249,25 @@ export function createRoutingWorker() {
         skills_called: JSON.stringify(result.skillsInvoked),
         token_usage: JSON.stringify({ prompt: 0, completion: 0, total: result.tokensUsed }),
         total_duration_ms: orchestratorDurationMs,
-        handoff_reason: result.handoffReason ?? null,
+        handoff_reason: fitAiTraceReason(result.handoffReason),
         error: orchestratorError
       });
 
       // ── 5. Act on result ─────────────────────────────────────────────────────
       if (result.action === "reply" && result.response) {
+        const structured = inferStructuredMessageFromText(result.response);
+        const outboundText = isInternalControlPayload(result.response)
+          ? ""
+          : structuredToPlainText(structured, result.response);
+        if (!outboundText) {
+          return {
+            conversationId,
+            intent: result.intent,
+            sentiment: result.sentiment,
+            responded: false,
+            handoff: false
+          };
+        }
         // AI produced a reply → send it
         await outboundQueue.add(
           "outbound.ai_reply",
@@ -248,7 +276,11 @@ export function createRoutingWorker() {
             conversationId,
             channelId: conversation.channel_id,
             channelType,
-            message: { text: result.response, aiAgentName: plan.target.aiAgentName ?? undefined }
+            message: {
+              text: outboundText,
+              structured,
+              aiAgentName: plan.target.aiAgentName ?? undefined
+            }
           },
           { removeOnComplete: 100, removeOnFail: 50 }
         );
@@ -265,7 +297,7 @@ export function createRoutingWorker() {
             conversationId,
             customerId: conversation.customer_id as string,
             caseId: conversation.current_case_id as string,
-            aiAgentId: plan.target.aiAgentId,
+            aiAgentId: plan.target.aiAgentId!,
             reason: "ai-replied",
             caseStatus: "waiting_customer",
             conversationStatus: "bot_active"
@@ -328,7 +360,7 @@ export function createRoutingWorker() {
               skillGroupId: plan.fallback?.skillGroupId ?? plan.target.skillGroupId,
               departmentId: plan.fallback?.departmentId ?? plan.target.departmentId,
               teamId: plan.fallback?.teamId ?? plan.target.teamId,
-              strategy: plan.fallback?.strategy ?? plan.target.strategy,
+              strategy: (plan.fallback?.strategy ?? plan.target.strategy) as ("round_robin" | "least_busy" | "sticky"),
               priority: plan.fallback?.priority ?? plan.target.priority
             }
           })
@@ -339,6 +371,7 @@ export function createRoutingWorker() {
           planId,
           conversationId,
           customerId,
+          channelType,
           conversation,
           executionId: selectedExecutionId,
           handoffTarget,
@@ -383,7 +416,7 @@ export function createRoutingWorker() {
       };
     },
     {
-      connection: workerConnection,
+      connection: workerConnection as any,
       concurrency: 3
     }
   );
@@ -419,6 +452,7 @@ type RoutingConversationRow = {
   current_case_id: string | null;
   current_handler_type: string | null;
   current_handler_id: string | null;
+  channel_id?: string;
 };
 
 async function releaseConversationToHumanQueue(input: {
@@ -426,6 +460,7 @@ async function releaseConversationToHumanQueue(input: {
   planId: string;
   conversationId: string;
   customerId: string;
+  channelType: string;
   conversation: RoutingConversationRow;
   executionId: string;
   handoffTarget: ReservedHumanTarget;
@@ -437,22 +472,75 @@ async function releaseConversationToHumanQueue(input: {
   stepStatus: "failed" | "completed";
   stepPayload: Record<string, unknown>;
 }) {
+  const resolvedHandoffTarget = input.handoffTarget.assignedAgentId
+    ? input.handoffTarget
+    : await withTenantTransaction(input.tenantId, async (trx) => {
+        const routingContext = await routingContextService.build(trx, {
+          tenantId: input.tenantId,
+          conversationId: input.conversationId,
+          customerId: input.customerId,
+          channelType: input.channelType,
+          channelId: input.conversation.channel_id as string
+        });
+        const handoffPlan = await unifiedRoutingEngineService.createAiHandoffHumanPlan(trx, routingContext);
+        const handoffPlanId = await routingPlanRepository.create(trx, handoffPlan);
+        await routingPlanStepService.record(trx, {
+          tenantId: input.tenantId,
+          planId: handoffPlanId,
+          stepType: "ai_handoff_human_plan_created",
+          status: "completed",
+          payload: {
+            action: handoffPlan.action,
+            queueStatus: handoffPlan.statusPlan.queueStatus,
+            assignedAgentId: handoffPlan.target.agentId
+          }
+        });
+        return {
+          moduleId: handoffPlan.target.moduleId,
+          skillGroupId: handoffPlan.target.skillGroupId,
+          departmentId: handoffPlan.target.departmentId,
+          teamId: handoffPlan.target.teamId,
+          assignedAgentId: handoffPlan.target.agentId,
+          strategy: handoffPlan.target.strategy,
+          priority: handoffPlan.target.priority,
+          status: handoffPlan.statusPlan.queueStatus,
+          reason: handoffPlan.trace.decision.reason
+        };
+      });
+
+  const activateAssignedHuman =
+    Boolean(resolvedHandoffTarget.assignedAgentId) && Boolean(input.conversation.current_case_id);
+
   await withTenantTransaction(input.tenantId, async (trx) => {
     const fromSegmentId = await trx("conversations")
       .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
       .select("current_segment_id")
       .first<{ current_segment_id: string | null } | undefined>();
 
-    await ownershipService.applyTransition(trx, {
-      type: "release_to_queue",
-      tenantId: input.tenantId,
-      conversationId: input.conversationId,
-      customerId: input.conversation.customer_id as string,
-      caseId: input.conversation.current_case_id as string | null,
-      reason: input.reason,
-      assignedAgentId: input.handoffTarget.assignedAgentId,
-      conversationStatus: "queued"
-    });
+    if (activateAssignedHuman) {
+      await ownershipService.applyTransition(trx, {
+        type: "activate_human_owner",
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        customerId: input.conversation.customer_id as string,
+        caseId: input.conversation.current_case_id as string,
+        agentId: resolvedHandoffTarget.assignedAgentId as string,
+        reason: input.reason,
+        caseStatus: "in_progress",
+        conversationStatus: "human_active"
+      });
+    } else {
+      await ownershipService.applyTransition(trx, {
+        type: "release_to_queue",
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        customerId: input.conversation.customer_id as string,
+        caseId: input.conversation.current_case_id as string | null,
+        reason: input.reason,
+        assignedAgentId: resolvedHandoffTarget.assignedAgentId,
+        conversationStatus: "queued"
+      });
+    }
 
     const updatedConversation = await trx("conversations")
       .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
@@ -470,8 +558,8 @@ async function releaseConversationToHumanQueue(input: {
       fromOwnerType: input.conversation.current_handler_type ?? null,
       fromOwnerId: input.conversation.current_handler_id ?? null,
       fromSegmentId: fromSegmentId?.current_segment_id ?? null,
-      toOwnerType: "system",
-      toOwnerId: null,
+      toOwnerType: activateAssignedHuman ? "human" : "system",
+      toOwnerId: activateAssignedHuman ? resolvedHandoffTarget.assignedAgentId : null,
       toSegmentId: updatedConversation?.current_segment_id ?? null,
       reason: input.reason
     });
@@ -479,18 +567,19 @@ async function releaseConversationToHumanQueue(input: {
     await trx("queue_assignments")
       .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
       .update({
-        module_id: input.handoffTarget.moduleId,
-        skill_group_id: input.handoffTarget.skillGroupId,
-        department_id: input.handoffTarget.departmentId,
-        team_id: input.handoffTarget.teamId,
-        assigned_agent_id: input.handoffTarget.assignedAgentId,
-        assigned_ai_agent_id: input.assignedAiAgentId,
-        assignment_strategy: input.handoffTarget.strategy,
-        priority: input.handoffTarget.priority,
-        status: input.handoffTarget.status,
-        assignment_reason: input.handoffTarget.reason,
-        handoff_required: true,
-        handoff_reason: input.reason,
+        module_id: resolvedHandoffTarget.moduleId,
+        skill_group_id: resolvedHandoffTarget.skillGroupId,
+        department_id: resolvedHandoffTarget.departmentId,
+        team_id: resolvedHandoffTarget.teamId,
+        assigned_agent_id: resolvedHandoffTarget.assignedAgentId,
+        // Once AI gives up control, the queue record must be purely human-facing.
+        assigned_ai_agent_id: null,
+        assignment_strategy: resolvedHandoffTarget.strategy,
+        priority: resolvedHandoffTarget.priority,
+        status: resolvedHandoffTarget.status,
+        assignment_reason: resolvedHandoffTarget.reason,
+        handoff_required: activateAssignedHuman ? false : true,
+        handoff_reason: activateAssignedHuman ? null : input.reason,
         updated_at: trx.fn.now()
       });
 
@@ -503,7 +592,7 @@ async function releaseConversationToHumanQueue(input: {
     });
   });
 
-  if (["assigned", "pending"].includes(input.handoffTarget.status)) {
+  if (!activateAssignedHuman && ["assigned", "pending"].includes(resolvedHandoffTarget.status)) {
     await scheduleAssignmentAcceptTimeout(input.tenantId, input.conversationId, input.customerId);
   }
 

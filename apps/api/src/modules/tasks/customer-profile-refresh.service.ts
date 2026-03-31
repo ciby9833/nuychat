@@ -110,13 +110,13 @@ export async function claimMemoryRefreshWork(input: {
   const memoryUnits = Array.isArray(memoryResult.rows) ? memoryResult.rows : [];
 
   return {
-    profiles: profiles.map((row) => ({
+    profiles: profiles.map((row: any) => ({
       profileId: String(row.profile_id),
       tenantId: String(row.tenant_id),
       customerId: String(row.customer_id),
       sourceVersion: Number(row.source_version ?? 0)
     })),
-    memoryUnits: memoryUnits.map((row) => ({
+    memoryUnits: memoryUnits.map((row: any) => ({
       memoryUnitId: String(row.memory_unit_id),
       tenantId: String(row.tenant_id),
       customerId: String(row.customer_id)

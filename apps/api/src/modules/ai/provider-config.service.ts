@@ -1,9 +1,11 @@
+import { readOptionalEnv } from "../../infra/env.js";
 import type { Knex } from "knex";
 import {
   createProvider,
   type AIProvider,
   type ProviderName
-} from "../../../../../packages/ai-sdk/src/index.ts";
+} from "../../../../../packages/ai-sdk/src/index.js";
+import { getTenantAIRuntimePolicy, type AIModelScene } from "./runtime-policy.service.js";
 
 type AIConfigRow = {
   config_id: string;
@@ -23,6 +25,7 @@ type TenantAIRow = {
 type JsonObject = Record<string, unknown>;
 
 export interface TenantAISettings {
+  configId?: string | null;
   providerName: ProviderName;
   model: string;
   temperature: number;
@@ -38,13 +41,13 @@ export async function resolveTenantAISettings(
   tenantId: string
 ): Promise<TenantAISettings | null> {
   const tenant = await db<TenantAIRow>("tenants")
-    .where({ tenant_id: tenantId })
+    .where({ tenant_id: tenantId } as any)
     .select("ai_model_access_mode")
     .first();
 
   const cfg = await db<AIConfigRow>("ai_configs")
-    .where({ tenant_id: tenantId })
-    .andWhere({ is_active: true })
+    .where({ tenant_id: tenantId } as any)
+    .andWhere({ is_active: true } as any)
     .select("config_id", "provider", "model", "encrypted_api_key", "quotas", "is_default", "is_active", "updated_at")
     .orderBy([{ column: "is_default", order: "desc" }, { column: "updated_at", order: "desc" }])
     .first();
@@ -54,6 +57,47 @@ export async function resolveTenantAISettings(
     return null;
   }
 
+  return buildTenantAISettings(cfg);
+}
+
+export async function resolveTenantAISettingsForScene(
+  db: Knex | Knex.Transaction,
+  tenantId: string,
+  scene: AIModelScene
+): Promise<TenantAISettings | null> {
+  const policy = await getTenantAIRuntimePolicy(db, tenantId);
+  const sceneConfigId = scene === "ai_seat"
+    ? policy.modelSceneConfig.aiSeatConfigId
+    : scene === "agent_assist"
+      ? policy.modelSceneConfig.agentAssistConfigId
+      : policy.modelSceneConfig.toolDefaultConfigId;
+
+  if (sceneConfigId) {
+    const sceneSettings = await resolveTenantAISettingsByConfigId(db, tenantId, sceneConfigId);
+    if (sceneSettings) {
+      return sceneSettings;
+    }
+  }
+
+  return await resolveTenantAISettings(db, tenantId);
+}
+
+export async function resolveTenantAISettingsByConfigId(
+  db: Knex | Knex.Transaction,
+  tenantId: string,
+  configId: string
+): Promise<TenantAISettings | null> {
+  const cfg = await db<AIConfigRow>("ai_configs")
+    .where({ tenant_id: tenantId, config_id: configId } as any)
+    .andWhere({ is_active: true } as any)
+    .select("config_id", "provider", "model", "encrypted_api_key", "quotas", "is_default", "is_active", "updated_at")
+    .first();
+
+  if (!cfg) return null;
+  return buildTenantAISettings(cfg);
+}
+
+function buildTenantAISettings(cfg: AIConfigRow | undefined): TenantAISettings | null {
   const providerKey = normalizeProviderKey(cfg?.provider);
   const providerName = mapProviderKeyToRuntimeProvider(providerKey);
   const quotas = parseJsonObject(cfg?.quotas);
@@ -96,6 +140,7 @@ export async function resolveTenantAISettings(
           });
 
     return {
+      configId: cfg?.config_id ?? null,
       providerName,
       model,
       temperature,
@@ -172,15 +217,15 @@ function resolveApiKey(
 
 function resolveBaseUrl(provider: ProviderName, providerBlock: JsonObject): string | undefined {
   if (provider === "openai") {
-    return pickString(providerBlock.baseUrl) ?? process.env.OPENAI_BASE_URL;
+    return pickString(providerBlock.baseUrl) ?? readOptionalEnv("OPENAI_BASE_URL");
   }
   if (provider === "anthropic") {
-    return pickString(providerBlock.baseUrl) ?? process.env.ANTHROPIC_BASE_URL;
+    return pickString(providerBlock.baseUrl) ?? readOptionalEnv("ANTHROPIC_BASE_URL");
   }
   if (provider === "gemini") {
-    return pickString(providerBlock.baseUrl) ?? process.env.GEMINI_BASE_URL;
+    return pickString(providerBlock.baseUrl) ?? readOptionalEnv("GEMINI_BASE_URL");
   }
-  return pickString(providerBlock.baseUrl) ?? process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
+  return pickString(providerBlock.baseUrl) ?? readOptionalEnv("OLLAMA_BASE_URL");
 }
 
 function parseEncryptedKeyBag(raw: unknown): JsonObject {

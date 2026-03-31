@@ -4,7 +4,9 @@
 
 import { Alert, Space, Tag } from "antd";
 import { useEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
+import { StructuredMessageContent } from "../../../components/StructuredMessageContent";
 import type { AIConversationDetail, AIConversationListItem } from "../../../types";
 import { formatDateLabel, formatTime, isSameDay } from "../helpers";
 import { S } from "../styles";
@@ -18,6 +20,7 @@ export function ChatTimeline({
   currentItem: AIConversationListItem | null;
   detailLoading: boolean;
 }) {
+  const { t } = useTranslation();
   const bottomRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [detail?.messages]);
   const messages = detail?.messages ?? [];
@@ -43,7 +46,7 @@ export function ChatTimeline({
       <div style={S.midCol}>
         <div style={S.chatEmpty}>
           <span style={{ fontSize: 40 }}>💬</span>
-          <span>选择左侧会话查看对话详情</span>
+          <span>{t("aiConversations.timeline.emptyTitle")}</span>
         </div>
       </div>
     );
@@ -58,33 +61,33 @@ export function ChatTimeline({
           {(conv?.customerName ?? conv?.customerRef ?? "?").slice(0, 1).toUpperCase()}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>{conv?.customerName ?? conv?.customerRef ?? "匿名客户"}</div>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{conv?.customerName ?? conv?.customerRef ?? t("aiConversations.timeline.anonymousCustomer")}</div>
           <div style={{ fontSize: 11, color: "#8c8c8c" }}>
-            {conv?.channelType.toUpperCase()} · {conv?.customerLanguage ?? "未知"} · {conv?.currentHandlerType === "human" ? "人工处理中" : "AI 处理中"}
+            {conv?.channelType.toUpperCase()} · {conv?.customerLanguage ?? t("aiConversations.timeline.unknownLanguage")} · {conv?.currentHandlerType === "human" ? t("aiConversations.timeline.humanHandling") : t("aiConversations.timeline.aiHandling")}
           </div>
         </div>
         <Space size={4}>
-          {conv?.handoffRequired ? <Tag color="gold">待转人工</Tag> : null}
-          {conv?.riskLevel === "high" ? <Tag color="red">高风险</Tag> : conv?.riskLevel === "attention" ? <Tag color="orange">需关注</Tag> : null}
-          <Tag color={conv?.currentHandlerType === "human" ? "blue" : "green"}>{conv?.aiAgentName ?? "AI"}</Tag>
+          {conv?.handoffRequired ? <Tag color="gold">{t("aiConversations.timeline.pendingHandoff")}</Tag> : null}
+          {conv?.riskLevel === "high" ? <Tag color="red">{t("aiConversations.timeline.highRisk")}</Tag> : conv?.riskLevel === "attention" ? <Tag color="orange">{t("aiConversations.timeline.attention")}</Tag> : null}
+          <Tag color={conv?.currentHandlerType === "human" ? "blue" : "green"}>{conv?.aiAgentName ?? t("aiConversations.timeline.aiName")}</Tag>
         </Space>
       </div>
 
       {conv?.handoffReason ? (
-        <Alert type="warning" showIcon message={`转人工原因: ${conv.handoffReason}`} style={{ margin: "0 16px", marginTop: 8, borderRadius: 8 }} />
+        <Alert type="warning" showIcon message={t("aiConversations.timeline.handoffReason", { reason: conv.handoffReason })} style={{ margin: "0 16px", marginTop: 8, borderRadius: 8 }} />
       ) : null}
       {conv && conv.riskLevel !== "normal" ? (
         <Alert type={conv.riskLevel === "high" ? "error" : "warning"} showIcon
-          message={`风险: ${conv.riskReasons.join(" / ")}`}
+          message={t("aiConversations.timeline.riskReason", { reason: conv.riskReasons.join(" / ") })}
           style={{ margin: "0 16px", marginTop: 8, borderRadius: 8 }}
         />
       ) : null}
 
       <div style={S.chatScroll}>
         {detailLoading ? (
-          <div style={S.chatEmpty}><span>加载中…</span></div>
+          <div style={S.chatEmpty}><span>{t("aiConversations.timeline.loading")}</span></div>
         ) : detail.messages.length === 0 ? (
-          <div style={S.chatEmpty}><span style={{ fontSize: 32 }}>📭</span><span>暂无消息记录</span></div>
+          <div style={S.chatEmpty}><span style={{ fontSize: 32 }}>📭</span><span>{t("aiConversations.timeline.noMessages")}</span></div>
         ) : (
           <>
             {renderItems.map((msg, i) => {
@@ -105,18 +108,22 @@ export function ChatTimeline({
                   <div style={S.msgRow(isOut)}>
                     {(isAI || isAgent) ? (
                       <div style={S.msgAttr(isAI)}>
-                        {isAI ? `🤖 ${conv?.aiAgentName ?? "AI"}` : `👤 ${conv?.assignedAgentName ?? "人工"}`}
+                        {isAI ? `🤖 ${conv?.aiAgentName ?? t("aiConversations.timeline.aiName")}` : `👤 ${conv?.assignedAgentName ?? t("aiConversations.timeline.humanName")}`}
                       </div>
                     ) : null}
                     <div style={S.msgBubbleWrap(isOut)}>
                       <div style={S.msgBubble(isOut, msg.senderType)}>
                         {msg.replyToPreview ? (
                           <div style={S.replyPreview(isOut)}>
-                            <div style={S.replyLabel(isOut)}>回复</div>
+                            <div style={S.replyLabel(isOut)}>{t("aiConversations.timeline.reply")}</div>
                             <div style={S.replyText(isOut)}>{msg.replyToPreview}</div>
                           </div>
                         ) : null}
-                        {msg.preview}
+                        <StructuredMessageContent
+                          structured={msg.content?.structured}
+                          fallbackText={msg.preview}
+                          attachments={msg.content?.attachments}
+                        />
                       </div>
                       {(reactionsByTarget.get(msg.messageId)?.length ?? 0) > 0 ? (
                         <div style={S.reactionStack(isOut)}>

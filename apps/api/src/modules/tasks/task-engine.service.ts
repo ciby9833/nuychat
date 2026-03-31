@@ -1,7 +1,7 @@
 import type { Knex } from "knex";
 
 import { writeTaskArtifacts, type TaskArtifactInput } from "./task-storage.service.js";
-import { runExternalOrderLookup, runExternalShipmentTracking } from "./task-external.service.js";
+import { runCapabilityScriptExecution } from "./task-script-execution.service.js";
 import {
   runVectorBatchReindex,
   runVectorCustomerProfileReindex,
@@ -24,6 +24,18 @@ type AsyncTaskRow = {
   title: string;
   source: string;
   payload: unknown;
+};
+
+type TaskResultPostprocessPayload = {
+  taskId: string;
+  taskType: string;
+  title: string;
+  source: string;
+  customerId: string | null;
+  conversationId: string | null;
+  caseId: string | null;
+  executionPayload: Record<string, unknown>;
+  resultSummary: string;
 };
 
 function parsePayload(value: unknown): Record<string, unknown> {
@@ -59,18 +71,10 @@ function summarizeTask(row: AsyncTaskRow, payload: Record<string, unknown>) {
     ].filter(Boolean).join(" | ");
   }
 
-  if (row.task_type === "lookup_order_external") {
+  if (row.task_type === "capability_script_execution") {
     return [
-      `Order lookup completed`,
-      typeof payload.orderId === "string" ? `orderId=${payload.orderId}` : null,
-      typeof payload.status === "string" ? `status=${payload.status}` : null
-    ].filter(Boolean).join(" | ");
-  }
-
-  if (row.task_type === "track_shipment_external") {
-    return [
-      `Shipment tracking completed`,
-      typeof payload.trackingNumber === "string" ? `tracking=${payload.trackingNumber}` : null,
+      `Capability script completed`,
+      typeof payload.scriptKey === "string" ? `script=${payload.scriptKey}` : null,
       typeof payload.status === "string" ? `status=${payload.status}` : null
     ].filter(Boolean).join(" | ");
   }
@@ -151,7 +155,7 @@ function buildArtifacts(row: AsyncTaskRow, payload: Record<string, unknown>): Ta
     });
   }
 
-  if (row.task_type === "lookup_order_external" || row.task_type === "track_shipment_external") {
+  if (row.task_type === "capability_script_execution") {
     artifacts.push({
       kind: "result",
       fileName: "result.json",
@@ -209,24 +213,114 @@ export async function executeLongTask(db: Knex, taskId: string) {
   }
 
   const payload = parsePayload(row.payload);
+  if (row.task_type === "task_result_postprocess") {
+    await runTaskResultPostprocess(db, row, payload);
+    return {
+      row,
+      payload,
+      artifactDir: null,
+      resultSummary: typeof payload.resultSummary === "string" && payload.resultSummary.trim()
+        ? payload.resultSummary.trim()
+        : `${row.title} postprocess completed`,
+      resultMeta: {
+        artifactCount: 0,
+        source: row.source,
+        postprocess: true
+      }
+    };
+  }
+
   const executionPayload = await enrichExecutionPayload(db, row, payload);
-  const artifacts = buildArtifacts(row, executionPayload);
-  const stored = await writeTaskArtifacts({
+  const resultSummary = summarizeTask(row, executionPayload);
+  await scheduleTaskResultPostprocess(row, executionPayload, resultSummary);
+
+  return {
+    row,
+    payload: executionPayload,
+    artifactDir: null,
+    resultSummary,
+    resultMeta: {
+      artifactCount: 0,
+      source: row.source,
+      postprocessScheduled: true
+    }
+  };
+}
+
+async function scheduleTaskResultPostprocess(
+  row: AsyncTaskRow,
+  executionPayload: Record<string, unknown>,
+  resultSummary: string
+) {
+  await scheduleLongTask({
     tenantId: row.tenant_id,
     customerId: row.customer_id,
     conversationId: row.conversation_id,
-    taskId: row.task_id,
+    caseId: row.case_id,
+    taskType: "task_result_postprocess",
+    title: `Postprocess ${row.title}`,
+    source: "workflow",
+    priority: 90,
+    schedulerKey: `task-postprocess:${row.task_id}`,
+    payload: {
+      taskId: row.task_id,
+      taskType: row.task_type,
+      title: row.title,
+      source: row.source,
+      customerId: row.customer_id,
+      conversationId: row.conversation_id,
+      caseId: row.case_id,
+      executionPayload,
+      resultSummary
+    } satisfies TaskResultPostprocessPayload
+  });
+}
+
+async function runTaskResultPostprocess(
+  db: Knex,
+  row: AsyncTaskRow,
+  payload: Record<string, unknown>
+) {
+  const sourceTaskId = typeof payload.taskId === "string" ? payload.taskId.trim() : "";
+  const sourceTaskType = typeof payload.taskType === "string" ? payload.taskType.trim() : "";
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : row.title;
+  const source = typeof payload.source === "string" && payload.source.trim() ? payload.source.trim() : row.source;
+  const customerId = typeof payload.customerId === "string" && payload.customerId.trim() ? payload.customerId.trim() : null;
+  const conversationId = typeof payload.conversationId === "string" && payload.conversationId.trim() ? payload.conversationId.trim() : null;
+  const caseId = typeof payload.caseId === "string" && payload.caseId.trim() ? payload.caseId.trim() : null;
+  const executionPayload = payload.executionPayload && typeof payload.executionPayload === "object" && !Array.isArray(payload.executionPayload)
+    ? payload.executionPayload as Record<string, unknown>
+    : {};
+  const resultSummary = typeof payload.resultSummary === "string" ? payload.resultSummary.trim() : "";
+
+  if (!sourceTaskId || !sourceTaskType) return;
+
+  const artifacts = buildArtifacts({
+    ...row,
+    task_id: sourceTaskId,
+    task_type: sourceTaskType,
+    title,
+    source,
+    customer_id: customerId,
+    conversation_id: conversationId,
+    case_id: caseId
+  }, executionPayload);
+  const stored = await writeTaskArtifacts({
+    tenantId: row.tenant_id,
+    customerId,
+    conversationId,
+    taskId: sourceTaskId,
     artifacts
   });
 
-  await db("async_task_artifacts").where({ task_id: taskId }).del();
+  await db("async_task_artifacts").where({ task_id: sourceTaskId }).del();
   if (stored.stored.length > 0) {
     await db("async_task_artifacts").insert(
       stored.stored.map((item) => ({
         tenant_id: row.tenant_id,
-        task_id: row.task_id,
-        customer_id: row.customer_id,
-        conversation_id: row.conversation_id,
+        task_id: sourceTaskId,
+        customer_id: customerId,
+        conversation_id: conversationId,
         kind: item.kind,
         file_name: item.fileName,
         file_path: item.filePath,
@@ -239,14 +333,19 @@ export async function executeLongTask(db: Knex, taskId: string) {
     );
   }
 
-  const resultSummary = summarizeTask(row, executionPayload);
-  const resultMeta = {
-    artifactCount: stored.stored.length,
-    source: row.source
-  };
+  await db("async_tasks")
+    .where({ task_id: sourceTaskId, tenant_id: row.tenant_id })
+    .update({
+      artifact_dir: stored.dir,
+      result_meta: JSON.stringify({
+        artifactCount: stored.stored.length,
+        source
+      }),
+      updated_at: new Date()
+    });
 
   if (
-    row.customer_id &&
+    customerId &&
     resultSummary &&
     ![
       "vector_customer_profile_reindex",
@@ -254,63 +353,55 @@ export async function executeLongTask(db: Knex, taskId: string) {
       "vector_memory_unit_reindex",
       "memory_encode_conversation_event",
       "memory_encode_task_event"
-    ].includes(row.task_type)
+    ].includes(sourceTaskType)
   ) {
     await recordCustomerMemoryItem(db, {
       tenantId: row.tenant_id,
-      customerId: row.customer_id,
-      conversationId: row.conversation_id,
-      caseId: row.case_id,
-      taskId: row.task_id,
-      memoryType: row.task_type === "ai_execution_archive" ? "ai_execution" : "task_outcome",
+      customerId,
+      conversationId,
+      caseId,
+      taskId: sourceTaskId,
+      memoryType: sourceTaskType === "ai_execution_archive" ? "ai_execution" : "task_outcome",
       source: "task_engine",
-      title: row.title,
+      title,
       summary: resultSummary,
       content: {
-        taskType: row.task_type,
-        source: row.source,
+        taskType: sourceTaskType,
+        source,
         payload: executionPayload
       },
-      confidence: row.task_type === "ai_execution_archive" ? 0.7 : 0.82,
-      salience: row.task_type === "ai_execution_archive" ? 45 : 70
+      confidence: sourceTaskType === "ai_execution_archive" ? 0.7 : 0.82,
+      salience: sourceTaskType === "ai_execution_archive" ? 45 : 70
     });
 
-    if (row.task_type === "lookup_order_external" || row.task_type === "track_shipment_external") {
+    if (sourceTaskType === "capability_script_execution") {
       await upsertCustomerStateSnapshot(db, {
         tenantId: row.tenant_id,
-        customerId: row.customer_id,
-        stateType: row.task_type === "lookup_order_external" ? "order_status" : "shipment_status",
+        customerId,
+        stateType: "capability_result",
         statePayload: executionPayload
       });
     }
 
-    if (row.task_type !== "ai_execution_archive") {
+    if (sourceTaskType !== "ai_execution_archive") {
       await scheduleLongTask({
         tenantId: row.tenant_id,
-        customerId: row.customer_id,
-        conversationId: row.conversation_id,
-        caseId: row.case_id,
+        customerId,
+        conversationId,
+        caseId,
         taskType: "memory_encode_task_event",
-        title: `Memory encode ${row.title}`,
+        title: `Memory encode ${title}`,
         source: "workflow",
         priority: 76,
-        schedulerKey: `memory-task:${row.task_id}`,
+        schedulerKey: `memory-task:${sourceTaskId}`,
         payload: {
-          taskType: row.task_type,
+          taskType: sourceTaskType,
           resultSummary,
           payload: executionPayload
         }
       });
     }
   }
-
-  return {
-    row,
-    payload: executionPayload,
-    artifactDir: stored.dir,
-    resultSummary,
-    resultMeta
-  };
 }
 
 async function enrichExecutionPayload(
@@ -318,24 +409,41 @@ async function enrichExecutionPayload(
   row: AsyncTaskRow,
   payload: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  if (row.task_type === "lookup_order_external") {
-    const orderId = typeof payload.orderId === "string" ? payload.orderId.trim() : "";
-    if (!orderId) throw new Error("lookup_order_external missing orderId");
-    const result = await runExternalOrderLookup(db, {
+  if (row.task_type === "capability_script_execution") {
+    const capability = payload.capability && typeof payload.capability === "object" && !Array.isArray(payload.capability)
+      ? payload.capability as {
+          capabilityId: string;
+          slug: string;
+          name: string;
+          description?: string | null;
+        }
+      : null;
+    const script = payload.script && typeof payload.script === "object" && !Array.isArray(payload.script)
+      ? payload.script as {
+          scriptKey: string;
+          name: string;
+          fileName: string;
+          language: string;
+          sourceCode: string;
+          requirements?: string[];
+          envRefs?: string[];
+          envBindings?: Array<{
+            envKey: string;
+            envValue: string;
+          }>;
+        }
+      : null;
+    if (!capability?.capabilityId) throw new Error("capability_script_execution missing capability");
+    if (!script?.scriptKey) throw new Error("capability_script_execution missing script");
+    const result = await runCapabilityScriptExecution({
       tenantId: row.tenant_id,
-      orderId
-    });
-    return { ...payload, ...result };
-  }
-
-  if (row.task_type === "track_shipment_external") {
-    const trackingNumber = typeof payload.trackingNumber === "string" ? payload.trackingNumber.trim() : "";
-    if (!trackingNumber) throw new Error("track_shipment_external missing trackingNumber");
-    const carrier = typeof payload.carrier === "string" && payload.carrier.trim() ? payload.carrier.trim() : "JNE";
-    const result = await runExternalShipmentTracking(db, {
-      tenantId: row.tenant_id,
-      trackingNumber,
-      carrier
+      customerId: row.customer_id,
+      conversationId: row.conversation_id,
+      capability,
+      script,
+      args: payload.args && typeof payload.args === "object" && !Array.isArray(payload.args)
+        ? payload.args as Record<string, unknown>
+        : {}
     });
     return { ...payload, ...result };
   }

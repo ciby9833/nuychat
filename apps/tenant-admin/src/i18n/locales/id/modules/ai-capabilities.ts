@@ -1,0 +1,110 @@
+export default {
+  aiCapabilities: {
+    page: {
+      title: "Katalog Kemampuan AI",
+      create: "Buat Kemampuan",
+      intro: "Satu paket kemampuan menjawab lima hal: apa itu, bagaimana model memahaminya, cara klarifikasi saat ada field yang kurang, materi referensi apa yang tersedia, dan bagaimana script benar-benar dijalankan.",
+      intro2: "Pilih satu baris untuk melihat detail. Gunakan tombol aksi di baris untuk mengedit atau menghapus.",
+      detailTitle: "Detail Kemampuan",
+      deleteTitle: "Hapus kemampuan \"{{name}}\"?",
+      deleteContent: "Menghapus kemampuan ini juga akan menghapus binding terkait. Konfirmasi sekali lagi.",
+      deleteOk: "Konfirmasi Hapus",
+      deleted: "Kemampuan dihapus",
+      created: "Kemampuan berhasil dibuat",
+      updated: "Kemampuan berhasil diperbarui"
+    },
+    detail: {
+      empty: "Pilih kemampuan untuk melihat detail",
+      name: "Nama",
+      code: "Kode",
+      category: "Kategori",
+      status: "Status",
+      description: "Deskripsi",
+      unmaintained: "Belum dipelihara",
+      scriptsEmpty: "Belum ada script",
+      enabled: "Aktif",
+      disabled: "Nonaktif",
+      fileName: "Nama File",
+      scriptKey: "Kunci Script",
+      requirements: "Dependensi",
+      envBindings: "Variabel Lingkungan",
+      none: "Tidak ada"
+    },
+    table: {
+      name: "Nama Kemampuan",
+      code: "Kode",
+      category: "Kategori",
+      status: "Status",
+      actions: "Aksi",
+      edit: "Edit",
+      delete: "Hapus"
+    },
+    modal: {
+      basicInfo: "Info Dasar",
+      skill: "SKILL.md",
+      forms: "FORMS.md",
+      reference: "REFERENCE.md",
+      scripts: "Scripts",
+      validationWarning: "Periksa kembali field wajib di formulir",
+      createTitle: "Buat Kemampuan AI",
+      editTitle: "Edit Kemampuan AI",
+      cancel: "Batal",
+      prev: "Sebelumnya",
+      next: "Berikutnya",
+      createConfirm: "Konfirmasi Buat",
+      saveConfirm: "Konfirmasi Simpan"
+    },
+    metadata: {
+      intro: "Nama, kode, kategori, status, dan deskripsi yang diisi di sini akan menjadi metadata ringan yang dimuat saat agent dijalankan.",
+      name: "Nama Kemampuan",
+      nameRequired: "Masukkan nama kemampuan",
+      namePlaceholder: "Contoh: Pelacakan Pengiriman",
+      code: "Kode",
+      codeRequired: "Masukkan kode",
+      codePlaceholder: "Contoh: track_shipment (untuk identifikasi dan referensi sistem)",
+      category: "Kategori",
+      categoryPlaceholder: "Contoh: logistics (untuk pengelompokan katalog)",
+      status: "Status",
+      description: "Deskripsi",
+      descriptionPlaceholder: "Jelaskan dalam satu kalimat atau satu paragraf masalah apa yang diselesaikan kemampuan ini dan kapan biasanya digunakan"
+    },
+    markdown: {
+      skillIntro: "SKILL.md adalah instruksi kemampuan yang benar-benar dimuat oleh model. Disarankan mengikuti struktur tetap dan tidak hanya menulis deskripsi satu baris yang samar.",
+      formsIntro: "FORMS.md memberi tahu model informasi apa yang kurang, bagaimana menanyakan pengguna untuk melengkapinya, dan bagaimana field dipetakan ke input script.",
+      referenceIntro: "REFERENCE.md menyimpan materi referensi rinci seperti ringkasan dokumentasi API, kode error, dan penjelasan field. Model membacanya saat diperlukan, jadi tidak perlu ditulis seperti dialog."
+    },
+    scripts: {
+      intro: "Kelola script yang benar-benar menjalankan kemampuan di sini. Daftar dependensi akan disimpan langsung dalam konfigurasi script dan disiapkan saat runtime, bukan ditebak dari komentar atau import.",
+      script: "Script",
+      delete: "Hapus",
+      scriptName: "Nama Script",
+      scriptNameRequired: "Masukkan nama script",
+      scriptNamePlaceholder: "Contoh: Script query pengiriman J&T",
+      scriptKey: "Kunci Script",
+      scriptKeyRequired: "Masukkan kunci script",
+      scriptKeyPlaceholder: "Contoh: cargo_trace",
+      fileName: "Nama File",
+      fileNamePlaceholder: "Contoh: query.py",
+      language: "Bahasa",
+      enabled: "Aktif",
+      sourceCode: "Isi Script",
+      sourceCodeRequired: "Masukkan isi script",
+      requirements: "Daftar Dependensi",
+      requirementsTooltip: "Satu nama paket pip per baris, misalnya google-generativeai atau Pillow.",
+      requirementsExtra: "Isi hanya paket Python pihak ketiga yang dibutuhkan untuk menjalankan script ini. Pustaka standar tidak perlu diisi.",
+      requirementsPlaceholder: "Masukkan nama paket lalu tekan Enter, misalnya: google-generativeai",
+      envVars: "Variabel Lingkungan",
+      envKeyRequired: "Masukkan nama variabel",
+      envKeyPlaceholder: "Contoh: JT_CARGO_API_ACCOUNT",
+      envValueRequired: "Masukkan nilai variabel",
+      envValuePlaceholder: "Masukkan nilai variabel untuk kemampuan ini",
+      addEnvVar: "Tambah Variabel Lingkungan",
+      addScript: "Tambah Script"
+    },
+    status: {
+      active: "active",
+      draft: "draft",
+      inactive: "inactive"
+    }
+  }
+};

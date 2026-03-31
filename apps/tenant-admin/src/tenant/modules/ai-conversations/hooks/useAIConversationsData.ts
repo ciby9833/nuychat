@@ -4,6 +4,7 @@
 
 import dayjs from "dayjs";
 import { message } from "antd";
+import i18next from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -68,7 +69,7 @@ export function useAIConversationsData() {
           : (conversationData.items[0]?.conversationId ?? "");
       setSelectedConversationId(nextId);
     } catch (err) {
-      setError(`加载 AI 会话失败: ${(err as Error).message}`);
+      setError(i18next.t("aiConversations.errors.loadListFailed", { message: (err as Error).message }));
     } finally {
       setLoading(false);
     }
@@ -82,7 +83,7 @@ export function useAIConversationsData() {
       setDetail(next);
       setTransferAgentId(next.conversation.assignedAgentId ?? "");
     } catch (err) {
-      message.error(`加载会话详情失败: ${(err as Error).message}`);
+      void message.error(i18next.t("aiConversations.errors.loadDetailFailed", { message: (err as Error).message }));
       setDetail(null);
     } finally {
       setDetailLoading(false);
@@ -104,26 +105,26 @@ export function useAIConversationsData() {
   );
 
   const handleIntervene = async () => {
-    if (!selectedConversationId || !interveneText.trim()) { message.warning("请输入要发送给客户的内容"); return; }
+    if (!selectedConversationId || !interveneText.trim()) { void message.warning(i18next.t("aiConversations.errors.interveneEmpty")); return; }
     setSaving(true);
     try {
       await interveneConversation(selectedConversationId, interveneText.trim());
       setInterveneText("");
-      message.success("人工介入消息已入队");
+      void message.success(i18next.t("aiConversations.errors.interveneSuccess"));
       await loadDetail(selectedConversationId);
       await loadList(true, selectedConversationId);
-    } catch (err) { message.error(`介入失败: ${(err as Error).message}`); } finally { setSaving(false); }
+    } catch (err) { void message.error(i18next.t("aiConversations.errors.interveneFailed", { message: (err as Error).message })); } finally { setSaving(false); }
   };
 
   const handleTransfer = async () => {
-    if (!selectedConversationId || !transferAgentId) { message.warning("请选择目标人工坐席"); return; }
+    if (!selectedConversationId || !transferAgentId) { void message.warning(i18next.t("aiConversations.errors.transferEmpty")); return; }
     setSaving(true);
     try {
       await transferConversation(selectedConversationId, transferAgentId);
-      message.success("会话已转给人工坐席");
+      void message.success(i18next.t("aiConversations.errors.transferSuccess"));
       await loadDetail(selectedConversationId);
       await loadList(true, selectedConversationId);
-    } catch (err) { message.error(`转人工失败: ${(err as Error).message}`); } finally { setSaving(false); }
+    } catch (err) { void message.error(i18next.t("aiConversations.errors.transferFailed", { message: (err as Error).message })); } finally { setSaving(false); }
   };
 
   const handleForceClose = async () => {
@@ -131,9 +132,9 @@ export function useAIConversationsData() {
     setSaving(true);
     try {
       await forceCloseConversation(selectedConversationId, "closed from ai conversation monitor");
-      message.success("会话已强制关闭");
+      void message.success(i18next.t("aiConversations.errors.forceCloseSuccess"));
       await loadList(false);
-    } catch (err) { message.error(`关闭失败: ${(err as Error).message}`); } finally { setSaving(false); }
+    } catch (err) { void message.error(i18next.t("aiConversations.errors.forceCloseFailed", { message: (err as Error).message })); } finally { setSaving(false); }
   };
 
   const onlineAgents = agents.filter((a) => a.status === "online" || a.status === "busy");

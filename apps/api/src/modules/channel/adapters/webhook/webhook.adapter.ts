@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import type { ResolvedChannelConfig } from "../../channel.repository.js";
+import { normalizeStructuredActions, normalizeStructuredMessage, structuredToPlainText } from "../../../../shared/messaging/structured-message.js";
 import type { UnifiedMessage } from "../../../../shared/types/unified-message.js";
 
 /**
@@ -21,6 +22,12 @@ type WebhookRawInboundMessage = {
   displayName?: string;
   text?: string;
   timestamp?: string;
+  attachments?: Array<{
+    url?: string;
+    mimeType?: string;
+    name?: string;
+    size?: number;
+  }>;
 };
 
 export const webhookAdapter = {
@@ -35,6 +42,8 @@ export const webhookAdapter = {
     const msg = rawMessage as WebhookRawInboundMessage;
     const customerRef = (msg.customerRef ?? "webhook-customer").trim();
     const text = (msg.text ?? "").trim();
+    const attachments = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 5) : [];
+    const messageType = attachments.length > 0 ? "media" : "text";
 
     return {
       id: crypto.randomUUID(),
@@ -43,9 +52,16 @@ export const webhookAdapter = {
       channelId: context.channelId,
       channelType: "webhook",
       direction: "inbound",
-      messageType: "text",
+      messageType,
       senderExternalRef: customerRef,
       text,
+      attachments: attachments.length > 0
+        ? attachments.map((a) => ({
+            url: a.url,
+            mimeType: a.mimeType,
+            fileName: a.name
+          }))
+        : undefined,
       metadata: {
         displayName: msg.displayName,
         rawType: "webhook_text"
@@ -57,6 +73,8 @@ export const webhookAdapter = {
   async sendMessage(
     input: {
       text: string;
+      structured?: unknown;
+      actions?: unknown;
       to: string;
       attachment?: { url: string; mimeType: string; fileName?: string };
       contextMessageId?: string;
@@ -71,10 +89,16 @@ export const webhookAdapter = {
       return { externalMessageId: crypto.randomUUID() };
     }
 
+    const structured = normalizeStructuredMessage(input.structured);
+    const actions = normalizeStructuredActions(input.actions);
+    const resolvedText = structuredToPlainText(structured, input.text);
+
     const body = JSON.stringify({
       event: "message.outbound",
       to: input.to,
-      text: input.text,
+      text: resolvedText,
+      structured: structured ?? undefined,
+      actions: actions.length > 0 ? actions : undefined,
       attachment: input.attachment ?? undefined,
       contextMessageId: input.contextMessageId ?? undefined,
       reactionEmoji: input.reactionEmoji ?? undefined,

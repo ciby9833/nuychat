@@ -4,6 +4,7 @@
 
 import { Form, Input, Modal } from "antd";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { MemberListItem } from "../../../types";
 
@@ -16,12 +17,13 @@ export function ResetPasswordModal({
   onClose: () => void;
   onReset: (password: string) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [form] = Form.useForm<{ password: string }>();
   const [saving, setSaving] = useState(false);
 
   return (
     <Modal
-      title={`重置密码: ${member?.displayName ?? member?.email ?? ""}`}
+      title={t("agents.member.resetPasswordTitle", { name: member?.displayName ?? member?.email ?? "" })}
       open={!!member}
       onCancel={() => { form.resetFields(); onClose(); }}
       onOk={() => {
@@ -37,16 +39,16 @@ export function ResetPasswordModal({
           }
         })();
       }}
-      okText="重置"
-      cancelText="取消"
+      okText={t("agents.member.resetPassword")}
+      cancelText={t("common.cancel")}
       confirmLoading={saving}
       destroyOnHidden
     >
       <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
         <Form.Item
-          label="新密码"
+          label={t("agents.member.newPassword")}
           name="password"
-          rules={[{ required: true, message: "请输入新密码" }, { min: 6, message: "密码至少 6 位" }]}
+          rules={[{ required: true, message: t("agents.member.newPasswordRequired") }, { min: 6, message: t("agents.member.passwordMin") }]}
         >
           <Input.Password />
         </Form.Item>

@@ -1,45 +1,18 @@
-type DatabaseConnection =
-  | string
-  | {
-      host: string;
-      port: number;
-      database: string;
-      user: string;
-      password: string;
-    };
+import { readRequiredEnv } from "../env.js";
 
-export function getDatabaseConnection(): DatabaseConnection {
-  return (
-    process.env.DATABASE_URL ?? {
-      host: "localhost",
-      port: 5433,
-      database: "nuychat_dev",
-      user: "nuychat",
-      password: "nuychat_dev_pw"
-    }
-  );
+export function getDatabaseConnection(): string {
+  return readRequiredEnv("DATABASE_URL");
 }
 
 export function getDatabaseSummary() {
-  const connection = getDatabaseConnection();
-
-  if (typeof connection === "string") {
-    const url = new URL(connection);
-    return {
-      source: "DATABASE_URL",
-      host: url.hostname,
-      port: Number(url.port || 5432),
-      database: url.pathname.replace(/^\//, ""),
-      user: decodeURIComponent(url.username)
-    };
-  }
+  const url = new URL(getDatabaseConnection());
 
   return {
-    source: "fallback",
-    host: connection.host,
-    port: connection.port,
-    database: connection.database,
-    user: connection.user
+    source: "DATABASE_URL",
+    host: url.hostname,
+    port: Number(url.port || 5432),
+    database: url.pathname.replace(/^\//, ""),
+    user: decodeURIComponent(url.username)
   };
 }
 
@@ -59,4 +32,3 @@ export function assertExpectedDevelopmentDatabase() {
 
   return summary;
 }
-

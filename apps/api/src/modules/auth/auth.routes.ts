@@ -71,7 +71,7 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
     const { email, password } = parsed.data;
 
     const identity = await db<IdentityRow>("identities")
-      .where({ email, status: "active" })
+      .where({ email, status: "active" } as any)
       .select("identity_id", "email", "password_hash")
       .first();
 

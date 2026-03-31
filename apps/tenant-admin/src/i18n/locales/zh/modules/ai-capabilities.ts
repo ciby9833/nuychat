@@ -1,0 +1,110 @@
+export default {
+  aiCapabilities: {
+    page: {
+      title: "AI 能力目录",
+      create: "新建能力",
+      intro: "一个能力包回答五件事：它是什么、模型怎么理解、缺字段时怎么澄清、参考资料是什么、脚本如何真正执行。",
+      intro2: "选中一行查看详情，点击行内操作按钮编辑或删除。",
+      detailTitle: "能力详情",
+      deleteTitle: "确认删除能力「{{name}}」吗？",
+      deleteContent: "删除后将同时移除关联绑定，请再次确认。",
+      deleteOk: "确认删除",
+      deleted: "能力已删除",
+      created: "能力已新建",
+      updated: "能力已更新"
+    },
+    detail: {
+      empty: "选中一个能力查看详情",
+      name: "名称",
+      code: "编码",
+      category: "分类",
+      status: "状态",
+      description: "说明",
+      unmaintained: "未维护",
+      scriptsEmpty: "暂无脚本",
+      enabled: "启用",
+      disabled: "关闭",
+      fileName: "文件名",
+      scriptKey: "脚本键",
+      requirements: "依赖",
+      envBindings: "环境变量",
+      none: "无"
+    },
+    table: {
+      name: "能力名称",
+      code: "编码",
+      category: "分类",
+      status: "状态",
+      actions: "操作",
+      edit: "编辑",
+      delete: "删除"
+    },
+    modal: {
+      basicInfo: "基本信息",
+      skill: "SKILL.md",
+      forms: "FORMS.md",
+      reference: "REFERENCE.md",
+      scripts: "Scripts",
+      validationWarning: "请检查表单中的必填项",
+      createTitle: "新建 AI 能力",
+      editTitle: "编辑 AI 能力",
+      cancel: "取消",
+      prev: "上一步",
+      next: "下一步",
+      createConfirm: "确认新建",
+      saveConfirm: "确认保存"
+    },
+    metadata: {
+      intro: "这里填写的名称、编码、分类、状态、说明，会组成 Agent 启动时加载的轻量 Metadata。",
+      name: "能力名称",
+      nameRequired: "请输入能力名称",
+      namePlaceholder: "例如：物流轨迹查询",
+      code: "编码",
+      codeRequired: "请输入编码",
+      codePlaceholder: "例如：track_shipment（供系统识别与引用）",
+      category: "分类",
+      categoryPlaceholder: "例如：logistics（用于目录归类）",
+      status: "状态",
+      description: "说明",
+      descriptionPlaceholder: "用一句到一段话说明这个能力解决什么问题、通常在什么场景下使用"
+    },
+    markdown: {
+      skillIntro: "SKILL.md 是模型真正加载的能力说明。建议按固定结构写，避免只写一句模糊描述。",
+      formsIntro: "FORMS.md 用来告诉模型缺什么信息、怎么问用户补齐，以及字段如何映射到脚本输入。",
+      referenceIntro: "REFERENCE.md 放详细参考资料，例如 API 文档摘要、错误码、字段解释。模型按需阅读，不需要写成对话话术。"
+    },
+    scripts: {
+      intro: "这里维护真正执行能力的脚本。依赖列表会原生存入脚本配置并在运行时准备环境，不再从源码注释或 import 猜测。",
+      script: "脚本",
+      delete: "删除",
+      scriptName: "脚本名称",
+      scriptNameRequired: "请输入脚本名称",
+      scriptNamePlaceholder: "例如：J&T 物流查询脚本",
+      scriptKey: "脚本键",
+      scriptKeyRequired: "请输入脚本键",
+      scriptKeyPlaceholder: "例如：cargo_trace",
+      fileName: "文件名",
+      fileNamePlaceholder: "例如：query.py",
+      language: "语言",
+      enabled: "启用",
+      sourceCode: "脚本内容",
+      sourceCodeRequired: "请输入脚本内容",
+      requirements: "依赖列表",
+      requirementsTooltip: "一行一个 pip 包名，例如 google-generativeai、Pillow。",
+      requirementsExtra: "仅填写运行该脚本所需的第三方 Python 包；标准库无需填写。",
+      requirementsPlaceholder: "输入包名后回车，例如：google-generativeai",
+      envVars: "环境变量",
+      envKeyRequired: "请输入变量名",
+      envKeyPlaceholder: "例如：JT_CARGO_API_ACCOUNT",
+      envValueRequired: "请输入变量值",
+      envValuePlaceholder: "输入这个技能自己的变量值",
+      addEnvVar: "新增环境变量",
+      addScript: "新增脚本"
+    },
+    status: {
+      active: "active",
+      draft: "draft",
+      inactive: "inactive"
+    }
+  }
+};

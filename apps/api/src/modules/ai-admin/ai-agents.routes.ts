@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
+import { resolveTenantAISettingsForScene } from "../ai/provider-config.service.js";
 import { normalizeNonEmptyString } from "../tenant/tenant-admin.shared.js";
-import { assertAISeatAvailable, pickTenantAIConfig, serializeAiAgentRow } from "./ai-admin.shared.js";
+import { assertAISeatAvailable, serializeAiAgentRow } from "./ai-admin.shared.js";
 
 const AI_SEAT_LIMIT_MESSAGE = "Licensed AI seat limit reached";
 
@@ -12,12 +13,12 @@ export async function registerAIAgentAdminRoutes(app: FastifyInstance) {
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
 
     return withTenantTransaction(tenantId, async (trx) => {
-      const [tenant, aiConfig, rows, activeRow] = await Promise.all([
+      const [tenant, aiSeatSettings, rows, activeRow] = await Promise.all([
         trx("tenants")
           .select("licensed_ai_seats", "ai_model_access_mode")
           .where({ tenant_id: tenantId })
           .first<{ licensed_ai_seats: number | null; ai_model_access_mode: string | null } | undefined>(),
-        pickTenantAIConfig(trx, tenantId),
+        resolveTenantAISettingsForScene(trx, tenantId, "ai_seat"),
         trx("tenant_ai_agents")
           .select("ai_agent_id", "name", "role_label", "personality", "scene_prompt", "system_prompt", "description", "status", "created_at", "updated_at")
           .where({ tenant_id: tenantId })
@@ -37,8 +38,8 @@ export async function registerAIAgentAdminRoutes(app: FastifyInstance) {
           usedAiSeats,
           remainingAiSeats: Math.max(0, licensedAiSeats - usedAiSeats),
           aiModelAccessMode: tenant?.ai_model_access_mode === "tenant_managed" ? "tenant_managed" : "platform_managed",
-          aiProvider: aiConfig ? String(aiConfig.provider ?? "openai") : null,
-          aiModel: aiConfig ? String(aiConfig.model ?? "gpt-4o-mini") : null
+          aiProvider: aiSeatSettings?.providerName ?? null,
+          aiModel: aiSeatSettings?.model ?? null
         },
         items: rows.map((row) => serializeAiAgentRow(row as Record<string, unknown>))
       };

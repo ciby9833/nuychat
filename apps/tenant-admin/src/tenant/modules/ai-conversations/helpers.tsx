@@ -2,6 +2,7 @@
 // 菜单路径: 客户中心 -> AI 会话监控
 // 作者：吴川
 
+import i18next from "i18next";
 import type { AIConversationListItem } from "../../types";
 
 export function StatusDot({ item }: { item: AIConversationListItem }) {
@@ -12,25 +13,25 @@ export function StatusDot({ item }: { item: AIConversationListItem }) {
 export function formatRelativeTime(dateStr: string | null): string {
   if (!dateStr) return "";
   const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
-  if (mins < 1) return "刚刚";
-  if (mins < 60) return `${mins}分钟前`;
+  if (mins < 1) return i18next.t("aiConversations.helper.justNow");
+  if (mins < 60) return i18next.t("aiConversations.helper.minutesAgo", { count: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}小时前`;
-  return new Date(dateStr).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+  if (hours < 24) return i18next.t("aiConversations.helper.hoursAgo", { count: hours });
+  return new Date(dateStr).toLocaleDateString(i18next.language === "id" ? "id-ID" : i18next.language === "en" ? "en-US" : "zh-CN", { month: "numeric", day: "numeric" });
 }
 
 export function formatTime(dateStr: string): string {
-  return new Date(dateStr).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  return new Date(dateStr).toLocaleTimeString(i18next.language === "id" ? "id-ID" : i18next.language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
 export function formatDateLabel(dateStr: string): string {
   const d = new Date(dateStr);
   const today = new Date();
-  if (d.toDateString() === today.toDateString()) return "今天";
+  if (d.toDateString() === today.toDateString()) return i18next.t("aiConversations.helper.today");
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return "昨天";
-  return d.toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
+  if (d.toDateString() === yesterday.toDateString()) return i18next.t("aiConversations.helper.yesterday");
+  return d.toLocaleDateString(i18next.language === "id" ? "id-ID" : i18next.language === "en" ? "en-US" : "zh-CN", { month: "long", day: "numeric" });
 }
 
 export function isSameDay(a: string, b: string): boolean {

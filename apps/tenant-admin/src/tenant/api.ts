@@ -20,12 +20,8 @@ import type {
   MemberListItem,
   ModuleItem,
   DepartmentItem,
-  IntegrationConfig,
   PreReplyPolicySet,
   LoginResponse,
-  MarketplaceCatalogSkill,
-  MarketplaceGovernancePatchInput,
-  MarketplaceInstall,
   PermissionPolicyResponse,
   QaConversationOption,
   QaReviewListResponse,
@@ -65,7 +61,15 @@ import type {
 
 const SESSION_KEY = "nuychat.authSession";
 
-const API_BASE = "http://localhost:3000";
+export const API_BASE = readRequiredEnv("VITE_API_BASE_URL");
+
+function readRequiredEnv(name: "VITE_API_BASE_URL"): string {
+  const value = import.meta.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required env: ${name}`);
+  }
+  return value.replace(/\/$/, "");
+}
 
 // ─── Session-update registry ──────────────────────────────────────────────────
 // DashboardPage registers its setSession() here so the refresh interceptor
@@ -199,38 +203,6 @@ export async function logoutTenant(session: AdminSession): Promise<void> {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken}` },
     body: JSON.stringify({ allSessions: false })
-  });
-}
-
-export function listTenantMarketplaceCatalog(input?: { tier?: string; search?: string; status?: string }) {
-  const params = new URLSearchParams();
-  if (input?.tier) params.set("tier", input.tier);
-  if (input?.search) params.set("search", input.search);
-  if (input?.status) params.set("status", input.status);
-  return api<{ skills: MarketplaceCatalogSkill[] }>(`/api/admin/marketplace/catalog?${params.toString()}`);
-}
-
-export function listTenantMarketplaceInstalls() {
-  return api<{ installs: MarketplaceInstall[] }>("/api/admin/marketplace/installs");
-}
-
-export function installTenantMarketplaceSkill(skillId: string, releaseId?: string) {
-  return api<{ installId: string }>(`/api/admin/marketplace/catalog/${skillId}/install`, {
-    method: "POST",
-    body: JSON.stringify(releaseId ? { releaseId } : {})
-  });
-}
-
-export function patchTenantMarketplaceInstallGovernance(installId: string, input: MarketplaceGovernancePatchInput) {
-  return api(`/api/admin/marketplace/installs/${installId}/governance`, {
-    method: "PATCH",
-    body: JSON.stringify(input)
-  });
-}
-
-export function uninstallTenantMarketplaceInstall(installId: string) {
-  return api<{ success: boolean; installId: string }>(`/api/admin/marketplace/installs/${installId}`, {
-    method: "DELETE"
   });
 }
 
@@ -488,7 +460,6 @@ export function patchTenantAIConfig(configId: string, input: {
   encryptedApiKey?: string;
   baseUrl?: string | null;
   isActive?: boolean;
-  integrations?: Record<string, IntegrationConfig>;
 }) {
   return api<{ updated: boolean; config_id: string }>(`/api/admin/ai-configs/${configId}`, {
     method: "PATCH",
@@ -513,17 +484,45 @@ export function getTenantAIRuntimePolicy() {
   return api<AIRuntimePolicy>("/api/admin/ai-runtime-policy");
 }
 
-export function patchTenantAIRuntimePolicy(input: { preReplyPolicies: PreReplyPolicySet }) {
+export function patchTenantAIRuntimePolicy(input: {
+  preReplyPolicies?: PreReplyPolicySet;
+  modelSceneConfig?: {
+    aiSeatConfigId?: string | null;
+    agentAssistConfigId?: string | null;
+    toolDefaultConfigId?: string | null;
+  };
+}) {
   return api<AIRuntimePolicy>("/api/admin/ai-runtime-policy", {
     method: "PATCH",
     body: JSON.stringify(input)
   });
 }
 
-export function patchTenantIntegrations(integrations: Record<string, IntegrationConfig>) {
-  return api<{ updated: boolean }>("/api/admin/ai-config", {
+export async function listCapabilities() {
+  return api<{ items: import("./types").CapabilityListItem[] }>("/api/admin/capabilities");
+}
+
+export async function getCapabilityDetail(capabilityId: string) {
+  return api<import("./types").CapabilityDetail>(`/api/admin/capabilities/${capabilityId}`);
+}
+
+export async function createCapability(input: import("./types").CapabilityUpsertInput) {
+  return api<import("./types").CapabilityDetail>("/api/admin/capabilities", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function patchCapability(capabilityId: string, input: Partial<import("./types").CapabilityUpsertInput>) {
+  return api<import("./types").CapabilityDetail>(`/api/admin/capabilities/${capabilityId}`, {
     method: "PATCH",
-    body: JSON.stringify({ integrations })
+    body: JSON.stringify(input)
+  });
+}
+
+export async function deleteCapability(capabilityId: string) {
+  return api<{ deleted: boolean; capabilityId: string }>(`/api/admin/capabilities/${capabilityId}`, {
+    method: "DELETE"
   });
 }
 

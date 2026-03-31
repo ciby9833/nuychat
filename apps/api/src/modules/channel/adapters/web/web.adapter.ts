@@ -12,7 +12,6 @@ type WebRawInboundMessage = {
     name?: string;
     mimeType?: string;
     size?: number;
-    dataUrl?: string;
     url?: string;
   }>;
   client?: Record<string, unknown>;
@@ -46,7 +45,7 @@ export const webAdapter = {
       senderExternalRef: customerRef,
       text,
       attachments: attachments.map((attachment) => ({
-        url: attachment.url || attachment.dataUrl,
+        url: attachment.url,
         mimeType: attachment.mimeType,
         fileName: attachment.name
       })),
@@ -62,6 +61,8 @@ export const webAdapter = {
   async sendMessage(
     input: {
       text: string;
+      structured?: unknown;
+      actions?: unknown;
       to: string;
       attachment?: { url: string; mimeType: string; fileName?: string };
       contextMessageId?: string;

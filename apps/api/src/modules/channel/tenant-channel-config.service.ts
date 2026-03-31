@@ -1,5 +1,6 @@
 import type { Knex } from "knex";
 
+import { readRequiredBaseUrlEnv } from "../../infra/env.js";
 import { buildWhatsAppWebhookUrl, isWhatsAppEmbeddedSignupEnabled } from "./whatsapp-platform-config.js";
 
 type ChannelConfigRow = {
@@ -200,5 +201,5 @@ function normalizeNonEmptyString(input: unknown): string | null {
 }
 
 function resolveApiBase() {
-  return process.env.API_PUBLIC_BASE?.trim() || "http://localhost:3000";
+  return readRequiredBaseUrlEnv("API_PUBLIC_BASE");
 }

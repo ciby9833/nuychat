@@ -1,6 +1,12 @@
-// 作用: 调度审计数据加载、筛选、详情查看 hook
-// 菜单路径: 客户中心 -> 调度审计
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 调度审计
+ * 文件职责: 管理筛选状态、列表查询、运营建议查询与详情抽屉的数据加载逻辑。
+ * 主要交互文件:
+ * - ../DispatchAuditTab.tsx
+ * - ../../../api
+ * - ../../../types
+ * - ../types.ts
+ */
 
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -94,7 +100,8 @@ export function useDispatchAuditData() {
 
   const stats = useMemo(() => ({
     total: items.length,
-    ai: items.filter((item) => item.decisionType === "ai_selection").length,
+    plans: items.filter((item) => item.decisionType === "routing_plan").length,
+    aiRuntime: items.filter((item) => item.decisionType === "ai_runtime").length,
     manual: items.filter((item) => item.decisionType === "manual_transition").length
   }), [items]);
 

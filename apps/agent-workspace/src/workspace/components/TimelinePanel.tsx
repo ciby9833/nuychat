@@ -1,8 +1,21 @@
+/**
+ * 菜单路径与名称: 座席工作台 / 会话详情 / 消息时间线与手动技能处理
+ * 文件职责: 负责消息时间线、回复输入、手动技能执行弹窗、图片预览等会话主交互。
+ * 主要交互文件:
+ * - ./MessageList.tsx: 渲染消息列表与消息菜单。
+ * - ./MessageComposer.tsx: 渲染回复输入区与自动技能辅助卡片。
+ * - ./SkillAssistCard.tsx: 展示手动技能执行结果。
+ * - ../hooks/useWorkspaceDashboard.ts: 提供会话状态、消息和技能辅助动作。
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { MessageComposer } from "./MessageComposer";
 import { MessageList } from "./MessageList";
+import { SkillAssistCard } from "./SkillAssistCard";
 import { getChannelCapability, validateUploadForChannel } from "../constants";
-import type { AgentColleague, ConversationDetail, MessageAttachment, MessageItem, Ticket } from "../types";
+import type { AgentColleague, ComposerSkillAssist, ConversationDetail, MessageAttachment, MessageItem, SkillSchema, Ticket } from "../types";
+import { cn } from "../../lib/utils";
 
 type TimelinePanelProps = {
   detail: ConversationDetail | null;
@@ -10,6 +23,8 @@ type TimelinePanelProps = {
   reply: string;
   pendingAttachments: MessageAttachment[];
   replyTargetMessageId: string | null;
+  composerSkillAssist: ComposerSkillAssist | null;
+  skillSchemas: SkillSchema[];
   viewHint: string;
   aiSuggestions: string[];
   recommendedSkills: string[];
@@ -34,6 +49,7 @@ type TimelinePanelProps = {
   onHandoff: () => Promise<void>;
   onTransfer: (targetAgentId: string, reason?: string) => Promise<void>;
   onResolve: () => Promise<void>;
+  onManualSkillAssist: (messageId: string, skillSlug: string) => Promise<ComposerSkillAssist | null>;
   onAddTaskFromMessage: (messageId: string, preview: string) => void;
 };
 
@@ -48,15 +64,16 @@ type UploadItem = {
 
 type PopoverPlacement = "up" | "down";
 
-function messagePreview(message: MessageItem | null | undefined): string {
+function messagePreview(message: MessageItem | null | undefined, t: (key: string) => string): string {
   if (!message) return "";
-  if (message.status_deleted_at) return "[已删除]";
+  if (message.status_deleted_at) return t("timeline.deleted");
   if (message.reaction_emoji) return message.reaction_emoji;
   if (message.content?.text) return message.content.text;
+  if (message.content?.structured?.blocks?.length) return "[structured]";
   if (Array.isArray(message.content?.attachments) && message.content.attachments.length > 0) {
-    return message.content.attachments[0]?.fileName ?? "[附件]";
+    return message.content.attachments[0]?.fileName ?? t("timeline.attachment");
   }
-  return "[消息]";
+  return t("timeline.message");
 }
 
 export function TimelinePanel(props: TimelinePanelProps) {
@@ -66,9 +83,11 @@ export function TimelinePanel(props: TimelinePanelProps) {
     reply,
     pendingAttachments,
     replyTargetMessageId,
+    composerSkillAssist,
+    skillSchemas,
     viewHint,
     aiSuggestions,
-    recommendedSkills,
+    recommendedSkills: _recommendedSkills,
     isAssignedToMe,
     actionLoading,
     tickets,
@@ -84,22 +103,18 @@ export function TimelinePanel(props: TimelinePanelProps) {
     onHandoff,
     onTransfer,
     onResolve,
+    onManualSkillAssist,
     onAddTaskFromMessage
   } = props;
 
+  const { t } = useTranslation();
   const [resolveConfirm, setResolveConfirm] = useState(false);
-  // Transfer dialog state
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferTargetId, setTransferTargetId] = useState("");
   const [transferReason, setTransferReason] = useState("");
-  const openTickets = tickets.filter((t) => !["done", "cancelled"].includes(t.status));
+  const openTickets = tickets.filter((tk) => !["done", "cancelled"].includes(tk.status));
   const isResolved = detail?.status === "resolved" || detail?.status === "closed";
-  // Locked: another agent is actively handling this conversation right now.
   const isLockedByAnotherAgent = Boolean(detail && !isAssignedToMe && detail.status === "human_active");
-  // Agent can send when:
-  //   • they own the conversation (live), OR
-  //   • the conversation is resolved (backend auto-reactivates on send)
-  // Blocked only when another agent has it locked in human_active state.
   const canSend = Boolean(
     detail && !isLockedByAnotherAgent && (reply.trim() || pendingAttachments.length > 0) && (isAssignedToMe || isResolved)
   );
@@ -114,6 +129,14 @@ export function TimelinePanel(props: TimelinePanelProps) {
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [composerError, setComposerError] = useState<string>("");
   const [imagePreview, setImagePreview] = useState<{ url: string; alt: string } | null>(null);
+  const [manualSkillModal, setManualSkillModal] = useState<{
+    messageId: string;
+    preview: string;
+    skillSlug: string;
+    loading: boolean;
+    assist: ComposerSkillAssist | null;
+    error: string;
+  } | null>(null);
   const replyTarget = useMemo(
     () => messages.find((message) => message.message_id === replyTargetMessageId) ?? null,
     [messages, replyTargetMessageId]
@@ -121,7 +144,6 @@ export function TimelinePanel(props: TimelinePanelProps) {
   const capability = useMemo(() => getChannelCapability(detail?.channelType), [detail?.channelType]);
   const uploading = uploadItems.some((item) => item.status === "uploading");
 
-  // Track if user has scrolled up
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -132,14 +154,12 @@ export function TimelinePanel(props: TimelinePanelProps) {
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Auto-scroll to bottom when new messages arrive (unless user scrolled up)
   useEffect(() => {
     if (!userScrolledUpRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
 
-  // Scroll to bottom when a new conversation is selected; also reset transfer state
   useEffect(() => {
     userScrolledUpRef.current = false;
     bottomRef.current?.scrollIntoView({ behavior: "instant" });
@@ -154,30 +174,24 @@ export function TimelinePanel(props: TimelinePanelProps) {
     setHoveredMessageId(null);
     setComposerError("");
     setImagePreview(null);
+    setManualSkillModal(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.conversationId]);
 
   useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (
-        target.closest(".msg-more-menu") ||
-        target.closest(".msg-reaction-menu") ||
-        target.closest(".msg-tail-trigger")
-      ) return;
+    const handlePointerDown = () => {
+      // Popups in SideActions use e.stopPropagation() to prevent this from
+      // firing when the user clicks inside a reaction picker or more-menu.
+      // All other outside-clicks should close any open popup.
       setMessageMenuId(null);
       setReactionTargetId(null);
     };
-
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
   const sendNow = () => {
     if (!canSend) return;
-    // For resolved conversations the outbound worker transparently reactivates
-    // the conversation and assigns it to this agent — no separate reopen step.
     void onSendReply();
   };
 
@@ -186,9 +200,7 @@ export function TimelinePanel(props: TimelinePanelProps) {
     const uniqueFiles = files
       .filter((file, index, current) => (
         current.findIndex((item) => (
-          item.name === file.name &&
-          item.size === file.size &&
-          item.lastModified === file.lastModified
+          item.name === file.name && item.size === file.size && item.lastModified === file.lastModified
         )) === index
       ))
       .slice(0, capability.maxAttachmentsPerSend);
@@ -232,7 +244,7 @@ export function TimelinePanel(props: TimelinePanelProps) {
         !nextItems.some((next) => next.key === item.key) || failedKeys.has(item.key)
       )));
     } catch {
-      // upload errors are handled per file via onError callbacks
+      // upload errors are handled per-file via onError callbacks
     }
   };
 
@@ -261,7 +273,6 @@ export function TimelinePanel(props: TimelinePanelProps) {
 
   const hintType = viewHint.startsWith("🔴") ? "error" : viewHint.startsWith("⚠️") ? "warning" : "info";
 
-  // Sort colleagues: online first, then by name
   const sortedColleagues = useMemo(() => {
     return [...colleagues].sort((a, b) => {
       const aOnline = a.status === "online" || a.status === "busy" ? 0 : 1;
@@ -270,10 +281,6 @@ export function TimelinePanel(props: TimelinePanelProps) {
       return (a.displayName ?? "").localeCompare(b.displayName ?? "");
     });
   }, [colleagues]);
-
-  const openImagePreview = (url: string, alt: string) => {
-    setImagePreview({ url, alt });
-  };
 
   const resolvePopoverPlacement = (anchor: HTMLElement | null): PopoverPlacement => {
     if (!anchor || !listRef.current) return "up";
@@ -285,137 +292,222 @@ export function TimelinePanel(props: TimelinePanelProps) {
   };
 
   const copyMessageContent = async (message: MessageItem) => {
-    const text = messagePreview(message);
+    const text = messagePreview(message, t);
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      setComposerError("复制失败，请检查浏览器权限。");
+      setComposerError(t("timeline.copyFailed"));
     }
   };
 
+  const openManualSkillAssist = (messageId: string, preview: string) => {
+    setManualSkillModal({
+      messageId,
+      preview,
+      skillSlug: skillSchemas[0]?.name ?? "",
+      loading: false,
+      assist: null,
+      error: ""
+    });
+  };
+
+  const runManualSkillAssist = () => {
+    if (!manualSkillModal?.messageId || !manualSkillModal.skillSlug) return;
+    setManualSkillModal((current) => current ? { ...current, loading: true, error: "", assist: null } : current);
+    void onManualSkillAssist(manualSkillModal.messageId, manualSkillModal.skillSlug)
+      .then((assist) => {
+        setManualSkillModal((current) => current ? {
+          ...current,
+          loading: false,
+          assist,
+          error: assist ? "" : t("skillAssist.manual.emptyResult")
+        } : current);
+      })
+      .catch((error) => {
+        setManualSkillModal((current) => current ? {
+          ...current,
+          loading: false,
+          assist: null,
+          error: (error as Error).message || t("skillAssist.manual.loadFailed")
+        } : current);
+      });
+  };
+
   return (
-    <section className="timeline-panel">
-      {/* Customer header + actions */}
-      <div className="timeline-head">
+    <section
+      className="flex flex-col overflow-hidden bg-white"
+      style={{ gridColumn: 2, gridRow: 2 }}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200 bg-white shrink-0">
         {detail ? (
           <>
-            <div className="customer-info">
-              <div className="customer-avatar">
+            {/* Customer info */}
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <div className="h-9 w-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-semibold shrink-0">
                 {(detail.customerName ?? detail.customerRef ?? "?").slice(0, 1).toUpperCase()}
               </div>
-              <div style={{ minWidth: 0 }}>
-                <div className="customer-name">{detail.customerName ?? detail.customerRef}</div>
-                <div className="customer-meta">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-slate-800 truncate">
+                  {detail.customerName ?? detail.customerRef}
+                </div>
+                <div className="text-xs text-slate-400 truncate">
                   {detail.customerRef} · {detail.customerLanguage} · {detail.channelType} · {detail.operatingMode}
                 </div>
               </div>
             </div>
 
-            <div className="head-actions">
+            {/* Action buttons */}
+            <div className="flex items-center gap-1.5 shrink-0">
               {!isAssignedToMe && detail.status !== "resolved" && (
-                <button onClick={() => void onAssign()} disabled={actionLoading !== null}>
-                  {actionLoading === "assign" ? "处理中…" : "接管"}
+                <button
+                  type="button"
+                  onClick={() => void onAssign()}
+                  disabled={actionLoading !== null}
+                  className="h-7 px-3 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                >
+                  {actionLoading === "assign" ? t("timeline.processing") : t("timeline.assign")}
                 </button>
               )}
               {isAssignedToMe && detail.status !== "resolved" && (
                 <>
-                  <button onClick={() => void onHandoff()} disabled={actionLoading !== null}>
-                    {actionLoading === "handoff" ? "处理中…" : "退回 AI"}
+                  <button
+                    type="button"
+                    onClick={() => void onHandoff()}
+                    disabled={actionLoading !== null}
+                    className="h-7 px-3 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                  >
+                    {actionLoading === "handoff" ? t("timeline.processing") : t("timeline.handoff")}
                   </button>
                   <button
-                    className="transfer-btn"
+                    type="button"
                     onClick={() => setShowTransfer((v) => !v)}
                     disabled={actionLoading !== null}
-                    title="转移给其他客服"
+                    className={cn(
+                      "h-7 px-3 rounded-md text-xs font-medium transition-colors disabled:opacity-50",
+                      showTransfer ? "bg-blue-50 text-blue-600 border border-blue-200" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    )}
                   >
-                    {actionLoading === "transfer" ? "转移中…" : "转移"}
+                    {actionLoading === "transfer" ? t("timeline.transferring") : t("timeline.transfer")}
                   </button>
                 </>
               )}
               {detail.status !== "resolved" && (
                 <button
-                  className={resolveConfirm ? "" : "primary"}
+                  type="button"
                   onClick={handleResolveClick}
                   disabled={actionLoading !== null}
+                  className={cn(
+                    "h-7 px-3 rounded-md text-xs font-medium transition-colors disabled:opacity-50",
+                    resolveConfirm
+                      ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-500/20"
+                  )}
                 >
-                  {actionLoading === "resolve" ? "处理中…" : "解决"}
+                  {actionLoading === "resolve" ? t("timeline.processing") : t("timeline.resolve")}
                 </button>
               )}
               {isResolved && (
-                <span className="resolved-badge" title="发送消息将自动重新激活此会话">
-                  ✓ 已解决
+                <span className="inline-flex items-center gap-1 h-7 px-3 rounded-md bg-emerald-50 text-emerald-700 text-xs font-medium border border-emerald-200">
+                  ✓ {t("timeline.resolved")}
                 </span>
               )}
             </div>
           </>
         ) : (
-          <span style={{ fontSize: 13, color: "#8c8c8c" }}>请从左侧选择会话</span>
+          <span className="text-sm text-slate-400">{t("timeline.selectConversation")}</span>
         )}
       </div>
 
-      {/* Transfer dialog (inline dropdown) */}
+      {/* Transfer dialog */}
       {showTransfer && (
-        <div className="transfer-dialog">
-          <div className="transfer-dialog-title">转移会话给：</div>
-          <select
-            className="transfer-select"
-            value={transferTargetId}
-            onChange={(e) => setTransferTargetId(e.target.value)}
-          >
-            <option value="">— 选择客服 —</option>
-            {sortedColleagues.map((c) => {
-              const isOnline = c.status === "online" || c.status === "busy";
-              const label = `${c.displayName ?? "未知"}${c.employeeNo ? ` #${c.employeeNo}` : ""} ${isOnline ? "🟢" : "⚪"}`;
-              return (
-                <option key={c.agentId} value={c.agentId}>
-                  {label}
-                </option>
-              );
-            })}
-          </select>
-          <input
-            className="transfer-reason"
-            value={transferReason}
-            onChange={(e) => setTransferReason(e.target.value)}
-            placeholder="备注（可选）"
-          />
-          <div className="transfer-actions">
-            <button
-              className="primary"
-              onClick={handleTransferConfirm}
-              disabled={!transferTargetId}
+        <div className="mx-4 mt-2 rounded-xl border border-slate-200 bg-slate-50 p-3 shrink-0">
+          <div className="text-xs font-semibold text-slate-700 mb-2">{t("timeline.transferTitle")}</div>
+          <div className="flex flex-col gap-2">
+            <select
+              className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={transferTargetId}
+              onChange={(e) => setTransferTargetId(e.target.value)}
             >
-              确认转移
-            </button>
-            <button onClick={() => setShowTransfer(false)}>取消</button>
+              <option value="">{t("timeline.selectAgent")}</option>
+              {sortedColleagues.map((c) => {
+                const isOnline = c.status === "online" || c.status === "busy";
+                const label = `${c.displayName ?? t("msgList.unknown")}${c.employeeNo ? ` #${c.employeeNo}` : ""} ${isOnline ? "🟢" : "⚪"}`;
+                return (
+                  <option key={c.agentId} value={c.agentId}>{label}</option>
+                );
+              })}
+            </select>
+            <input
+              className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={transferReason}
+              onChange={(e) => setTransferReason(e.target.value)}
+              placeholder={t("timeline.transferNote")}
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleTransferConfirm}
+                disabled={!transferTargetId}
+                className="h-7 px-3 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {t("timeline.confirmTransfer")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTransfer(false)}
+                className="h-7 px-3 rounded-md bg-slate-100 text-slate-700 text-xs font-medium hover:bg-slate-200 transition-colors"
+              >
+                {t("timeline.cancel")}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* viewHint banner */}
+      {/* View hint banners */}
       {viewHint && (
-        <div className={`view-hint-banner ${hintType}`}>{viewHint}</div>
+        <div className={cn(
+          "mx-4 mt-2 flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium shrink-0",
+          hintType === "error" ? "bg-red-50 border border-red-200 text-red-700" :
+          hintType === "warning" ? "bg-amber-50 border border-amber-200 text-amber-700" :
+          "bg-blue-50 border border-blue-200 text-blue-700"
+        )}>
+          {viewHint}
+        </div>
       )}
 
-      {/* Locked banner when not assigned to current agent */}
       {isLockedByAnotherAgent && (
-        <div className="view-hint-banner warning">
-          🔒 该会话已分配给其他客服，您当前处于只读模式
+        <div className="mx-4 mt-2 flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs font-medium text-amber-700 shrink-0">
+          ⚠️ {t("timeline.lockedBanner")}
         </div>
       )}
 
-      {/* Resolve confirmation bar */}
+      {/* Resolve confirm bar */}
       {resolveConfirm && (
-        <div className="resolve-confirm-bar">
-          <span className="rc-label">有 {openTickets.length} 个未完成任务</span>
-          <button className="danger" onClick={() => { setResolveConfirm(false); void onResolve(); }}>
-            结束会话
+        <div className="mx-4 mt-2 flex items-center gap-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 shrink-0">
+          <span className="text-xs text-amber-700 flex-1">
+            {t("timeline.resolveBanner", { count: openTickets.length })}
+          </span>
+          <button
+            type="button"
+            onClick={() => { setResolveConfirm(false); void onResolve(); }}
+            className="h-7 px-3 rounded-md bg-red-600 text-white text-xs font-medium hover:bg-red-700 transition-colors"
+          >
+            {t("timeline.endConversation")}
           </button>
-          <button className="cancel" onClick={() => setResolveConfirm(false)}>取消</button>
+          <button
+            type="button"
+            onClick={() => setResolveConfirm(false)}
+            className="h-7 px-3 rounded-md bg-slate-100 text-slate-700 text-xs font-medium hover:bg-slate-200 transition-colors"
+          >
+            {t("timeline.cancel")}
+          </button>
         </div>
       )}
 
+      {/* Message list — flex-1 to fill remaining space */}
       <MessageList
         detailOpen={Boolean(detail)}
         messages={messages}
@@ -448,11 +540,79 @@ export function TimelinePanel(props: TimelinePanelProps) {
         }}
         onSetReplyTarget={onSetReplyTarget}
         onAddTaskFromMessage={onAddTaskFromMessage}
+        onOpenSkillAssist={openManualSkillAssist}
         onSendReaction={onSendReaction}
         onCopyMessageContent={(message) => { void copyMessageContent(message); }}
-        onPreviewImage={openImagePreview}
+        onPreviewImage={(url, alt) => setImagePreview({ url, alt })}
       />
 
+      {manualSkillModal ? (
+        <div className="image-preview-overlay" role="dialog" aria-modal="true" onClick={() => setManualSkillModal(null)}>
+          <div
+            className="w-[min(720px,92vw)] max-h-[80vh] overflow-auto rounded-2xl bg-white shadow-2xl border border-slate-200"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-200">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-slate-800">{t("skillAssist.manual.title")}</div>
+                <div className="text-xs text-slate-500 truncate">{manualSkillModal.preview || t("timeline.message")}</div>
+              </div>
+              <button
+                type="button"
+                className="h-8 px-3 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                onClick={() => setManualSkillModal(null)}
+              >
+                {t("skillAssist.manual.close")}
+              </button>
+            </div>
+            <div className="px-5 py-4 flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-slate-600">{t("skillAssist.manual.selectSkill")}</label>
+                <select
+                  value={manualSkillModal.skillSlug}
+                  onChange={(event) => setManualSkillModal((current) => current ? {
+                    ...current,
+                    skillSlug: event.target.value,
+                    assist: null,
+                    error: ""
+                  } : current)}
+                  className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                >
+                  <option value="" disabled>{t("skillAssist.manual.selectSkillPlaceholder")}</option>
+                  {skillSchemas.map((schema) => (
+                    <option key={schema.name} value={schema.name}>
+                      {schema.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!manualSkillModal.skillSlug || manualSkillModal.loading}
+                  onClick={runManualSkillAssist}
+                  className="h-9 px-4 rounded-md text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                >
+                  {manualSkillModal.loading ? t("skillAssist.manual.processing") : t("skillAssist.manual.execute")}
+                </button>
+              </div>
+              {manualSkillModal.error ? (
+                <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+                  {manualSkillModal.error}
+                </div>
+              ) : null}
+              {manualSkillModal.assist ? (
+                <SkillAssistCard
+                  assist={manualSkillModal.assist}
+                  onInsert={(value) => onReplyChange(value)}
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Image preview overlay */}
       {imagePreview ? (
         <div
           className="image-preview-overlay"
@@ -463,7 +623,7 @@ export function TimelinePanel(props: TimelinePanelProps) {
           <button
             type="button"
             className="image-preview-close"
-            aria-label="关闭图片预览"
+            aria-label={t("timeline.closePreview")}
             onClick={() => setImagePreview(null)}
           >
             ×
@@ -476,36 +636,39 @@ export function TimelinePanel(props: TimelinePanelProps) {
           />
         </div>
       ) : null}
-      <MessageComposer
-        detailOpen={Boolean(detail)}
-        capability={capability}
-        reply={reply}
-        pendingAttachments={pendingAttachments}
-        replyTarget={replyTarget}
-        aiSuggestions={aiSuggestions}
-        isAssignedToMe={isAssignedToMe}
-        isResolved={isResolved}
-        isLockedByAnotherAgent={isLockedByAnotherAgent}
-        canSend={canSend}
-        uploading={uploading}
-        uploadItems={uploadItems}
-        composerError={composerError}
-        onReplyChange={onReplyChange}
-        onSend={sendNow}
-        onSelectFiles={(files, mode) => { void startUpload(files, mode); }}
-        onRetryUpload={retryUpload}
-        onClearAttachments={onClearAttachments}
-        onRemoveAttachment={onRemoveAttachment}
-        onSetReplyTarget={onSetReplyTarget}
-        onClearComposerState={() => {
-          onReplyChange("");
-          onClearAttachments();
-          onSetReplyTarget(null);
-          setComposerError("");
-          setUploadItems([]);
-        }}
-        messagePreview={messagePreview}
-      />
+
+      {/* Composer */}
+        <MessageComposer
+          detailOpen={Boolean(detail)}
+          capability={capability}
+          reply={reply}
+          pendingAttachments={pendingAttachments}
+          composerSkillAssist={composerSkillAssist}
+          replyTarget={replyTarget}
+          aiSuggestions={aiSuggestions}
+          isAssignedToMe={isAssignedToMe}
+          isResolved={isResolved}
+          isLockedByAnotherAgent={isLockedByAnotherAgent}
+          canSend={canSend}
+          uploading={uploading}
+          uploadItems={uploadItems}
+          composerError={composerError}
+          onReplyChange={onReplyChange}
+          onSend={sendNow}
+          onSelectFiles={(files, mode) => { void startUpload(files, mode); }}
+          onRetryUpload={retryUpload}
+          onClearAttachments={onClearAttachments}
+          onRemoveAttachment={onRemoveAttachment}
+          onSetReplyTarget={onSetReplyTarget}
+          onClearComposerState={() => {
+            onReplyChange("");
+            onClearAttachments();
+            onSetReplyTarget(null);
+            setComposerError("");
+            setUploadItems([]);
+          }}
+          messagePreview={(msg) => messagePreview(msg, t)}
+        />
     </section>
   );
 }

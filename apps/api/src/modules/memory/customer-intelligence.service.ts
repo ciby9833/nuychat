@@ -884,7 +884,10 @@ export async function buildCustomerIntelligenceContext(
   db: Knex | Knex.Transaction,
   tenantId: string,
   conversationId: string,
-  customerId?: string
+  customerId?: string,
+  options?: {
+    excludeMemoryTypes?: string[];
+  }
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -943,7 +946,8 @@ export async function buildCustomerIntelligenceContext(
     query: queryText,
     limit: 6
   });
-  const relevantMemories = memoryRetrieval.selected;
+  const excludedTypes = new Set((options?.excludeMemoryTypes ?? []).map((item) => String(item)));
+  const relevantMemories = memoryRetrieval.selected.filter((row) => !excludedTypes.has(String(row.memory_type)));
 
   if (profile?.profileSummary) {
     parts.push(`[CUSTOMER PROFILE]\n${profile.profileSummary.slice(0, 1800)}`);

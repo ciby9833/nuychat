@@ -41,7 +41,6 @@ export function serializeAIConfigRow(cfg: Record<string, unknown>) {
     temperature: toNumber(quotas.temperature, 0.4),
     max_tokens: toNumber(quotas.maxTokens, 500),
     system_prompt_override: typeof quotas.systemPromptOverride === "string" ? quotas.systemPromptOverride : null,
-    integrations: (quotas.integrations as Record<string, { endpoint?: string; apiKey?: string; timeout?: number }>) ?? {},
     has_api_key: Boolean(readAIProviderApiKey(keyBag, normalizeProvider(provider))),
     base_url: readAIProviderBaseUrl(quotas, normalizeProvider(provider)),
     is_default: Boolean(cfg.is_default),

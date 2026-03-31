@@ -22,7 +22,7 @@ export class CustomerService {
         tenant_id: input.tenantId,
         primary_channel: input.channelType,
         external_ref: input.externalRef
-      })
+      } as any)
       .first();
 
     if (existing) {

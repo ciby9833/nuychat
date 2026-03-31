@@ -1,12 +1,11 @@
 import { ClipboardEvent, FormEvent, useState } from "react";
-import type { WebchatAttachment } from "../types";
 
 export function ChatComposer(props: {
-  onSend: (payload: { text?: string; attachments?: WebchatAttachment[] }) => Promise<void>;
+  onSend: (payload: { text?: string; attachments?: File[] }) => Promise<void>;
   disabled: boolean;
 }) {
   const [text, setText] = useState("");
-  const [files, setFiles] = useState<WebchatAttachment[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -26,8 +25,7 @@ export function ChatComposer(props: {
 
   const appendFiles = async (items: File[]) => {
     if (items.length === 0) return;
-    const next = await Promise.all(items.slice(0, 3).map(toAttachment));
-    setFiles((current) => [...current, ...(next.filter(Boolean) as WebchatAttachment[])].slice(0, 10));
+    setFiles((current) => [...current, ...items].slice(0, 10));
   };
 
   const onSelectFile = async (items: FileList | null) => {
@@ -93,24 +91,4 @@ export function ChatComposer(props: {
       ) : null}
     </form>
   );
-}
-
-async function toAttachment(file: File): Promise<WebchatAttachment | null> {
-  if (file.size > 2 * 1024 * 1024) return null;
-  const dataUrl = await readAsDataUrl(file);
-  return {
-    name: file.name,
-    mimeType: file.type || "application/octet-stream",
-    size: file.size,
-    dataUrl
-  };
-}
-
-function readAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(new Error("file_read_failed"));
-    reader.readAsDataURL(file);
-  });
 }

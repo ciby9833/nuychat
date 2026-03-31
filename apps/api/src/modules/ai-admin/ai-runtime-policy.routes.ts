@@ -14,6 +14,7 @@ export async function registerAIRuntimePolicyAdminRoutes(app: FastifyInstance) {
         policy_id: policy.policyId,
         tenant_id: policy.tenantId,
         pre_reply_policies: policy.preReplyPolicies,
+        model_scene_config: policy.modelSceneConfig,
         created_at: policy.createdAt,
         updated_at: policy.updatedAt
       };
@@ -26,18 +27,21 @@ export async function registerAIRuntimePolicyAdminRoutes(app: FastifyInstance) {
 
     const body = req.body as {
       preReplyPolicies?: unknown;
+      modelSceneConfig?: unknown;
     };
 
     return withTenantTransaction(tenantId, async (trx) => {
       const policy = await upsertTenantAIRuntimePolicy(trx, {
         tenantId,
-        preReplyPolicies: serializePreReplyPolicy(body.preReplyPolicies)
+        preReplyPolicies: serializePreReplyPolicy(body.preReplyPolicies),
+        modelSceneConfig: body.modelSceneConfig
       });
 
       return {
         policy_id: policy.policyId,
         tenant_id: policy.tenantId,
         pre_reply_policies: policy.preReplyPolicies,
+        model_scene_config: policy.modelSceneConfig,
         created_at: policy.createdAt,
         updated_at: policy.updatedAt
       };

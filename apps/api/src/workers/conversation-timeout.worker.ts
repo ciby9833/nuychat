@@ -54,12 +54,13 @@ function normalizeTimeoutAlert(input: ConversationTimeoutJobPayload): {
   if (input.alertType === "frt") return { alertType: "first_response", followUpMode: null };
   if (input.alertType === "reassign") return { alertType: "assignment_accept", followUpMode: null };
   if (input.alertType === "close") return { alertType: "follow_up", followUpMode: input.closeMode ?? "waiting_customer" };
+  if (input.alertType === "unanswered_close") return { alertType: "follow_up", followUpMode: input.followUpMode ?? "waiting_customer" };
   if (input.alertType === "follow_up") {
     return { alertType: "follow_up", followUpMode: input.followUpMode ?? "waiting_customer" };
   }
   return {
-    alertType: input.alertType,
-    followUpMode: input.alertType === "follow_up" ? input.followUpMode ?? "waiting_customer" : null
+    alertType: input.alertType as "first_response" | "assignment_accept" | "follow_up",
+    followUpMode: null
   };
 }
 
@@ -453,6 +454,7 @@ export function createConversationTimeoutWorker() {
               department_id: decision.departmentId,
               team_id: decision.teamId,
               assigned_agent_id: decision.assignedAgentId,
+              assigned_ai_agent_id: null,
               assignment_strategy: decision.strategy,
               priority: decision.priority,
               status: decision.status,
@@ -527,7 +529,7 @@ export function createConversationTimeoutWorker() {
       });
     },
     {
-      connection: workerConnection,
+      connection: workerConnection as any,
       concurrency: 5
     }
   );
@@ -632,8 +634,8 @@ async function buildUnansweredClosureSummary(
       ownerType: attempt.ownerType,
       ownerId: attempt.ownerId,
       ownerName: attempt.ownerType === "agent"
-        ? (agentNames.get(attempt.ownerId) ?? null)
-        : (aiAgentNames.get(attempt.ownerId) ?? null),
+        ? (agentNames.get(attempt.ownerId!) ?? undefined)
+        : (aiAgentNames.get(attempt.ownerId!) ?? undefined),
       assignedAt: attempt.startedAt,
       endedAt: nextStart,
       unhandledDurationSec: durationSec,

@@ -98,7 +98,7 @@ async function main() {
 
     const predicted: PredictedMemory[] = evaluation.skipped
       ? []
-      : (evaluation as { finalItems: Array<{ type: string; title: string; summary: string }> }).finalItems.map((item) => ({
+      : (evaluation as unknown as { finalItems: Array<{ type: string; title: string; summary: string }> }).finalItems.map((item) => ({
           type: item.type,
           title: item.title,
           summary: item.summary

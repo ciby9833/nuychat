@@ -400,7 +400,7 @@ export async function adminRoutingRoutes(app: FastifyInstance) {
         .limit(200);
 
       return {
-        items: rows.map((row) => {
+        items: rows.map((row: any) => {
           const summary = parseJsonRecord(row.decision_summary);
           return {
             executionId: row.trace_id,

@@ -1,13 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { Server } from "socket.io";
 
+import { readCorsOriginEnv } from "../../infra/env.js";
 import { assertActiveAccessPayload, type AccessPayload } from "../auth/auth-session.service.js";
 import { realtimeEventBus, type RealtimeEvents } from "./realtime.events.js";
 
 export function createRealtimeGateway(app: FastifyInstance) {
   const io = new Server(app.server, {
     cors: {
-      origin: process.env.CORS_ORIGIN ?? "*"
+      origin: readCorsOriginEnv()
     }
   });
 

@@ -12,6 +12,7 @@ export type AccessPayload = {
   agentId?: string | null;
   sessionId: string;
   type: "access";
+  scope?: string;
 };
 
 export type RefreshPayload = {

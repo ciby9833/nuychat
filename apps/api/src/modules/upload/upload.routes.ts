@@ -29,7 +29,7 @@ export async function uploadRoutes(app: FastifyInstance) {
     const buffer = Buffer.concat(chunks);
 
     if (file.file.truncated) {
-      throw app.httpErrors.requestEntityTooLarge("File too large (max 10 MB)");
+      throw (app.httpErrors as any).requestEntityTooLarge("File too large (max 10 MB)");
     }
 
     const result = await saveUploadedFile(buffer, file.filename, mimeType);

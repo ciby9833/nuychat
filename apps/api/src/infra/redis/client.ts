@@ -1,9 +1,11 @@
 import { Redis } from "ioredis";
 
+import { readRequiredEnv, readRequiredIntEnv } from "../env.js";
+
 export function createRedisConnection() {
   return new Redis({
-    host: process.env.REDIS_HOST ?? "localhost",
-    port: Number(process.env.REDIS_PORT ?? 6379),
+    host: readRequiredEnv("REDIS_HOST"),
+    port: readRequiredIntEnv("REDIS_PORT"),
     maxRetriesPerRequest: null
   });
 }

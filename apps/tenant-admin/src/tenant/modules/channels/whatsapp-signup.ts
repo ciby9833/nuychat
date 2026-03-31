@@ -1,7 +1,12 @@
-// 作用: WhatsApp Embedded Signup 流程（Facebook SDK 加载 + 授权 + 消息解析）
-// 菜单路径: 客户中心 -> 渠道配置 -> WhatsApp 绑定
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 渠道配置 -> WhatsApp 绑定
+ * 文件职责: 负责 WhatsApp Embedded Signup 流程，包括 Facebook SDK 加载、授权拉起和消息回传解析。
+ * 主要交互文件:
+ * - ./hooks/useChannelsData.ts: 触发 SDK 加载和授权流程。
+ * - ./types.ts: 提供 EmbeddedSignupFinishPayload 类型。
+ */
 
+import i18next from "i18next";
 import type { EmbeddedSignupFinishPayload } from "./types";
 
 declare global {
@@ -28,7 +33,7 @@ export async function loadFacebookSdk(appId: string): Promise<void> {
       }, 100);
       window.setTimeout(() => {
         window.clearInterval(timer);
-        reject(new Error("Facebook SDK 初始化超时"));
+        reject(new Error(i18next.t("channelsModule.signup.sdkInitTimeout")));
       }, 10000);
       return;
     }
@@ -48,7 +53,7 @@ export async function loadFacebookSdk(appId: string): Promise<void> {
     script.async = true;
     script.defer = true;
     script.src = "https://connect.facebook.net/en_US/sdk.js";
-    script.onerror = () => reject(new Error("加载 Facebook SDK 失败"));
+    script.onerror = () => reject(new Error(i18next.t("channelsModule.signup.sdkLoadFailed")));
     document.body.appendChild(script);
   });
 }
@@ -57,7 +62,7 @@ export async function runWhatsAppEmbeddedSignup(configId: string): Promise<Embed
   return new Promise<EmbeddedSignupFinishPayload>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       cleanup();
-      reject(new Error("Embedded Signup 超时或未返回绑定结果"));
+      reject(new Error(i18next.t("channelsModule.signup.signupTimeout")));
     }, 120000);
 
     const onMessage = (event: MessageEvent) => {
@@ -78,7 +83,7 @@ export async function runWhatsAppEmbeddedSignup(configId: string): Promise<Embed
       (response) => {
         if (response.status !== "connected" && !response.authResponse?.code) {
           cleanup();
-          reject(new Error("Meta 授权未完成"));
+          reject(new Error(i18next.t("channelsModule.signup.authIncomplete")));
         }
       },
       {

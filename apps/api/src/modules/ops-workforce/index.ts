@@ -53,7 +53,7 @@ export async function opsWorkforceRoutes(app: FastifyInstance) {
         })
         .join("identities as i", "i.identity_id", "tm.identity_id")
         .leftJoin(activeConversations, function joinActiveConversations() {
-          this.on(trx.raw("ac.current_handler_id::uuid"), "=", trx.ref("ap.agent_id"));
+          this.on(trx.raw("ac.current_handler_id::uuid") as unknown as string, "=", trx.ref("ap.agent_id"));
         })
         .where("ap.tenant_id", tenantId)
         .groupBy("ap.agent_id", "ap.display_name", "ap.presence_state", "ap.last_heartbeat_at", "i.email", "ac.active_count")
@@ -270,7 +270,7 @@ export async function opsWorkforceRoutes(app: FastifyInstance) {
     const validStatuses = new Set(["scheduled", "off", "leave"]);
 
     return withTenantTransaction(tenantId, async (trx) => {
-      const rows = body.items
+      const rows = (body.items ?? [])
         .filter((item) => item.agentId?.trim() && isDateString(item.shiftDate))
         .map((item) => ({
           tenant_id: tenantId,

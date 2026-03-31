@@ -1,8 +1,13 @@
-// 作用: 渠道卡片网格（含筛选栏 + 渠道卡片列表）
-// 菜单路径: 客户中心 -> 渠道配置 -> 渠道列表
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 渠道配置 -> 渠道列表
+ * 文件职责: 渲染渠道筛选区与渠道卡片列表，并提供查看、编辑、WhatsApp 绑定入口。
+ * 主要交互文件:
+ * - ../ChannelsTab.tsx: 负责传入筛选与操作回调。
+ * - ../helpers.ts: 提供渠道标识读取方法。
+ */
 
 import { Button, Card, Select, Space, Tag, Typography } from "antd";
+import { useTranslation } from "react-i18next";
 
 import type { ChannelConfig } from "../../../types";
 import { readChannelIdentifier } from "../helpers";
@@ -34,9 +39,10 @@ export function ChannelGrid({
   onEdit: (row: ChannelConfig) => void;
   onBindWhatsApp: (row: ChannelConfig) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <>
-      <Card title="渠道筛选">
+      <Card title={t("channelsModule.grid.filterTitle")}>
         <Space wrap>
           <Select value={typeFilter} onChange={onTypeFilterChange} style={{ width: 180 }} options={typeOptions} />
           <Select
@@ -44,16 +50,16 @@ export function ChannelGrid({
             onChange={onStatusFilterChange}
             style={{ width: 180 }}
             options={[
-              { value: "all", label: "全部状态" },
-              { value: "active", label: "active" },
-              { value: "inactive", label: "inactive" }
+              { value: "all", label: t("channelsModule.grid.allStatuses") },
+              { value: "active", label: t("channelsModule.status.active") },
+              { value: "inactive", label: t("channelsModule.status.inactive") }
             ]}
           />
-          <Button onClick={onRefresh}>刷新</Button>
+          <Button onClick={onRefresh}>{t("channelsModule.grid.refresh")}</Button>
         </Space>
       </Card>
 
-      <Card title="渠道列表" extra={<Tag color="blue">{filtered.length} 条</Tag>}>
+      <Card title={t("channelsModule.grid.listTitle")} extra={<Tag color="blue">{t("channelsModule.grid.count", { count: filtered.length })}</Tag>}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
           {filtered.map((row) => {
             const active = row.config_id === selectedChannel?.config_id;
@@ -74,10 +80,10 @@ export function ChannelGrid({
                     <Typography.Text strong>{row.channel_id}</Typography.Text>
                   </Space>
                 )}
-                extra={<Tag color={row.is_active ? "green" : "default"}>{row.is_active ? "active" : "inactive"}</Tag>}
+                extra={<Tag color={row.is_active ? "green" : "default"}>{row.is_active ? t("channelsModule.status.active") : t("channelsModule.status.inactive")}</Tag>}
               >
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  标识: {readChannelIdentifier(row)}
+                  {t("channelsModule.detail.identifier")}: {readChannelIdentifier(row)}
                 </Typography.Text>
                 {row.channel_type === "whatsapp" ? (
                   <Button
@@ -90,11 +96,11 @@ export function ChannelGrid({
                       onBindWhatsApp(row);
                     }}
                   >
-                    {row.phone_number_id ? "重新绑定 WhatsApp" : "绑定 WhatsApp"}
+                    {row.phone_number_id ? t("channelsModule.grid.rebindWhatsApp") : t("channelsModule.grid.bindWhatsApp")}
                   </Button>
                 ) : (
                   <Button size="small" type="primary" ghost onClick={(e) => { e.stopPropagation(); onEdit(row); }}>
-                    编辑配置
+                    {t("channelsModule.grid.editConfig")}
                   </Button>
                 )}
               </Card>

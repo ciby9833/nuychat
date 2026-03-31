@@ -76,6 +76,7 @@ export function toIsoString(value: unknown): string {
 
 export function evaluateCustomerSegmentRule(
   customer: {
+    customerId?: string;
     tier?: string;
     tags?: Array<{ code: string }>;
     conversationCount?: number;
@@ -86,6 +87,9 @@ export function evaluateCustomerSegmentRule(
     lastCaseAt?: string | null;
     language?: string;
     channel?: string;
+    name?: string | null;
+    reference?: string;
+    updatedAt?: string;
   },
   rule: Record<string, unknown>
 ): boolean {

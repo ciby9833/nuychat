@@ -1,54 +1,62 @@
-// 作用: AI 座席列表表格（含启用/停用/删除操作）
-// 菜单路径: 客户中心 -> AI 座席管理 -> 实例列表
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> AI 座席 -> 实例列表
+ * 文件职责: 展示 AI 座席列表表格，并触发行级查看、编辑、启停、删除操作。
+ * 主要交互文件:
+ * - ../AISeatsTab.tsx: 负责把列表操作绑定到模块主入口。
+ * - ../hooks/useAISeatsData.ts: 提供 rows 数据与启停、删除动作。
+ * - ../../../types: 提供 TenantAIAgent 类型。
+ */
 
 import { Button, Card, Popconfirm, Space, Table, Tag } from "antd";
+import { useTranslation } from "react-i18next";
 
 import type { TenantAIAgent } from "../../../types";
 
 export function AISeatsTable({
   rows,
+  onView,
   onEdit,
   onToggleStatus,
-  onDelete,
-  onCreate
+  onDelete
 }: {
   rows: TenantAIAgent[];
+  onView: (item: TenantAIAgent) => void;
   onEdit: (item: TenantAIAgent) => void;
   onToggleStatus: (item: TenantAIAgent) => void;
   onDelete: (aiAgentId: string) => void;
-  onCreate: () => void;
 }) {
+  const { t } = useTranslation();
   return (
-    <Card title="AI 客服实例" extra={<Button type="primary" onClick={onCreate}>新增 AI 座席</Button>}>
+    <Card title={t("aiSeats.table.title")}>
       <Table<TenantAIAgent>
         rowKey="aiAgentId"
         dataSource={rows}
         pagination={false}
         columns={[
-          { title: "名称", dataIndex: "name" },
-          { title: "角色", dataIndex: "roleLabel", render: (value: string | null) => value ?? "-" },
-          { title: "人格", dataIndex: "personality", render: (value: string | null) => value ?? "-" },
-          { title: "说明", dataIndex: "description", render: (value: string | null) => value ?? "-" },
+          { title: t("aiSeats.table.colName"), dataIndex: "name" },
+          { title: t("aiSeats.table.colRole"), dataIndex: "roleLabel", render: (value: string | null) => value ?? t("aiSeats.common.empty") },
+          { title: t("aiSeats.table.colPersonality"), dataIndex: "personality", render: (value: string | null) => value ?? t("aiSeats.common.empty") },
+          { title: t("aiSeats.table.colDescription"), dataIndex: "description", render: (value: string | null) => value ?? t("aiSeats.common.empty") },
           {
-            title: "状态",
+            title: t("aiSeats.table.colStatus"),
             dataIndex: "status",
-            render: (value: string) => <Tag color={value === "active" ? "green" : value === "draft" ? "gold" : "default"}>{value}</Tag>
+            render: (value: string) => <Tag color={value === "active" ? "green" : value === "draft" ? "gold" : "default"}>{t(`aiSeats.status.${value}`, { defaultValue: value })}</Tag>
           },
-          { title: "创建时间", dataIndex: "createdAt", render: (value: string) => new Date(value).toLocaleString() },
+          { title: t("aiSeats.table.colCreatedAt"), dataIndex: "createdAt", render: (value: string) => new Date(value).toLocaleString() },
           {
-            title: "操作",
+            title: t("aiSeats.table.colAction"),
             render: (_: unknown, item: TenantAIAgent) => (
               <Space>
-                <Button size="small" onClick={() => onEdit(item)}>编辑</Button>
+                <Button size="small" onClick={() => onView(item)}>{t("aiSeats.actions.view")}</Button>
+                <Button size="small" onClick={() => onEdit(item)}>{t("aiSeats.actions.edit")}</Button>
                 <Button size="small" onClick={() => onToggleStatus(item)}>
-                  {item.status === "active" ? "停用" : "启用"}
+                  {item.status === "active" ? t("aiSeats.actions.disable") : t("aiSeats.actions.enable")}
                 </Button>
                 <Popconfirm
-                  title="删除这个 AI 客服实例？"
+                  title={t("aiSeats.table.deleteConfirm")}
                   onConfirm={() => onDelete(item.aiAgentId)}
                 >
-                  <Button size="small" danger>删除</Button>
+                  <Button size="small" danger>{t("aiSeats.actions.delete")}</Button>
                 </Popconfirm>
               </Space>
             )

@@ -227,15 +227,15 @@ function normalizeText(input: string) {
 function normalizeFacetArray(value: unknown): EventFacet[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map((item) => {
+    .map((item): EventFacet | null => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return null;
       const row = item as Record<string, unknown>;
       const text = typeof row.text === "string" ? normalizeText(row.text) : "";
       if (!text) return null;
       const evidence = typeof row.evidence === "string" ? normalizeText(row.evidence) : undefined;
-      return { text, evidence } satisfies EventFacet;
+      return { text, ...(evidence !== undefined ? { evidence } : {}) };
     })
-    .filter((item): item is EventFacet => Boolean(item))
+    .filter((item): item is EventFacet => item !== null)
     .slice(0, 8);
 }
 
@@ -291,7 +291,7 @@ function parseReviewedItems(raw: string, fallback: EncodedMemoryItem[]): Reviewe
       return fallback.map((item) => ({ ...item, keep: true }));
     }
     return parsed.items
-      .map((item, index) => {
+      .map((item, index): ReviewedMemoryItem | null => {
         const base = parseBaseMemoryItem(item) ?? fallback[index] ?? null;
         if (!base) return null;
         const row = item && typeof item === "object" && !Array.isArray(item)
@@ -299,9 +299,9 @@ function parseReviewedItems(raw: string, fallback: EncodedMemoryItem[]): Reviewe
           : {};
         const keep = row.keep === false ? false : true;
         const reason = typeof row.reason === "string" ? normalizeText(row.reason) : undefined;
-        return { ...base, keep, reason } satisfies ReviewedMemoryItem;
+        return { ...base, keep, ...(reason !== undefined ? { reason } : {}) };
       })
-      .filter((item): item is ReviewedMemoryItem => Boolean(item));
+      .filter((item): item is ReviewedMemoryItem => item !== null);
   } catch {
     return fallback.map((item) => ({ ...item, keep: true }));
   }
@@ -496,7 +496,7 @@ async function encodeMemoryBundle(
   const shouldPersist = input.persist !== false;
   const aiSettings = await resolveTenantAISettings(db, input.tenantId);
   if (!aiSettings) {
-    const preview = { skipped: true, reason: "no_ai_provider" as const };
+    const preview = { skipped: true as const, reason: "no_ai_provider" as const };
     if (shouldPersist) {
       await recordMemoryEncoderTrace(db, {
         tenantId: input.tenantId,

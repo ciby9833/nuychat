@@ -19,8 +19,8 @@ declare module "fastify" {
 const CACHE_TTL_SECONDS = 300;
 
 export const tenantContextPlugin: FastifyPluginAsync = fp(async (app) => {
-  app.decorateRequest("tenant", null);
-  app.decorateRequest("auth", null);
+  app.decorateRequest("tenant", undefined);
+  app.decorateRequest("auth", undefined);
 
   app.addHook("preHandler", async (req) => {
     const auth = await resolveAuth(app, req);

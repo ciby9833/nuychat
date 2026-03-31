@@ -1,3 +1,15 @@
+/**
+ * 菜单路径与名称: 客户中心 -> 路由
+ * 文件职责: 维护路由模块表单类型与选项常量。
+ * 主要交互文件:
+ * - ./helpers.ts
+ * - ./components/ModuleTable.tsx
+ * - ./components/RuleTable.tsx
+ * - ./modals/RuleEditorDrawer.tsx
+ * - ./modals/ModuleEditorModal.tsx
+ * - ./modals/SkillGroupEditorModal.tsx
+ */
+
 export type ModuleFormValues = {
   code: string;
   name: string;
@@ -42,16 +54,16 @@ export type RuleFormValues = {
 };
 
 export const STRATEGY_OPTIONS = [
-  { value: "least_busy", label: "最小负载" },
-  { value: "balanced_new_case", label: "均衡新事项" },
-  { value: "round_robin", label: "轮询" },
-  { value: "sticky", label: "粘性分配" }
+  { value: "least_busy", labelKey: "routing.options.strategy.least_busy" },
+  { value: "balanced_new_case", labelKey: "routing.options.strategy.balanced_new_case" },
+  { value: "round_robin", labelKey: "routing.options.strategy.round_robin" },
+  { value: "sticky", labelKey: "routing.options.strategy.sticky" }
 ] as const;
 
 export const AI_STRATEGY_OPTIONS = [
-  { value: "least_busy", label: "最小负载" },
-  { value: "round_robin", label: "轮询" },
-  { value: "sticky", label: "粘性分配" }
+  { value: "least_busy", labelKey: "routing.options.strategy.least_busy" },
+  { value: "round_robin", labelKey: "routing.options.strategy.round_robin" },
+  { value: "sticky", labelKey: "routing.options.strategy.sticky" }
 ] as const;
 
 export const CHANNEL_OPTIONS = [
@@ -61,9 +73,9 @@ export const CHANNEL_OPTIONS = [
 ];
 
 export const LANGUAGE_OPTIONS = [
-  { value: "zh", label: "中文" },
-  { value: "en", label: "English" },
-  { value: "id", label: "Bahasa Indonesia" }
+  { value: "zh", labelKey: "routing.options.language.zh" },
+  { value: "en", labelKey: "routing.options.language.en" },
+  { value: "id", labelKey: "routing.options.language.id" }
 ];
 
 export const TIER_OPTIONS = [
@@ -73,33 +85,33 @@ export const TIER_OPTIONS = [
 ];
 
 export const MODULE_MODE_OPTIONS = [
-  { value: "ai_first", label: "AI 优先" },
-  { value: "human_first", label: "人工优先" },
-  { value: "ai_autonomous", label: "AI 自主" },
-  { value: "workflow_first", label: "工作流优先" }
+  { value: "ai_first", labelKey: "routing.options.moduleMode.ai_first" },
+  { value: "human_first", labelKey: "routing.options.moduleMode.human_first" },
+  { value: "ai_autonomous", labelKey: "routing.options.moduleMode.ai_autonomous" },
+  { value: "workflow_first", labelKey: "routing.options.moduleMode.workflow_first" }
 ] as const;
 
 export const EXECUTION_MODE_OPTIONS = [
-  { value: "ai_first", label: "AI 优先" },
-  { value: "human_first", label: "人工优先" },
-  { value: "ai_only", label: "仅 AI" },
-  { value: "human_only", label: "仅人工" },
-  { value: "hybrid", label: "混合" }
+  { value: "ai_first", labelKey: "routing.options.executionMode.ai_first" },
+  { value: "human_first", labelKey: "routing.options.executionMode.human_first" },
+  { value: "ai_only", labelKey: "routing.options.executionMode.ai_only" },
+  { value: "human_only", labelKey: "routing.options.executionMode.human_only" },
+  { value: "hybrid", labelKey: "routing.options.executionMode.hybrid" }
 ] as const;
 
 export const HYBRID_STRATEGY_OPTIONS = [
-  { value: "load_balanced", label: "按负载均衡" },
-  { value: "prefer_human", label: "优先人工" },
-  { value: "prefer_ai", label: "优先 AI" }
+  { value: "load_balanced", labelKey: "routing.options.hybridStrategy.load_balanced" },
+  { value: "prefer_human", labelKey: "routing.options.hybridStrategy.prefer_human" },
+  { value: "prefer_ai", labelKey: "routing.options.hybridStrategy.prefer_ai" }
 ] as const;
 
 export const OVERRIDE_OPTIONS = [
-  { value: "force_human", label: "强制人工" },
-  { value: "allow_policy", label: "仍按策略" }
+  { value: "force_human", labelKey: "routing.options.override.force_human" },
+  { value: "allow_policy", labelKey: "routing.options.override.allow_policy" }
 ] as const;
 
 export const AI_UNHANDLED_OPTIONS = [
-  { value: "force_human", label: "强制人工" },
-  { value: "queue_human", label: "进入人工队列" },
-  { value: "allow_policy", label: "仍按策略" }
+  { value: "force_human", labelKey: "routing.options.aiUnhandled.force_human" },
+  { value: "queue_human", labelKey: "routing.options.aiUnhandled.queue_human" },
+  { value: "allow_policy", labelKey: "routing.options.aiUnhandled.allow_policy" }
 ] as const;

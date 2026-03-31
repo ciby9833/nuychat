@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Knex } from "knex";
+import type { AIMessage } from "../../../../../packages/ai-sdk/src/index.js";
 
 import { db, withTenantTransaction } from "../../infra/db/client.js";
 import { conversationTimeoutQueue, outboundQueue, routingQueue } from "../../infra/queue/queues.js";
@@ -22,24 +23,29 @@ import { RoutingContextService } from "../routing-engine/routing-context.service
 import { UnifiedRoutingEngineService } from "../routing-engine/unified-routing-engine.service.js";
 import { RoutingPlanRepository } from "../routing-engine/routing-plan.repository.js";
 import { RoutingPlanStepService } from "../routing-engine/routing-plan-step.service.js";
-import { SkillGatewayService } from "../skills/skill-gateway.service.js";
-import { skillRegistry } from "../skills/skill.registry.js";
+import { recommendCapabilityScripts } from "../agent-skills/capability-recommendation.service.js";
+import { listTenantSkillsForPlanning } from "../agent-skills/skill-definition.service.js";
+import { suggestCapabilities } from "../agent-skills/skill-planner.service.js";
+import { validateCapabilitySuggestions } from "../agent-skills/planner-guard.service.js";
+import { runCapabilityScriptExecution } from "../tasks/task-script-execution.service.js";
+import { resolveTenantAISettingsForScene } from "../ai/provider-config.service.js";
 import {
-  getBoundRuntimePolicies,
   evaluateSkillExecutionGate,
+  getBoundRuntimePolicies,
   recordSkillInvocation
 } from "../skills/runtime-governance.service.js";
 import { trackEvent } from "../analytics/analytics.service.js";
-import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
 import { CaseTaskService } from "../tasks/case-task.service.js";
 import {
   getConversationInsightRecord,
-  getCustomerProfileRecord
+  getCustomerProfileRecord,
+  buildCustomerIntelligenceContext
 } from "../memory/customer-intelligence.service.js";
+import { CustomerAnalysisService } from "../memory/customer-analysis.service.js";
 import { cancelAssignmentAcceptTimeout, cancelFollowUpTimeout, scheduleAssignmentAcceptTimeout } from "../sla/conversation-sla.service.js";
+import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
 
 const copilotService = new CopilotService();
-const skillGateway = new SkillGatewayService();
 const conversationCaseService = new ConversationCaseService();
 const conversationSegmentService = new ConversationSegmentService();
 const ownershipService = new OwnershipService();
@@ -50,6 +56,7 @@ const unifiedRoutingEngineService = new UnifiedRoutingEngineService();
 const routingPlanRepository = new RoutingPlanRepository();
 const routingPlanStepService = new RoutingPlanStepService();
 const caseTaskService = new CaseTaskService();
+const customerAnalysisService = new CustomerAnalysisService();
 
 export async function conversationRoutes(app: FastifyInstance) {
   app.addHook("preHandler", async (req) => {
@@ -378,12 +385,11 @@ export async function conversationRoutes(app: FastifyInstance) {
         .select("preferred_skills")
         .first<{ preferred_skills: unknown }>();
 
-      const result = await skillGateway.recommend(trx, {
+      const result = await recommendCapabilityScripts(trx, {
         tenantId,
         conversationId,
         actorType,
         moduleId: assignment?.module_id ?? null,
-        skillGroupId: assignment?.skill_group_id ?? null,
         preferredSkills: parseJsonStringArray(pref?.preferred_skills)
       });
 
@@ -391,6 +397,335 @@ export async function conversationRoutes(app: FastifyInstance) {
         conversationId,
         actorType,
         ...result
+      };
+    });
+  });
+
+  app.get("/api/conversations/:conversationId/executors/schemas", async (req) => {
+    const auth = requireAuth(app, req);
+    const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
+    const { conversationId } = req.params as { conversationId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      await assertConversationAccess(trx, {
+        tenantId,
+        conversationId,
+        agentId,
+        role,
+        app
+      });
+
+      const conversation = await loadConversationExecutionContext(trx, tenantId, conversationId);
+      const availableSkills = await listTenantSkillsForPlanning(trx, {
+        tenantId,
+        channelType: conversation.channelType,
+        actorRole: "agent",
+        ownerMode: "agent"
+      });
+
+      const schemas = availableSkills.flatMap((skill) =>
+        skill.scripts
+          .filter((script) => script.enabled)
+          .map((script) => ({
+            name: script.scriptKey,
+            description: skill.description ?? script.name ?? skill.name,
+            parameters: normalizeConversationSkillSchema(skill.inputSchema)
+          }))
+      );
+
+      return { schemas };
+    });
+  });
+
+  app.post("/api/conversations/:conversationId/executors/execute", async (req) => {
+    const auth = requireAuth(app, req);
+    const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
+    const { conversationId } = req.params as { conversationId: string };
+    const body = (req.body as {
+      executorName?: string;
+      parameters?: Record<string, unknown>;
+    } | undefined) ?? {};
+
+    const executorName = typeof body.executorName === "string" ? body.executorName.trim() : "";
+    const parameters = body.parameters && typeof body.parameters === "object" ? body.parameters : {};
+
+    if (!executorName) {
+      throw app.httpErrors.badRequest("executorName is required");
+    }
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      await assertConversationAccess(trx, {
+        tenantId,
+        conversationId,
+        agentId,
+        role,
+        app
+      });
+      await recordAgentPresenceActivity(trx, tenantId, agentId);
+
+      const conversation = await loadConversationExecutionContext(trx, tenantId, conversationId);
+      const policyMap = await getBoundRuntimePolicies(trx, {
+        tenantId,
+        conversationId,
+        actorType: "agent"
+      });
+      const gate = await evaluateSkillExecutionGate(trx, {
+        tenantId,
+        conversationId,
+        actorType: "agent",
+        policyMap,
+        skillName: executorName,
+        args: parameters,
+        requesterId: auth.sub
+      });
+      if (gate.action !== "allow") {
+        await recordSkillInvocation(trx, {
+          tenantId,
+          conversationId,
+          skillName: executorName,
+          actorType: "agent",
+          args: parameters,
+          decision: "blocked",
+          denyReason: gate.reason
+        });
+        throw app.httpErrors.forbidden(gate.detail);
+      }
+
+      const availableSkills = await listTenantSkillsForPlanning(trx, {
+        tenantId,
+        channelType: conversation.channelType,
+        actorRole: "agent",
+        ownerMode: "agent"
+      });
+      const selectedSkill = availableSkills.find((skill) =>
+        skill.scripts.some((script) => script.enabled && script.scriptKey === executorName)
+      );
+      const script = selectedSkill?.scripts.find((item) => item.enabled && item.scriptKey === executorName);
+
+      if (!selectedSkill || !script) {
+        throw app.httpErrors.notFound(`Executor ${executorName} is not available for this conversation`);
+      }
+
+      const normalizedParameters = normalizeSkillExecutionArgs({
+        inputSchema: selectedSkill.inputSchema,
+        parameters,
+        sourceMessageText: typeof parameters.sourceMessageText === "string" ? parameters.sourceMessageText : undefined
+      });
+
+      const startedAt = Date.now();
+      try {
+        const result = await runCapabilityScriptExecution({
+          tenantId,
+          customerId: conversation.customerId,
+          conversationId,
+          capability: {
+            capabilityId: selectedSkill.capabilityId,
+            slug: selectedSkill.slug,
+            name: selectedSkill.name,
+            description: selectedSkill.description
+          },
+          script: {
+            scriptKey: script.scriptKey,
+            name: script.name,
+            fileName: script.fileName,
+            language: script.language,
+            sourceCode: script.sourceCode,
+            requirements: script.requirements,
+            envRefs: script.envRefs,
+            envBindings: script.envBindings
+          },
+          args: normalizedParameters
+        });
+
+        await recordSkillInvocation(trx, {
+          tenantId,
+          conversationId,
+          skillName: executorName,
+          actorType: "agent",
+          args: normalizedParameters,
+          decision: "allowed",
+          durationMs: Date.now() - startedAt,
+          result
+        });
+
+        return {
+          skillName: executorName,
+          result,
+          messageId: crypto.randomUUID()
+        };
+      } catch (error) {
+        await recordSkillInvocation(trx, {
+          tenantId,
+          conversationId,
+          skillName: executorName,
+          actorType: "agent",
+          args: normalizedParameters,
+          decision: "error",
+          durationMs: Date.now() - startedAt,
+          result: { error: (error as Error).message }
+        });
+        throw app.httpErrors.badRequest((error as Error).message);
+      }
+    });
+  });
+
+  app.post("/api/conversations/:conversationId/skills/assist", async (req) => {
+    const auth = requireAuth(app, req);
+    const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
+    const { conversationId } = req.params as { conversationId: string };
+    const body = (req.body as { sourceMessageId?: string | null } | undefined) ?? {};
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      await assertConversationAccess(trx, {
+        tenantId,
+        conversationId,
+        agentId,
+        role,
+        app
+      });
+
+      const conversation = await loadConversationExecutionContext(trx, tenantId, conversationId);
+      const aiSettings = await resolveTenantAISettingsForScene(trx, tenantId, "agent_assist");
+      if (!aiSettings) {
+        return { assist: null, reason: "no_ai_provider" };
+      }
+
+      const availableSkills = await listTenantSkillsForPlanning(trx, {
+        tenantId,
+        channelType: conversation.channelType,
+        actorRole: "agent",
+        ownerMode: "agent"
+      });
+      if (availableSkills.length === 0) {
+        return { assist: null, reason: "no_available_skills" };
+      }
+
+      const [aiMessages, customerContext] = await Promise.all([
+        loadConversationPlannerMessages(trx, tenantId, conversationId),
+        buildCustomerIntelligenceContext(trx, tenantId, conversationId, conversation.customerId).catch(() => null)
+      ]);
+
+      // Inject customer context as a lightweight preamble so the Planner
+      // understands who the customer is and what they have been discussing.
+      const plannerMessages = buildPlannerMessagesWithContext(aiMessages, customerContext);
+
+      const capabilitySuggestions = await suggestCapabilities({
+        provider: aiSettings.provider,
+        model: aiSettings.model,
+        messages: plannerMessages,
+        temperature: aiSettings.temperature,
+        maxTokens: aiSettings.maxTokens,
+        skills: availableSkills
+      });
+
+      const validatedSuggestions = await validateCapabilitySuggestions(trx, {
+        tenantId,
+        conversationId,
+        suggestions: capabilitySuggestions,
+        availableSkills
+      });
+      const assistedSkill = validatedSuggestions.candidates[0]?.skill ?? null;
+      if (!assistedSkill) {
+        return { assist: null, reason: "no_candidate_capability" };
+      }
+
+      const sourceMessage = await resolveAssistSourceMessage(
+        trx,
+        tenantId,
+        conversationId,
+        body.sourceMessageId ?? null,
+        buildRequestOrigin(req)
+      );
+      if (!sourceMessage) {
+        return { assist: null, reason: "no_source_message" };
+      }
+
+      const args = await extractSkillAssistArgs({
+        provider: aiSettings.provider,
+        model: aiSettings.model,
+        temperature: aiSettings.temperature,
+        maxTokens: aiSettings.maxTokens,
+        skill: assistedSkill,
+        messages: plannerMessages,
+        sourceMessageText: sourceMessage.text,
+        sourceAttachments: sourceMessage.attachments,
+        customerContext
+      });
+
+      const script = assistedSkill.scripts.find((item) => item.enabled);
+      if (!script) {
+        return { assist: null, reason: "no_script_available" };
+      }
+
+      const normalizedArgs = normalizeSkillExecutionArgs({
+        inputSchema: assistedSkill.inputSchema,
+        parameters: args,
+        sourceMessageText: sourceMessage.text,
+        sourceAttachments: sourceMessage.attachments
+      });
+
+      const startedAt = Date.now();
+      const result = await runCapabilityScriptExecution({
+        tenantId,
+        customerId: conversation.customerId,
+        conversationId,
+        capability: {
+          capabilityId: assistedSkill.capabilityId,
+          slug: assistedSkill.slug,
+          name: assistedSkill.name,
+          description: assistedSkill.description
+        },
+        script: {
+          scriptKey: script.scriptKey,
+          name: script.name,
+          fileName: script.fileName,
+          language: script.language,
+          sourceCode: script.sourceCode,
+          requirements: script.requirements,
+          envRefs: script.envRefs,
+          envBindings: script.envBindings
+        },
+        args: normalizedArgs
+      });
+
+      await recordSkillInvocation(trx, {
+        tenantId,
+        conversationId,
+        skillName: script.scriptKey,
+        actorType: "agent",
+        args: normalizedArgs,
+        decision: "allowed",
+        durationMs: Date.now() - startedAt,
+        result
+      });
+
+      // Post-process raw skill result through LLM so the frontend receives
+      // a clean customerReply + structured timeline (if applicable) instead
+      // of raw pipe-delimited text from the Python script.
+      const displayResult = await formatSkillResultForDisplay({
+        provider: aiSettings.provider,
+        model: aiSettings.model,
+        temperature: aiSettings.temperature,
+        maxTokens: aiSettings.maxTokens,
+        rawResult: result,
+        sourceMessageText: sourceMessage.text,
+        customerContext
+      }).catch(() => result); // fallback to raw result on LLM error
+
+      return {
+        assist: {
+          skillName: script.scriptKey,
+          sourceMessageId: sourceMessage.messageId,
+          sourceMessagePreview: sourceMessage.text,
+          parameters: normalizedArgs,
+          result: displayResult
+        }
       };
     });
   });
@@ -477,7 +812,7 @@ export async function conversationRoutes(app: FastifyInstance) {
 
       if (!base) throw app.httpErrors.notFound("Conversation not found");
 
-      const [profile, latestInsight, historyRows, sentimentRows, memoryRows, stateRows, aiAnalysis] = await Promise.all([
+      const [profile, latestInsight, historyRows, sentimentRows, memoryRows, stateRows] = await Promise.all([
         getCustomerProfileRecord(trx, tenantId, base.customer_id),
         getConversationInsightRecord(trx, tenantId, conversationId),
         trx("conversation_cases as cc")
@@ -524,7 +859,6 @@ export async function conversationRoutes(app: FastifyInstance) {
           .select("state_type", "state_payload", "updated_at")
           .orderBy("updated_at", "desc")
           .limit(6),
-        copilotService.generate(trx, { tenantId, conversationId })
       ]);
 
       const orderIdSet = new Set<string>();
@@ -540,7 +874,60 @@ export async function conversationRoutes(app: FastifyInstance) {
       }
       const orderClues = Array.from(orderIdSet).slice(0, 12);
 
-      const kbKeywords = [base.last_message_preview, aiAnalysis.summary]
+      const memoryItems = memoryRows.map((row) => ({
+        memoryType: String(row.memory_type),
+        title: row.title ? String(row.title) : null,
+        summary: String(row.summary ?? ""),
+        salience: Number(row.salience ?? 0),
+        updatedAt: toIsoString(row.updated_at as string)
+      }));
+
+      const stateSnapshots = stateRows.map((row) => ({
+        stateType: String(row.state_type),
+        payload: parseJsonObject(row.state_payload),
+        updatedAt: toIsoString(row.updated_at as string)
+      }));
+
+      const history = historyRows.map((row) => ({
+        caseId: row.case_id as string,
+        caseTitle: (row.case_title as string | null) ?? null,
+        caseType: (row.case_type as string | null) ?? null,
+        conversationId: row.conversation_id as string,
+        channelType: row.channel_type as string,
+        status: row.status as string,
+        summary: (row.summary as string | null) ?? null,
+        intent: (row.last_intent as string | null) ?? null,
+        sentiment: (row.last_sentiment as string | null) ?? null,
+        occurredAt: toIsoString(row.last_activity_at as string)
+      }));
+
+      const aiAnalysis = await customerAnalysisService.generate(trx, {
+        tenantId,
+        customerId: base.customer_id,
+        conversationId,
+        customerName: base.display_name,
+        customerLanguage: base.language,
+        profileSummary: profile?.profileSummary ?? null,
+        latestInsight,
+        memoryItems: memoryItems.map((item) => ({
+          memoryType: item.memoryType,
+          title: item.title,
+          summary: item.summary,
+          salience: item.salience
+        })),
+        stateSnapshots: stateSnapshots.map((item) => ({
+          stateType: item.stateType,
+          payload: item.payload
+        })),
+        history: history.map((item) => ({
+          summary: item.summary,
+          intent: item.intent,
+          sentiment: item.sentiment
+        })),
+        orderClues
+      });
+
+      const kbKeywords = [base.last_message_preview, latestInsight?.summary, profile?.profileSummary, orderClues.join(" ")]
         .map((item) => String(item ?? "").trim())
         .filter(Boolean)
         .join(" ");
@@ -575,18 +962,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           operatingNotes: profile?.operatingNotes ?? {},
           stateSnapshot: profile?.stateSnapshot ?? {}
         },
-        history: historyRows.map((row) => ({
-          caseId: row.case_id as string,
-          caseTitle: (row.case_title as string | null) ?? null,
-          caseType: (row.case_type as string | null) ?? null,
-          conversationId: row.conversation_id as string,
-          channelType: row.channel_type as string,
-          status: row.status as string,
-          summary: (row.summary as string | null) ?? null,
-          intent: (row.last_intent as string | null) ?? null,
-          sentiment: (row.last_sentiment as string | null) ?? null,
-          occurredAt: toIsoString(row.last_activity_at as string)
-        })),
+        history,
         latestConversationIntelligence: latestInsight
           ? {
               summary: latestInsight.summary,
@@ -595,18 +971,8 @@ export async function conversationRoutes(app: FastifyInstance) {
               keyEntities: latestInsight.keyEntities
             }
           : null,
-        memoryItems: memoryRows.map((row) => ({
-          memoryType: String(row.memory_type),
-          title: row.title ? String(row.title) : null,
-          summary: String(row.summary ?? ""),
-          salience: Number(row.salience ?? 0),
-          updatedAt: toIsoString(row.updated_at as string)
-        })),
-        stateSnapshots: stateRows.map((row) => ({
-          stateType: String(row.state_type),
-          payload: parseJsonObject(row.state_payload),
-          updatedAt: toIsoString(row.updated_at as string)
-        })),
+        memoryItems,
+        stateSnapshots,
         orderClues,
         sentimentTrend: sentimentRows
           .map((row) => ({
@@ -1053,6 +1419,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           department_id: teamContext.departmentId,
           team_id: teamContext.teamId,
           assigned_agent_id: agentId,
+          assigned_ai_agent_id: null,
           handoff_required: false,
           handoff_reason: null,
           assignment_reason: "accepted_reserved_assignment",
@@ -1180,6 +1547,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         .update({
           status: "assigned",
           assigned_agent_id: targetAgentId,
+          assigned_ai_agent_id: null,
           handoff_required: false,
           handoff_reason: null,
           assignment_strategy: "manual",
@@ -1732,143 +2100,6 @@ export async function conversationRoutes(app: FastifyInstance) {
     });
   });
 
-  // ── POST /api/conversations/:conversationId/skills/execute ────────────────────
-  // Agent-triggered one-click skill execution.
-  // Flow: governance gate → skill.execute() → write system message → emit realtime
-  app.post("/api/conversations/:conversationId/skills/execute", async (req) => {
-    const auth = requireAuth(app, req);
-    const tenantId = auth.tenantId;
-    const { conversationId } = req.params as { conversationId: string };
-    const body = (req.body as { skillName?: string; parameters?: Record<string, unknown> }) ?? {};
-
-    if (!body.skillName?.trim()) throw app.httpErrors.badRequest("skillName is required");
-    const skillName = body.skillName.trim();
-
-    const skill = skillRegistry.get(skillName);
-    if (!skill) throw app.httpErrors.badRequest(`Skill "${skillName}" is not registered on this server`);
-
-    const parameters = body.parameters ?? {};
-
-    const result = await withTenantTransaction(tenantId, async (trx) => {
-      await recordAgentPresenceActivity(trx, tenantId, auth.agentId ?? undefined);
-      // Look up the conversation's queue assignment to get module/skillGroup for policy scoping
-      const assignment = await trx("queue_assignments")
-        .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .select("module_id", "skill_group_id")
-        .first<{ module_id: string | null; skill_group_id: string | null }>();
-
-      // Build policy map and evaluate execution gate
-      const policyMap = await getBoundRuntimePolicies(trx, {
-        tenantId,
-        conversationId,
-        moduleId: assignment?.module_id ?? null,
-        skillGroupId: assignment?.skill_group_id ?? null,
-        actorType: "agent"
-      });
-
-      const gate = await evaluateSkillExecutionGate(trx, {
-        tenantId,
-        conversationId,
-        moduleId: assignment?.module_id ?? null,
-        skillGroupId: assignment?.skill_group_id ?? null,
-        actorType: "agent",
-        policyMap,
-        skillName,
-        args: parameters,
-        requesterId: auth.sub
-      });
-
-      if (gate.action === "deny") {
-        await recordSkillInvocation(trx, {
-          tenantId,
-          conversationId,
-          skillName,
-          actorType: "agent",
-          args: parameters,
-          decision: "blocked",
-          denyReason: gate.reason,
-          result: { message: gate.detail },
-          policyMap
-        });
-        throw app.httpErrors.forbidden(gate.detail);
-      }
-
-      // Execute the skill or enqueue it as an async task when it may block.
-      const startedAt = Date.now();
-      const conversation = await trx("conversations")
-        .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .select("customer_id")
-        .first<{ customer_id: string }>();
-      if (!conversation) throw app.httpErrors.notFound("Conversation not found");
-
-      const skillResult = skill.executionMode === "async"
-        ? await enqueueAsyncAgentSkillExecution({
-            tenantId,
-            customerId: conversation.customer_id,
-            conversationId,
-            skillName,
-            parameters,
-            requesterId: auth.sub
-          })
-        : await skill.execute(parameters, { tenantId, db: trx });
-      await recordSkillInvocation(trx, {
-        tenantId,
-        conversationId,
-        skillName,
-        actorType: "agent",
-        args: parameters,
-        decision: "allowed",
-        durationMs: Date.now() - startedAt,
-        result: skillResult,
-        policyMap
-      });
-
-      // Persist the result as a system message in the conversation timeline
-      const [msgRow] = await trx("messages")
-        .insert({
-          tenant_id: tenantId,
-          conversation_id: conversationId,
-          direction: "system",
-          message_type: skill.executionMode === "async" ? "task_update" : "skill_result",
-          sender_type: auth.agentId ? "agent" : "system",
-          sender_id: auth.sub,
-          content: JSON.stringify({ skillName, result: skillResult })
-        })
-        .returning("message_id");
-
-      return {
-        skillName,
-        result: skillResult,
-        messageId: (msgRow as { message_id: string }).message_id
-      };
-    });
-
-    // Notify subscribers so the timeline panel reloads the new system message
-    realtimeEventBus.emitEvent("message.sent", {
-      tenantId,
-      conversationId,
-      occurredAt: new Date().toISOString()
-    });
-
-    trackEvent({ eventType: "skill_executed", tenantId, conversationId, payload: { skillName: result.skillName } });
-
-    return result;
-  });
-
-  // ── GET /api/conversations/:conversationId/skills/schemas ─────────────────────
-  // Returns the parameter schemas for all registered skills.
-  // The agent workspace uses this to render inline parameter forms before execution.
-  app.get("/api/conversations/:conversationId/skills/schemas", async (req) => {
-    requireAuth(app, req);
-    // Return all registered skills with their parameter schemas.
-    // Governance is enforced at execution time; schemas are safe to expose.
-    const schemas = skillRegistry.list().map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      parameters: skill.parameters
-    }));
-    return { schemas };
-  });
 }
 
 function readView(req: { query?: unknown }) {
@@ -1912,6 +2143,579 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+async function loadConversationExecutionContext(
+  trx: Knex.Transaction,
+  tenantId: string,
+  conversationId: string
+) {
+  const row = await trx("conversations")
+    .where({ tenant_id: tenantId, conversation_id: conversationId })
+    .select("customer_id", "channel_type", "current_case_id")
+    .first<{ customer_id: string; channel_type: string; current_case_id: string | null } | undefined>();
+
+  if (!row) {
+    throw new Error("conversation_not_found");
+  }
+
+  return {
+    customerId: row.customer_id,
+    channelType: row.channel_type,
+    caseId: row.current_case_id
+  };
+}
+
+/**
+ * Post-process the raw Python skill result through the LLM to produce:
+ *   - customerReply: clean, professional message the agent can send (in customer's language)
+ *   - timeline:      structured array of shipping/event records (when applicable)
+ *
+ * Raw skill scripts often return pipe-delimited text like:
+ *   "TIMELINE\ntime: ... | status: ... | description: ... | location: ... | staff:  |"
+ * The LLM converts this to a readable reply + typed event list.
+ * If the script already returns a clean customerReply (no pipes, no TIMELINE header),
+ * the raw result is returned as-is to avoid the extra LLM round-trip.
+ */
+async function formatSkillResultForDisplay(input: {
+  provider: { complete: (request: {
+    model: string;
+    messages: AIMessage[];
+    responseFormat: "json_object";
+    temperature: number;
+    maxTokens: number;
+  }) => Promise<{ content: string }> };
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  rawResult: Record<string, unknown>;
+  sourceMessageText: string;
+  customerContext?: string | null;
+}): Promise<Record<string, unknown>> {
+  const existingReply =
+    typeof input.rawResult.customerReply === "string" ? input.rawResult.customerReply.trim() : "";
+
+  // Detect raw/unformatted output: pipe-delimited fields or ALL-CAPS section headers
+  const looksRaw =
+    !existingReply ||
+    existingReply.includes(" | ") ||
+    /^[A-Z_]{3,}\s*\n/m.test(existingReply);
+
+  if (!looksRaw) {
+    // Already clean — nothing to do
+    return input.rawResult;
+  }
+
+  const formatted = await input.provider.complete({
+    model: input.model,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are a customer service assistant. Convert a raw skill execution result into a structured display format.",
+          "Return valid JSON only with this shape:",
+          '{',
+          '  "customerReply": "<clean professional message the agent can send to the customer>",',
+          '  "timeline": [',
+          '    { "time": "YYYY-MM-DD HH:mm:ss", "status": "...", "description": "...", "location": "..." }',
+          '  ]',
+          '}',
+          "",
+          "Rules:",
+          "- customerReply: concise, friendly summary in the same language the customer used. No raw codes or internal field names.",
+          "- timeline: include only events with a non-empty description or status. Omit fields that are empty/null.",
+          "- If the result has no event/timeline data, omit the timeline array entirely.",
+          "- Never include 'staff', 'problem type', 'code', 'provider', or other internal fields.",
+          `Customer original message: ${input.sourceMessageText.slice(0, 300)}`,
+          input.customerContext?.trim()
+            ? `[Customer context]\n${input.customerContext.trim().slice(0, 300)}`
+            : null
+        ].filter(Boolean).join("\n")
+      },
+      {
+        role: "user",
+        content: `Raw skill result:\n${JSON.stringify(input.rawResult, null, 2).slice(0, 3000)}`
+      }
+    ],
+    responseFormat: "json_object",
+    temperature: Math.min(0.3, input.temperature),
+    maxTokens: Math.min(input.maxTokens, 900)
+  });
+
+  const parsed = parseJsonObject(formatted.content);
+  const cleanReply = typeof parsed.customerReply === "string" && parsed.customerReply.trim()
+    ? parsed.customerReply.trim()
+    : existingReply;
+
+  const timeline = Array.isArray(parsed.timeline)
+    ? (parsed.timeline as unknown[])
+        .filter((event): event is Record<string, unknown> =>
+          Boolean(event && typeof event === "object" && !Array.isArray(event))
+        )
+        .map((event) => ({
+          ...(typeof event.time === "string" && event.time ? { time: event.time } : {}),
+          ...(typeof event.status === "string" && event.status ? { status: event.status } : {}),
+          ...(typeof event.description === "string" && event.description ? { description: event.description } : {}),
+          ...(typeof event.location === "string" && event.location ? { location: event.location } : {})
+        }))
+        .filter((event) => Object.keys(event).length > 0)
+    : undefined;
+
+  return {
+    ...input.rawResult,
+    customerReply: cleanReply,
+    ...(timeline && timeline.length > 0 ? { timeline } : {})
+  };
+}
+
+/**
+ * Prepend a concise customer-context block to the planner message list so
+ * both skill selection and arg extraction see the customer's working memory,
+ * current intent, and key entities from the conversation snapshot.
+ *
+ * We use a user+assistant pair so the context sits naturally inside the
+ * conversation window without conflicting with the planner's own system prompt.
+ */
+function buildPlannerMessagesWithContext(
+  messages: AIMessage[],
+  customerContext: string | null | undefined
+): AIMessage[] {
+  if (!customerContext?.trim()) return messages;
+
+  const contextBlock = customerContext.trim().slice(0, 1000);
+  return [
+    { role: "user" as const, content: `[Session context for skill selection]\n${contextBlock}` },
+    { role: "assistant" as const, content: "Understood, I'll use this context to select the right skill and extract parameters." },
+    ...messages
+  ];
+}
+
+async function loadConversationPlannerMessages(
+  trx: Knex.Transaction,
+  tenantId: string,
+  conversationId: string
+): Promise<AIMessage[]> {
+  const rows = await trx("messages")
+    .where({ tenant_id: tenantId, conversation_id: conversationId })
+    .select("direction", "content")
+    .orderBy("created_at", "desc")
+    .limit(12);
+
+  return [...rows]
+    .reverse()
+    .map((row) => {
+      const content = parseJsonObject(row.content);
+      const text = typeof content.text === "string" ? content.text.trim() : "";
+
+      // Include attachment notes so image/media messages are not invisible to the Planner.
+      // This mirrors orchestrator's buildChatHistory attachment handling.
+      const attachmentNotes =
+        row.direction === "inbound" && Array.isArray(content.attachments)
+          ? (content.attachments as unknown[])
+              .filter((a): a is Record<string, unknown> => Boolean(a && typeof a === "object"))
+              .filter((a) => a.url || a.mediaId)
+              .map((a) => {
+                const ref = typeof a.url === "string" ? a.url : `[mediaId:${a.mediaId}]`;
+                const mime = typeof a.mimeType === "string" ? a.mimeType : "file";
+                return `[Attachment: ${ref} (${mime})]`;
+              })
+              .join(" ")
+          : "";
+
+      const combined = [text, attachmentNotes].filter(Boolean).join(" ");
+      if (!combined) return null;
+
+      return {
+        role: (row.direction === "outbound" ? "assistant" : "user") as "assistant" | "user",
+        content: combined
+      };
+    })
+    .filter((item) => item !== null) as AIMessage[];
+}
+
+async function resolveAssistSourceMessage(
+  trx: Knex.Transaction,
+  tenantId: string,
+  conversationId: string,
+  sourceMessageId: string | null,
+  requestOrigin: string | null
+) {
+  type AssistAttachment = {
+    url: string;
+    mimeType: string;
+    fileName?: string;
+  };
+
+  // Helper: extract text + attachment description from a content blob
+  function readAttachments(content: Record<string, unknown>): AssistAttachment[] {
+    const attachments = Array.isArray(content.attachments) ? content.attachments : [];
+    return (attachments as unknown[])
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      .map((item): AssistAttachment | null => {
+        const rawUrl = typeof item.url === "string" ? item.url.trim() : "";
+        if (!rawUrl) return null;
+        return {
+          url: absolutizeAttachmentUrl(rawUrl, requestOrigin),
+          mimeType: typeof item.mimeType === "string" && item.mimeType.trim()
+            ? item.mimeType.trim()
+            : "application/octet-stream",
+          fileName: typeof item.fileName === "string" && item.fileName.trim()
+            ? item.fileName.trim()
+            : undefined
+        };
+      })
+      .filter((item): item is AssistAttachment => item !== null);
+  }
+
+  function extractMessageSummary(content: Record<string, unknown>): { text: string; attachments: AssistAttachment[] } {
+    const text = typeof content.text === "string" ? content.text.trim() : "";
+    const attachments = readAttachments(content);
+    const attachmentDesc = attachments
+      .map((a) => {
+        const mime = a.mimeType || "file";
+        const name = a.fileName ?? "";
+        return name ? `[Attachment: ${name} (${mime})]` : `[Attachment: ${mime}]`;
+      })
+      .join(" ");
+    return {
+      text: [text, attachmentDesc].filter(Boolean).join(" "),
+      attachments
+    };
+  }
+
+  if (sourceMessageId) {
+    const direct = await trx("messages")
+      .where({
+        tenant_id: tenantId,
+        conversation_id: conversationId,
+        message_id: sourceMessageId
+      })
+      .select("message_id", "content")
+      .first<{ message_id: string; content: unknown } | undefined>();
+    if (direct) {
+      const content = parseJsonObject(direct.content);
+      const summary = extractMessageSummary(content);
+      if (summary.text || summary.attachments.length > 0) {
+        return { messageId: direct.message_id, text: summary.text, attachments: summary.attachments };
+      }
+    }
+  }
+
+  // Fallback: most recent inbound customer message that has any content
+  const rows = await trx("messages")
+    .where({
+      tenant_id: tenantId,
+      conversation_id: conversationId,
+      direction: "inbound",
+      sender_type: "customer"
+    })
+    .select("message_id", "content")
+    .orderBy("created_at", "desc")
+    .limit(5);
+
+  for (const row of rows) {
+    const content = parseJsonObject(row.content);
+    const summary = extractMessageSummary(content);
+    if (summary.text || summary.attachments.length > 0) {
+      return { messageId: row.message_id as string, text: summary.text, attachments: summary.attachments };
+    }
+  }
+
+  return null;
+}
+
+async function extractSkillAssistArgs(input: {
+  provider: { complete: (request: {
+    model: string;
+    messages: AIMessage[];
+    responseFormat: "json_object";
+    temperature: number;
+    maxTokens: number;
+  }) => Promise<{ content: string }> };
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  skill: {
+    name: string;
+    description: string | null;
+    inputSchema: Record<string, unknown>;
+    skillMarkdown?: string | null;
+    formsMarkdown?: string | null;
+    referenceMarkdown?: string | null;
+  };
+  messages: AIMessage[];
+  sourceMessageText: string;
+  sourceAttachments: Array<{
+    url: string;
+    mimeType: string;
+    fileName?: string;
+  }>;
+  customerContext?: string | null;
+}): Promise<Record<string, unknown>> {
+  const attachmentSummary = input.sourceAttachments
+    .map((attachment) => {
+      const label = attachment.fileName?.trim() || attachment.url || "attachment";
+      return `${label} (${attachment.mimeType})`;
+    })
+    .join(", ");
+
+  const latestRequestContent =
+    `Latest customer request to assist:\n${input.sourceMessageText || "[customer sent attachment]"}`
+    + (attachmentSummary ? `\nAttachments: ${attachmentSummary}` : "");
+
+  let extracted: Record<string, unknown> = {};
+  try {
+    const result = await input.provider.complete({
+      model: input.model,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Extract the arguments required to execute the selected skill.",
+            "Return valid JSON only.",
+            "Do not invent fields outside the provided input schema.",
+            "Return a flat JSON object whose top-level keys match the input schema.",
+            "Do not wrap the result in arrays, numbered keys, or nested envelopes.",
+            `Selected skill: ${input.skill.name}`,
+            `Description: ${input.skill.description ?? ""}`,
+            `Input schema: ${JSON.stringify(input.skill.inputSchema)}`,
+            input.skill.skillMarkdown?.trim() ? `Skill package:\n${input.skill.skillMarkdown.trim()}` : null,
+            input.skill.formsMarkdown?.trim() ? `Forms:\n${input.skill.formsMarkdown.trim()}` : null,
+            input.skill.referenceMarkdown?.trim() ? `Reference:\n${input.skill.referenceMarkdown.trim()}` : null,
+            input.customerContext?.trim()
+              ? `\n[CUSTOMER CONTEXT — use this to fill skill arguments]\n${input.customerContext.trim().slice(0, 1200)}`
+              : null
+          ].filter(Boolean).join("\n")
+        },
+        ...input.messages,
+        {
+          role: "user",
+          content: latestRequestContent
+        }
+      ],
+      responseFormat: "json_object",
+      temperature: Math.min(0.2, Math.max(0, input.temperature)),
+      maxTokens: Math.min(500, Math.max(150, input.maxTokens))
+    });
+
+    extracted = normalizeExtractedSkillArgs(parseJsonObject(result.content), input.skill.inputSchema);
+  } catch {
+    extracted = {};
+  }
+
+  return fillSkillAssistArgsFromContext({
+    inputSchema: input.skill.inputSchema,
+    parameters: extracted,
+    sourceMessageText: input.sourceMessageText,
+    sourceAttachments: input.sourceAttachments,
+    skillDocs: [input.skill.skillMarkdown, input.skill.formsMarkdown, input.skill.referenceMarkdown].filter((item): item is string => Boolean(item?.trim())).join("\n\n")
+  });
+}
+
+function normalizeConversationSkillSchema(inputSchema: Record<string, unknown>) {
+  const properties = parseJsonObject(inputSchema.properties);
+  const required = Array.isArray(inputSchema.required)
+    ? inputSchema.required.map((item) => String(item))
+    : [];
+
+  const normalizedProperties = Object.fromEntries(
+    Object.entries(properties).map(([key, value]) => {
+      const field = parseJsonObject(value);
+      return [key, {
+        type: typeof field.type === "string" ? field.type : "string",
+        description: typeof field.description === "string" ? field.description : undefined,
+        enum: Array.isArray(field.enum) ? field.enum.map((item) => String(item)) : undefined
+      }];
+    })
+  );
+
+  return {
+    type: "object" as const,
+    properties: normalizedProperties,
+    required
+  };
+}
+
+function normalizeSkillExecutionArgs(input: {
+  inputSchema: Record<string, unknown>;
+  parameters: Record<string, unknown>;
+  sourceMessageText?: string;
+  sourceAttachments?: Array<{
+    url: string;
+    mimeType: string;
+    fileName?: string;
+  }>;
+}) {
+  const next = { ...input.parameters };
+  const properties = parseJsonObject(input.inputSchema.properties);
+  const required = Array.isArray(input.inputSchema.required)
+    ? input.inputSchema.required.map((item) => String(item))
+    : [];
+
+  const trackingNumber =
+    readNonEmptyString(next.billCodes) ??
+    readNonEmptyString(next.bill_codes) ??
+    readNonEmptyString(next.trackingNumber) ??
+    readNonEmptyString(next.tracking_number) ??
+    readNonEmptyString(next.waybillNumber) ??
+    readNonEmptyString(next.waybill_number) ??
+    extractTrackingLikeToken(input.sourceMessageText);
+
+  if ("billCodes" in properties && trackingNumber && !readNonEmptyString(next.billCodes)) {
+    next.billCodes = trackingNumber;
+  }
+  if ("trackingNumber" in properties && trackingNumber && !readNonEmptyString(next.trackingNumber)) {
+    next.trackingNumber = trackingNumber;
+  }
+  if ("waybillNumber" in properties && trackingNumber && !readNonEmptyString(next.waybillNumber)) {
+    next.waybillNumber = trackingNumber;
+  }
+  if ("image_url" in properties && !readNonEmptyString(next.image_url)) {
+    const firstAttachment = input.sourceAttachments?.find((item) => item.url);
+    if (firstAttachment?.url) {
+      next.image_url = firstAttachment.url;
+    }
+  }
+
+  for (const field of required) {
+    if (!readNonEmptyString(next[field]) && trackingNumber && /(bill|track|waybill|awb|resi)/i.test(field)) {
+      next[field] = trackingNumber;
+    }
+  }
+
+  delete next.bill_codes;
+  delete next.tracking_number;
+  delete next.waybill_number;
+  delete next.sourceMessageText;
+  return next;
+}
+
+function fillSkillAssistArgsFromContext(input: {
+  inputSchema: Record<string, unknown>;
+  parameters: Record<string, unknown>;
+  sourceMessageText: string;
+  sourceAttachments?: Array<{
+    url: string;
+    mimeType: string;
+    fileName?: string;
+  }>;
+  skillDocs?: string;
+}) {
+  const next = { ...input.parameters };
+  const properties = parseJsonObject(input.inputSchema.properties);
+  const required = Array.isArray(input.inputSchema.required)
+    ? input.inputSchema.required.map((item) => String(item)).filter(Boolean)
+    : [];
+  const candidateFields = Array.from(new Set([...Object.keys(properties), ...required]));
+  const identifier = extractTrackingLikeToken(input.sourceMessageText);
+
+  for (const field of candidateFields) {
+    if (readNonEmptyString(next[field])) continue;
+    const property = parseJsonObject(properties[field]);
+    const descriptor = `${field} ${typeof property.description === "string" ? property.description : ""}`.toLowerCase();
+
+    if (identifier && isIdentifierLikeField(descriptor)) {
+      next[field] = identifier;
+      continue;
+    }
+
+    if (!identifier && descriptor.includes("query")) {
+      next[field] = input.sourceMessageText.trim();
+      continue;
+    }
+
+    if (descriptor.includes("image") && field.toLowerCase() === "image_url") {
+      const firstAttachment = input.sourceAttachments?.find((item) => item.url);
+      if (firstAttachment?.url) {
+        next[field] = firstAttachment.url;
+      }
+    }
+  }
+
+  if (identifier && candidateFields.length === 1) {
+    const [field] = candidateFields;
+    if (field && !readNonEmptyString(next[field])) next[field] = identifier;
+  }
+
+  if (identifier && input.skillDocs?.trim()) {
+    for (const field of extractFieldHintsFromDocs(input.skillDocs)) {
+      if (!readNonEmptyString(next[field])) next[field] = identifier;
+    }
+  }
+
+  return next;
+}
+
+function normalizeExtractedSkillArgs(
+  parameters: Record<string, unknown>,
+  inputSchema: Record<string, unknown>
+) {
+  const properties = parseJsonObject(inputSchema.properties);
+  const allowedKeys = new Set(Object.keys(properties));
+  const sourceEntries = Object.entries(parameters);
+  const flattened: Record<string, unknown> = {};
+
+  const append = (record: Record<string, unknown>) => {
+    for (const [key, value] of Object.entries(record)) {
+      if (allowedKeys.size === 0 || allowedKeys.has(key)) {
+        flattened[key] = value;
+      }
+    }
+  };
+
+  append(parameters);
+
+  for (const [key, value] of sourceEntries) {
+    if (!/^\d+$/.test(key)) continue;
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    append(value as Record<string, unknown>);
+  }
+
+  return flattened;
+}
+
+function extractTrackingLikeToken(value: string | undefined) {
+  if (!value) return null;
+  const match = value.match(/\b([A-Z0-9-]{8,32})\b/i);
+  return match?.[1]?.toUpperCase() ?? null;
+}
+
+function isIdentifierLikeField(descriptor: string) {
+  return /(bill|track|tracking|waybill|awb|resi|identifier|运单|单号|物流|bill code)/i.test(descriptor);
+}
+
+function extractFieldHintsFromDocs(value: string) {
+  const hints = new Set<string>();
+  const pattern = /(?:^|\n)\s*(?:[-*]\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*[:：]\s*(.+)$/gm;
+  for (const match of value.matchAll(pattern)) {
+    const field = match[1]?.trim();
+    const description = match[2]?.trim() ?? "";
+    if (!field) continue;
+    if (isIdentifierLikeField(`${field} ${description}`)) hints.add(field);
+  }
+  return [...hints];
+}
+
+function readNonEmptyString(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function buildRequestOrigin(req: { protocol?: string; headers: Record<string, unknown> }) {
+  const protocol = typeof req.protocol === "string" && req.protocol.trim()
+    ? req.protocol.trim()
+    : "http";
+  const host = typeof req.headers.host === "string" ? req.headers.host.trim() : "";
+  return host ? `${protocol}://${host}` : null;
+}
+
+function absolutizeAttachmentUrl(rawUrl: string, requestOrigin: string | null) {
+  if (/^(?:https?:|data:|blob:)/i.test(rawUrl)) return rawUrl;
+  if (rawUrl.startsWith("/")) {
+    return requestOrigin ? `${requestOrigin}${rawUrl}` : rawUrl;
+  }
+  return rawUrl;
 }
 
 function buildUnreadCountsSubquery(trx: Knex.Transaction, tenantId: string) {
@@ -2161,6 +2965,15 @@ async function resolveReplyContext(
   };
 }
 
+type ReplyMessage = {
+  text: string;
+  agentId?: string;
+  replyToMessageId?: string | null;
+  reactionEmoji?: string;
+  reactionMessageId?: string;
+  attachment?: { url: string; mimeType: string; fileName?: string };
+};
+
 function buildReplyMessages(input: {
   text: string;
   attachments: Array<{ url: string; mimeType: string; fileName?: string }>;
@@ -2168,7 +2981,7 @@ function buildReplyMessages(input: {
   replyToMessageId?: string;
   reactionEmoji?: string;
   reactionToMessageId?: string;
-}) {
+}): ReplyMessage[] {
   if (input.reactionEmoji && input.reactionToMessageId) {
     return [{
       text: "",
@@ -2193,66 +3006,4 @@ function buildReplyMessages(input: {
     replyToMessageId: index === 0 ? input.replyToMessageId : undefined,
     attachment
   }));
-}
-
-async function enqueueAsyncAgentSkillExecution(input: {
-  tenantId: string;
-  customerId: string;
-  conversationId: string;
-  skillName: string;
-  parameters: Record<string, unknown>;
-  requesterId: string;
-}) {
-  const task = mapAsyncConversationSkill(input.skillName, input.parameters);
-  if (!task) {
-    return {
-      queued: false,
-      error: "async_skill_mapping_missing",
-      message: `Skill ${input.skillName} is marked async but cannot be scheduled.`
-    };
-  }
-
-  await scheduleLongTask({
-    tenantId: input.tenantId,
-    customerId: input.customerId,
-    conversationId: input.conversationId,
-    taskType: task.taskType,
-    title: task.title,
-    source: "agent",
-    createdById: input.requesterId,
-    priority: 80,
-    payload: task.payload
-  });
-
-  return {
-    queued: true,
-    async: true,
-    taskType: task.taskType,
-    message: task.message
-  };
-}
-
-function mapAsyncConversationSkill(skillName: string, parameters: Record<string, unknown>) {
-  if (skillName === "lookup_order") {
-    const orderId = typeof parameters.orderId === "string" ? parameters.orderId.trim() : "";
-    return {
-      taskType: "lookup_order_external",
-      title: `Order lookup ${orderId || "request"}`,
-      message: orderId ? `Order lookup queued for ${orderId}.` : "Order lookup queued.",
-      payload: { orderId }
-    };
-  }
-
-  if (skillName === "track_shipment") {
-    const trackingNumber = typeof parameters.trackingNumber === "string" ? parameters.trackingNumber.trim() : "";
-    const carrier = typeof parameters.carrier === "string" && parameters.carrier.trim() ? parameters.carrier.trim() : "JNE";
-    return {
-      taskType: "track_shipment_external",
-      title: `Shipment tracking ${trackingNumber || "request"}`,
-      message: trackingNumber ? `Shipment tracking queued for ${trackingNumber}.` : "Shipment tracking queued.",
-      payload: { trackingNumber, carrier }
-    };
-  }
-
-  return null;
 }

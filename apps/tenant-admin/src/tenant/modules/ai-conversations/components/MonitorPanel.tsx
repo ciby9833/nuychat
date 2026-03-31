@@ -3,6 +3,7 @@
 // 作者：吴川
 
 import { Button, Input, Select, Tag, Typography } from "antd";
+import { useTranslation } from "react-i18next";
 
 import type { AIConversationDetail, AIConversationListItem, SupervisorAgentStatus } from "../../../types";
 import { formatTime } from "../helpers";
@@ -33,12 +34,13 @@ export function MonitorPanel({
   onTransfer: () => void;
   onForceClose: () => void;
 }) {
+  const { t } = useTranslation();
   if (!detail || !currentItem) {
     return (
       <div style={S.rightCol}>
         <div style={{ ...S.chatEmpty, padding: 40 }}>
           <span style={{ fontSize: 32 }}>📊</span>
-          <span>选择会话查看监控信息</span>
+          <span>{t("aiConversations.monitor.emptyTitle")}</span>
         </div>
       </div>
     );
@@ -49,48 +51,48 @@ export function MonitorPanel({
   return (
     <div style={S.rightCol}>
       <div style={S.rightSection}>
-        <div style={S.rightTitle}>会话信息</div>
-        <div style={S.infoRow}><span>AI 座席</span><span style={{ fontWeight: 500 }}>{conv?.aiAgentName ?? "-"}</span></div>
-        <div style={S.infoRow}><span>客户等级</span><Tag color="purple" style={{ margin: 0, fontSize: 11 }}>{conv?.customerTier ?? "standard"}</Tag></div>
+        <div style={S.rightTitle}>{t("aiConversations.monitor.sectionInfo")}</div>
+        <div style={S.infoRow}><span>{t("aiConversations.monitor.aiAgent")}</span><span style={{ fontWeight: 500 }}>{conv?.aiAgentName ?? "-"}</span></div>
+        <div style={S.infoRow}><span>{t("aiConversations.monitor.customerTier")}</span><Tag color="purple" style={{ margin: 0, fontSize: 11 }}>{conv?.customerTier ?? t("aiConversations.monitor.standard")}</Tag></div>
         <div style={S.infoRow}>
-          <span>当前处理</span>
+          <span>{t("aiConversations.monitor.currentHandler")}</span>
           <Tag color={conv?.currentHandlerType === "human" ? "blue" : "green"} style={{ margin: 0, fontSize: 11 }}>
-            {conv?.currentHandlerType === "human" ? "人工" : "AI"}
+            {conv?.currentHandlerType === "human" ? t("aiConversations.monitor.currentHandlerHuman") : t("aiConversations.monitor.currentHandlerAi")}
           </Tag>
         </div>
-        <div style={S.infoRow}><span>会话状态</span><span>{conv?.status ?? "-"}</span></div>
-        {conv?.assignedAgentName ? <div style={S.infoRow}><span>人工坐席</span><span style={{ fontWeight: 500 }}>{conv.assignedAgentName}</span></div> : null}
-        <div style={S.infoRow}><span>最近 AI 回复</span><span style={{ fontSize: 11 }}>{conv?.lastAiResponseAt ? formatTime(conv.lastAiResponseAt) : "暂无"}</span></div>
+        <div style={S.infoRow}><span>{t("aiConversations.monitor.conversationStatus")}</span><span>{conv?.status ?? "-"}</span></div>
+        {conv?.assignedAgentName ? <div style={S.infoRow}><span>{t("aiConversations.monitor.assignedAgent")}</span><span style={{ fontWeight: 500 }}>{conv.assignedAgentName}</span></div> : null}
+        <div style={S.infoRow}><span>{t("aiConversations.monitor.lastAiReply")}</span><span style={{ fontSize: 11 }}>{conv?.lastAiResponseAt ? formatTime(conv.lastAiResponseAt) : t("aiConversations.monitor.none")}</span></div>
       </div>
 
       <div style={S.rightSection}>
-        <div style={S.rightTitle}>人工介入</div>
+        <div style={S.rightTitle}>{t("aiConversations.monitor.sectionIntervene")}</div>
         <Input.TextArea
           rows={3} value={interveneText} onChange={(e) => onInterveneTextChange(e.target.value)}
-          placeholder="输入消息直接发送给客户…" style={{ marginBottom: 8, borderRadius: 8 }}
+          placeholder={t("aiConversations.monitor.intervenePlaceholder")} style={{ marginBottom: 8, borderRadius: 8 }}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onIntervene(); } }}
         />
         <Button type="primary" block onClick={onIntervene} loading={saving} disabled={!interveneText.trim()}>
-          发送人工消息
+          {t("aiConversations.monitor.sendHumanMessage")}
         </Button>
       </div>
 
       <div style={S.rightSection}>
-        <div style={S.rightTitle}>转交与操作</div>
+        <div style={S.rightTitle}>{t("aiConversations.monitor.sectionActions")}</div>
         <div style={S.actionBtnGroup}>
-          <Select size="small" showSearch style={{ width: "100%" }} placeholder="选择在线坐席"
+          <Select size="small" showSearch style={{ width: "100%" }} placeholder={t("aiConversations.monitor.selectOnlineAgent")}
             value={transferAgentId || undefined} onChange={onTransferAgentIdChange}
             options={onlineAgents.map((a) => ({ value: a.agentId, label: `${a.displayName} (${a.activeConversations})` }))}
           />
-          <Button block onClick={onTransfer} loading={saving} disabled={!transferAgentId}>转给人工坐席</Button>
-          <Button block danger onClick={onForceClose} loading={saving}>强制关闭会话</Button>
+          <Button block onClick={onTransfer} loading={saving} disabled={!transferAgentId}>{t("aiConversations.monitor.transferToAgent")}</Button>
+          <Button block danger onClick={onForceClose} loading={saving}>{t("aiConversations.monitor.forceClose")}</Button>
         </div>
       </div>
 
       <div style={S.rightSection}>
-        <div style={S.rightTitle}>AI Trace ({detail.traces.length})</div>
+        <div style={S.rightTitle}>{t("aiConversations.monitor.sectionTrace", { count: detail.traces.length })}</div>
         {detail.traces.length === 0 ? (
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>暂无 AI Trace 记录</Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t("aiConversations.monitor.noTrace")}</Typography.Text>
         ) : (
           detail.traces.slice(0, 5).map((trace) => (
             <div key={trace.traceId} style={S.traceCard}>
@@ -98,9 +100,9 @@ export function MonitorPanel({
                 <Tag style={{ fontSize: 10, margin: 0 }}>{trace.supervisor}</Tag>
                 <span style={{ fontSize: 10, color: "#bbb" }}>{trace.totalDurationMs}ms</span>
               </div>
-              <div style={{ fontSize: 11, color: "#555" }}>技能: {trace.skillsCalled.length > 0 ? trace.skillsCalled.join(", ") : "无"}</div>
-              {trace.handoffReason ? <div style={{ fontSize: 11, color: "#d48806", marginTop: 2 }}>转人工: {trace.handoffReason}</div> : null}
-              {trace.error ? <div style={{ fontSize: 11, color: "#cf1322", marginTop: 2 }}>错误: {trace.error}</div> : null}
+              <div style={{ fontSize: 11, color: "#555" }}>{t("aiConversations.monitor.skills", { value: trace.skillsCalled.length > 0 ? trace.skillsCalled.join(", ") : t("aiConversations.monitor.noSkills") })}</div>
+              {trace.handoffReason ? <div style={{ fontSize: 11, color: "#d48806", marginTop: 2 }}>{t("aiConversations.monitor.handoff", { reason: trace.handoffReason })}</div> : null}
+              {trace.error ? <div style={{ fontSize: 11, color: "#cf1322", marginTop: 2 }}>{t("aiConversations.monitor.error", { error: trace.error })}</div> : null}
             </div>
           ))
         )}

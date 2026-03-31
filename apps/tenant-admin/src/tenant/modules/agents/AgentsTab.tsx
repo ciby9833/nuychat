@@ -5,6 +5,7 @@
 import { TeamOutlined, UserOutlined } from "@ant-design/icons";
 import { Space, Tabs, Tag } from "antd";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AgentsPane } from "./components/AgentsPane";
 import { MembersPane } from "./components/MembersPane";
@@ -13,6 +14,7 @@ import { EnableAgentModal } from "./modals/EnableAgentModal";
 import { NewMemberModal } from "./modals/NewMemberModal";
 
 export function AgentsTab() {
+  const { t } = useTranslation();
   const data = useAgentsData();
   const [showMemberModal, setShowMemberModal] = useState(false);
   const [showEnableAgentModal, setShowEnableAgentModal] = useState(false);
@@ -29,7 +31,7 @@ export function AgentsTab() {
             label: (
               <Space>
                 <UserOutlined />
-                坐席管理
+                {t("agents.tab.agents")}
                 <Tag style={{ marginLeft: 2 }}>{data.agents.length}</Tag>
               </Space>
             ),
@@ -49,7 +51,7 @@ export function AgentsTab() {
             label: (
               <Space>
                 <TeamOutlined />
-                成员账号
+                {t("agents.tab.members")}
                 <Tag style={{ marginLeft: 2 }}>{data.members.length}</Tag>
               </Space>
             ),

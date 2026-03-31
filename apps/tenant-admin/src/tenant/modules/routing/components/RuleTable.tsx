@@ -1,5 +1,16 @@
+/**
+ * 菜单路径与名称: 客户中心 -> 路由 -> 路由规则
+ * 文件职责: 展示路由规则列表、条件摘要、目标归属与操作入口。
+ * 主要交互文件:
+ * - ../RoutingTab.tsx
+ * - ../helpers.ts
+ * - ../modals/RuleEditorDrawer.tsx
+ * - ../types.ts
+ */
+
 import { CheckCircleOutlined, DeleteOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Table, Tag, Typography } from "antd";
+import { useTranslation } from "react-i18next";
 
 import type { DepartmentItem, RoutingRule, TeamItem, TenantAIAgent } from "../../../types";
 import { buildRuleSummary } from "../helpers";
@@ -30,6 +41,8 @@ export function RuleTable({
   onEdit: (ruleId: string) => void;
   onDelete: (ruleId: string) => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <Table<RoutingRule>
       rowKey="rule_id"
@@ -39,22 +52,22 @@ export function RuleTable({
       size="middle"
       columns={[
         {
-          title: "规则",
+          title: t("routing.table.rule"),
           width: 200,
           render: (_, row) => (
             <Space direction="vertical" size={2}>
               <Typography.Text strong>{row.name}</Typography.Text>
               <Space size={4}>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>优先级 {row.priority}</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t("routing.summary.priority", { count: row.priority })}</Typography.Text>
                 <Tag color={executionModeColor[row.actions.executionMode ?? "ai_first"] ?? "default"} style={{ fontSize: 11 }}>
-                  {EXECUTION_MODE_OPTIONS.find((o) => o.value === (row.actions.executionMode ?? "ai_first"))?.label ?? row.actions.executionMode}
+                  {t(`routing.options.executionMode.${row.actions.executionMode ?? "ai_first"}`, { defaultValue: EXECUTION_MODE_OPTIONS.find((o) => o.value === (row.actions.executionMode ?? "ai_first"))?.labelKey ?? row.actions.executionMode })}
                 </Tag>
               </Space>
             </Space>
           )
         },
         {
-          title: "命中条件",
+          title: t("routing.table.conditions"),
           width: 220,
           render: (_, row) => {
             const s = buildRuleSummary(row, departments, teams);
@@ -68,7 +81,7 @@ export function RuleTable({
           }
         },
         {
-          title: "目标归属",
+          title: t("routing.table.target"),
           width: 180,
           render: (_, row) => {
             const s = buildRuleSummary(row, departments, teams);
@@ -81,7 +94,7 @@ export function RuleTable({
           }
         },
         {
-          title: "技能组 / 策略",
+          title: t("routing.table.skillAndStrategy"),
           width: 200,
           render: (_, row) => {
             const s = buildRuleSummary(row, departments, teams);
@@ -89,29 +102,29 @@ export function RuleTable({
               <Space direction="vertical" size={0}>
                 <Typography.Text>{s.skillGroupCode}</Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  AI: {aiAgents.find((a) => a.aiAgentId === s.aiAgentId)?.name ?? "自动"} | {s.strategy}
+                  AI: {aiAgents.find((a) => a.aiAgentId === s.aiAgentId)?.name ?? t("routing.summary.auto")} | {s.strategy}
                 </Typography.Text>
               </Space>
             );
           }
         },
         {
-          title: "状态",
+          title: t("routing.table.status"),
           dataIndex: "is_active",
           width: 90,
           render: (value: boolean) => value
-            ? <Tag color="green" icon={<CheckCircleOutlined />}>启用</Tag>
-            : <Tag>停用</Tag>
+            ? <Tag color="green" icon={<CheckCircleOutlined />}>{t("routing.state.active")}</Tag>
+            : <Tag>{t("routing.state.inactive")}</Tag>
         },
         {
-          title: "操作",
+          title: t("common.action"),
           width: 130,
           render: (_, row) => (
             <Space size={4}>
-              <Button size="small" onClick={() => onEdit(row.rule_id)}>编辑</Button>
+              <Button size="small" onClick={() => onEdit(row.rule_id)}>{t("common.edit")}</Button>
               <Popconfirm
-                title="删除这个规则？"
-                description="删除后该路由规则将立即停止生效。"
+                title={t("routing.confirm.deleteRuleTitle")}
+                description={t("routing.confirm.deleteRuleDescription")}
                 onConfirm={() => onDelete(row.rule_id)}
               >
                 <Button size="small" danger icon={<DeleteOutlined />} />

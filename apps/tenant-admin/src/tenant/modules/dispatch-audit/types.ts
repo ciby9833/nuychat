@@ -1,24 +1,33 @@
-// 作用: 调度审计模块类型定义与常量选项
-// 菜单路径: 客户中心 -> 调度审计
-// 作者：吴川
+/**
+ * 菜单路径与名称: 客户中心 -> 调度审计
+ * 文件职责: 维护模块内通用类型、筛选常量与日期预设选项。
+ * 主要交互文件:
+ * - ./components/FilterBar.tsx
+ * - ./hooks/useDispatchAuditData.ts
+ * - ../../../../i18n/locales/en/modules/dispatch-audit.ts
+ * - ../../../../i18n/locales/zh/modules/dispatch-audit.ts
+ * - ../../../../i18n/locales/id/modules/dispatch-audit.ts
+ */
 
 import type { Dayjs } from "dayjs";
 
 export const TRIGGER_OPTIONS = [
-  { value: "inbound_message", label: "入站消息" },
-  { value: "ai_routing", label: "AI 路由" },
-  { value: "agent_assign", label: "人工接管" },
-  { value: "agent_handoff", label: "人工转队列" },
-  { value: "agent_transfer", label: "人工转人工" },
-  { value: "supervisor_transfer", label: "主管转移" },
-  { value: "conversation_resolve", label: "会话解决" }
+  { value: "inbound_message", label: "inbound_message" },
+  { value: "ai_routing", label: "ai_routing" },
+  { value: "ai_routing_execution", label: "ai_routing_execution" },
+  { value: "agent_assign", label: "agent_assign" },
+  { value: "agent_handoff", label: "agent_handoff" },
+  { value: "agent_transfer", label: "agent_transfer" },
+  { value: "supervisor_transfer", label: "supervisor_transfer" },
+  { value: "conversation_resolve", label: "conversation_resolve" },
+  { value: "ai_handoff", label: "ai_handoff" }
 ];
 
 export const DATE_PRESET_OPTIONS = [
-  { value: "today", label: "今天" },
-  { value: "yesterday", label: "昨天" },
-  { value: "last7d", label: "最近 7 天" },
-  { value: "custom", label: "自定义" }
+  { value: "today", labelKey: "dispatchAudit.datePreset.today" },
+  { value: "yesterday", labelKey: "dispatchAudit.datePreset.yesterday" },
+  { value: "last7d", labelKey: "dispatchAudit.datePreset.last7d" },
+  { value: "custom", labelKey: "dispatchAudit.datePreset.custom" }
 ] as const;
 
 export type DatePreset = (typeof DATE_PRESET_OPTIONS)[number]["value"];

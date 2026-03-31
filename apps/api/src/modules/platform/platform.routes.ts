@@ -653,7 +653,7 @@ export async function platformRoutes(app: FastifyInstance) {
       page,
       limit,
       total: Number(countRow?.cnt ?? 0),
-      items: rows.map((r) => ({
+      items: rows.map((r: any) => ({
         auditId: r.audit_id,
         actorIdentityId: r.actor_identity_id,
         actorEmail: r.actor_email ?? null,
@@ -700,7 +700,7 @@ export async function platformRoutes(app: FastifyInstance) {
       )
       .orderBy("t.created_at", "desc");
 
-    const tenantIds = rows.map((row) => row.tenant_id);
+    const tenantIds = rows.map((row: any) => row.tenant_id);
     const [seatUsageByTenant, accountCountByTenant, aiSeatUsageByTenant] = await Promise.all([
       getActiveSeatUsageMap(tenantIds),
       getTenantAccountCountMap(tenantIds),
@@ -708,7 +708,7 @@ export async function platformRoutes(app: FastifyInstance) {
     ]);
 
     const mapped = rows
-      .map((r) => {
+      .map((r: any) => {
         const quotaLimit = r.licensed_seats === null ? null : Number(r.licensed_seats);
         const aiSeatLimit = Number(r.licensed_ai_seats ?? 0);
         const quotaUsed = seatUsageByTenant.get(r.tenant_id) ?? 0;
@@ -738,7 +738,7 @@ export async function platformRoutes(app: FastifyInstance) {
           quotaStatus: computedStatus
         };
       })
-      .filter((item) => (status ? item.quotaStatus === status : true));
+      .filter((item: any) => (status ? item.quotaStatus === status : true));
 
     const total = mapped.length;
     const pageItems = mapped.slice(offset, offset + limit);
@@ -749,14 +749,14 @@ export async function platformRoutes(app: FastifyInstance) {
       total,
       items: pageItems,
       summary: {
-        totalQuotaUsed: mapped.reduce((acc, item) => acc + item.quotaUsed, 0),
-        totalQuotaLimit: mapped.reduce((acc, item) => acc + (item.quotaLimit ?? 0), 0),
-        totalAiSeatLimit: mapped.reduce((acc, item) => acc + item.aiSeatLimit, 0),
-        totalAiSeatUsed: mapped.reduce((acc, item) => acc + item.aiSeatUsed, 0),
-        totalAccounts: mapped.reduce((acc, item) => acc + item.totalAccounts, 0),
-        exceededTenants: mapped.filter((item) => item.quotaStatus === "exceeded").length,
-        warningTenants: mapped.filter((item) => item.quotaStatus === "warning").length,
-        unlimitedTenants: mapped.filter((item) => item.quotaStatus === "unlimited").length
+        totalQuotaUsed: mapped.reduce((acc: number, item: any) => acc + item.quotaUsed, 0),
+        totalQuotaLimit: mapped.reduce((acc: number, item: any) => acc + (item.quotaLimit ?? 0), 0),
+        totalAiSeatLimit: mapped.reduce((acc: number, item: any) => acc + item.aiSeatLimit, 0),
+        totalAiSeatUsed: mapped.reduce((acc: number, item: any) => acc + item.aiSeatUsed, 0),
+        totalAccounts: mapped.reduce((acc: number, item: any) => acc + item.totalAccounts, 0),
+        exceededTenants: mapped.filter((item: any) => item.quotaStatus === "exceeded").length,
+        warningTenants: mapped.filter((item: any) => item.quotaStatus === "warning").length,
+        unlimitedTenants: mapped.filter((item: any) => item.quotaStatus === "unlimited").length
       }
     };
   });
@@ -1197,7 +1197,7 @@ export async function platformRoutes(app: FastifyInstance) {
       .orderBy("bi.issued_at", "desc");
 
     const normalized = rows
-      .map((r) => {
+      .map((r: any) => {
         const amountDue = Number(r.amount_due ?? 0);
         const seatLicenseAmount = Number(r.seat_license_amount ?? 0);
         const aiUsageAmount = Number(r.ai_usage_amount ?? 0);
@@ -1232,7 +1232,7 @@ export async function platformRoutes(app: FastifyInstance) {
           updatedAt: new Date(r.updated_at).toISOString()
         };
       })
-      .filter((item) => (status ? item.status === status : true));
+      .filter((item: any) => (status ? item.status === status : true));
 
     const total = normalized.length;
     const pageItems = normalized.slice(offset, offset + limit);
@@ -1243,10 +1243,10 @@ export async function platformRoutes(app: FastifyInstance) {
       total,
       items: pageItems,
       summary: {
-        totalDue: round2(normalized.reduce((acc, item) => acc + item.amountDue, 0)),
-        totalPaid: round2(normalized.reduce((acc, item) => acc + item.amountPaid, 0)),
-        totalOutstanding: round2(normalized.reduce((acc, item) => acc + item.outstanding, 0)),
-        overdueInvoices: normalized.filter((item) => item.status === "overdue").length
+        totalDue: round2(normalized.reduce((acc: number, item: any) => acc + item.amountDue, 0)),
+        totalPaid: round2(normalized.reduce((acc: number, item: any) => acc + item.amountPaid, 0)),
+        totalOutstanding: round2(normalized.reduce((acc: number, item: any) => acc + item.outstanding, 0)),
+        overdueInvoices: normalized.filter((item: any) => item.status === "overdue").length
       }
     };
   });
@@ -1607,7 +1607,7 @@ export async function platformRoutes(app: FastifyInstance) {
       page,
       limit,
       total: Number(countRow?.cnt ?? 0),
-      items: rows.map((r) => ({
+      items: rows.map((r: any) => ({
         skillId: r.skill_id,
         slug: r.slug,
         name: r.name,
@@ -1986,7 +1986,7 @@ export async function platformRoutes(app: FastifyInstance) {
       page,
       limit,
       total: Number(countRow?.cnt ?? 0),
-      items: rows.map((r) => ({
+      items: rows.map((r: any) => ({
         installId: r.install_id,
         tenantId: r.tenant_id,
         tenantSlug: r.tenant_slug,
@@ -2052,7 +2052,7 @@ export async function platformRoutes(app: FastifyInstance) {
       base.clone().count<{ cnt: string }>("t.tenant_id as cnt").first()
     ]);
 
-    const tenantIds = rows.map((row) => row.tenant_id);
+    const tenantIds = rows.map((row: any) => row.tenant_id);
     const [seatUsageByTenant, accountCountByTenant, aiConfigByTenant] = await Promise.all([
       getActiveSeatUsageMap(tenantIds),
       getTenantAccountCountMap(tenantIds),
@@ -2063,7 +2063,7 @@ export async function platformRoutes(app: FastifyInstance) {
       page,
       limit,
       total: Number(countRow?.cnt ?? 0),
-      items: rows.map((row) => ({
+      items: rows.map((row: any) => ({
         tenantId: row.tenant_id,
         name: row.name,
         slug: row.slug,
