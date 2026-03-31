@@ -31,6 +31,11 @@ export class MessageService {
         segment_id: threadContext.segmentId,
         case_id: threadContext.caseId,
         external_id: input.unifiedMessage.externalId,
+        chat_type: input.unifiedMessage.chatType,
+        chat_external_ref: input.unifiedMessage.chatExternalRef,
+        chat_name: input.unifiedMessage.chatName ?? null,
+        participant_external_ref: input.unifiedMessage.participantExternalRef ?? input.unifiedMessage.senderExternalRef,
+        participant_display_name: input.unifiedMessage.participantDisplayName ?? null,
         direction: input.unifiedMessage.direction,
         sender_type: CUSTOMER_MESSAGE_SENDER_TYPE,
         channel_message_type: resolveChannelMessageType(input.unifiedMessage),
@@ -111,10 +116,7 @@ export class MessageService {
     const threadContext =
       input.segmentId === undefined
         ? await resolveThreadContext(db, input.tenantId, input.conversationId)
-        : {
-            segmentId: input.segmentId,
-            caseId: await resolveCurrentCaseId(db, input.tenantId, input.conversationId)
-          };
+        : await resolveThreadContextWithSegment(db, input.tenantId, input.conversationId, input.segmentId);
 
     const [message] = await db("messages")
       .insert({
@@ -123,6 +125,9 @@ export class MessageService {
         segment_id: threadContext.segmentId,
         case_id: threadContext.caseId,
         external_id: input.externalId,
+        chat_type: threadContext.chatType,
+        chat_external_ref: threadContext.chatExternalRef,
+        chat_name: threadContext.chatName,
         direction: "outbound",
         sender_type: isAI ? "bot" : "agent",
         sender_id: input.senderId ?? null,
@@ -154,8 +159,14 @@ export class MessageService {
 async function resolveThreadContext(db: Knex | Knex.Transaction, tenantId: string, conversationId: string) {
   const conversation = await db("conversations")
     .where({ tenant_id: tenantId, conversation_id: conversationId })
-    .select("current_segment_id", "current_case_id")
-    .first<{ current_segment_id: string | null; current_case_id: string | null } | undefined>();
+    .select("current_segment_id", "current_case_id", "chat_type", "chat_external_ref", "chat_name")
+    .first<{
+      current_segment_id: string | null;
+      current_case_id: string | null;
+      chat_type: string | null;
+      chat_external_ref: string | null;
+      chat_name: string | null;
+    } | undefined>();
 
   if (!conversation?.current_case_id) {
     throw new Error(`Conversation has no current case: ${conversationId}`);
@@ -163,7 +174,10 @@ async function resolveThreadContext(db: Knex | Knex.Transaction, tenantId: strin
 
   return {
     segmentId: conversation.current_segment_id ?? null,
-    caseId: conversation.current_case_id
+    caseId: conversation.current_case_id,
+    chatType: (conversation.chat_type as "direct" | "group" | null) ?? "direct",
+    chatExternalRef: conversation.chat_external_ref ?? "",
+    chatName: conversation.chat_name ?? null
   };
 }
 
@@ -178,6 +192,19 @@ async function resolveCurrentCaseId(db: Knex | Knex.Transaction, tenantId: strin
   }
 
   return conversation.current_case_id;
+}
+
+async function resolveThreadContextWithSegment(
+  db: Knex | Knex.Transaction,
+  tenantId: string,
+  conversationId: string,
+  segmentId: string | null
+) {
+  const base = await resolveThreadContext(db, tenantId, conversationId);
+  return {
+    ...base,
+    segmentId
+  };
 }
 
 function resolveChannelMessageType(message: UnifiedMessage): string | null {

@@ -49,12 +49,12 @@ export function BillingPanel({
     lang: templateForm.getFieldValue("lang") ?? "en",
     includeTax: templateForm.getFieldValue("includeTax") ?? true,
     taxRate: templateForm.getFieldValue("taxRate") ?? 0.1,
-    brandName: templateForm.getFieldValue("brandName") ?? "NuyChat Platform",
-    companyName: templateForm.getFieldValue("companyName") ?? "NuyChat Technology Ltd.",
-    companyAddress: templateForm.getFieldValue("companyAddress") ?? "N/A",
-    supportEmail: templateForm.getFieldValue("supportEmail") ?? "support@nuychat.local",
-    website: templateForm.getFieldValue("website") ?? "https://nuychat.local",
-    taxId: templateForm.getFieldValue("taxId") ?? "N/A"
+    brandName: templateForm.getFieldValue("brandName") ?? "Platform Billing",
+    companyName: templateForm.getFieldValue("companyName") ?? "",
+    companyAddress: templateForm.getFieldValue("companyAddress") ?? "",
+    supportEmail: templateForm.getFieldValue("supportEmail") ?? "",
+    website: templateForm.getFieldValue("website") ?? "",
+    taxId: templateForm.getFieldValue("taxId") ?? ""
   }), [templateForm]);
 
   return (
@@ -150,12 +150,12 @@ export function BillingPanel({
             lang: "en",
             includeTax: true,
             taxRate: 0.1,
-            brandName: "NuyChat Platform",
-            companyName: "NuyChat Technology Ltd.",
-            companyAddress: "N/A",
-            supportEmail: "support@nuychat.local",
-            website: "https://nuychat.local",
-            taxId: "N/A"
+            brandName: "Platform Billing",
+            companyName: "",
+            companyAddress: "",
+            supportEmail: "",
+            website: "",
+            taxId: ""
           }}
         >
           <Form.Item label="Statement Language" name="lang"><Select options={[{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }, { value: "id", label: "Bahasa Indonesia" }]} /></Form.Item>

@@ -24,7 +24,7 @@ export async function up(knex: Knex): Promise<void> {
       continue;
     }
 
-    config.publicChannelKey = row.channel_id === "demo-web-channel" ? "demo-web-public" : `wc-${row.channel_id}`;
+    config.publicChannelKey = `wc-${row.channel_id}`;
 
     await knex("channel_configs")
       .where({ config_id: row.config_id })

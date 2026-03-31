@@ -1,4 +1,5 @@
 import { Worker } from "bullmq";
+import type { Knex } from "knex";
 
 import { db, withTenantTransaction } from "../infra/db/client.js";
 import { duplicateRedisConnection } from "../infra/redis/client.js";
@@ -34,6 +35,7 @@ import {
 } from "../modules/sla/conversation-sla.service.js";
 import { resolveWhatsAppMediaAttachments } from "../modules/channel/adapters/whatsapp/whatsapp-media.service.js";
 import { getWhatsAppPlatformConfig } from "../modules/channel/whatsapp-platform-config.js";
+import type { UnifiedMessage } from "../shared/types/unified-message.js";
 
 const customerService = new CustomerService();
 const conversationService = new ConversationService();
@@ -88,17 +90,16 @@ export function createInboundWorker() {
       }
 
       const result = await withTenantTransaction(job.data.tenantId, async (trx) => {
-        const customer = await customerService.getOrCreateByExternalRef(trx, {
-          tenantId: job.data.tenantId,
-          channelType: unifiedMessage.channelType,
-          externalRef: unifiedMessage.senderExternalRef
-        });
+        const conversationCustomer = await resolveConversationCustomer(trx, job.data.tenantId, unifiedMessage);
 
         const conversation = await conversationService.getOrCreateActiveConversation(trx, {
           tenantId: job.data.tenantId,
-          customerId: customer.customerId,
+          customerId: conversationCustomer.customerId,
           channelId: job.data.channelId,
           channelType: unifiedMessage.channelType,
+          chatType: unifiedMessage.chatType,
+          chatExternalRef: unifiedMessage.chatExternalRef,
+          chatName: unifiedMessage.chatName,
           lastMessageAt: unifiedMessage.receivedAt,
           lastMessagePreview: unifiedMessage.text ?? previewForMessage(unifiedMessage)
         });
@@ -106,7 +107,7 @@ export function createInboundWorker() {
         const currentCase = await conversationCaseService.getOrCreateActiveCase(trx, {
           tenantId: job.data.tenantId,
           conversationId: conversation.conversationId,
-          customerId: customer.customerId
+          customerId: conversationCustomer.customerId
         });
 
         let currentConversation = await trx("conversations")
@@ -126,7 +127,7 @@ export function createInboundWorker() {
             await conversationSegmentService.switchToHumanSegment(trx, {
               tenantId: job.data.tenantId,
               conversationId: conversation.conversationId,
-              customerId: customer.customerId,
+              customerId: conversationCustomer.customerId,
               agentId: currentConversation.assigned_agent_id,
               reason: "backfill-human-owner"
             });
@@ -134,7 +135,7 @@ export function createInboundWorker() {
             await conversationSegmentService.switchToAISegment(trx, {
               tenantId: job.data.tenantId,
               conversationId: conversation.conversationId,
-              customerId: customer.customerId,
+              customerId: conversationCustomer.customerId,
               aiAgentId: currentConversation.current_handler_id,
               reason: "backfill-ai-owner"
             });
@@ -142,7 +143,7 @@ export function createInboundWorker() {
             await conversationSegmentService.ensureSystemSegment(trx, {
               tenantId: job.data.tenantId,
               conversationId: conversation.conversationId,
-              customerId: customer.customerId,
+              customerId: conversationCustomer.customerId,
               reason: conversation.created ? "thread-opened" : "awaiting-dispatch"
             });
           }
@@ -175,7 +176,7 @@ export function createInboundWorker() {
         const routingContext = await routingContextService.build(trx, {
           tenantId: job.data.tenantId,
           conversationId: conversation.conversationId,
-          customerId: customer.customerId,
+          customerId: conversationCustomer.customerId,
           channelType: unifiedMessage.channelType,
           channelId: job.data.channelId
         });
@@ -198,14 +199,14 @@ export function createInboundWorker() {
         const executionId = await dispatchAuditService.recordExecution(trx, {
           tenantId: job.data.tenantId,
           conversationId: conversation.conversationId,
-          customerId: customer.customerId,
+          customerId: conversationCustomer.customerId,
           segmentId: currentConversation?.current_segment_id ?? null,
           triggerType: "inbound_message",
           decisionType: "routing_plan",
           channelType: unifiedMessage.channelType,
           channelId: job.data.channelId,
-          customerTier: (customer as { tier?: string | null }).tier ?? null,
-          customerLanguage: (customer as { language?: string | null }).language ?? null,
+          customerTier: (conversationCustomer as { tier?: string | null }).tier ?? null,
+          customerLanguage: (conversationCustomer as { language?: string | null }).language ?? null,
           routingRuleId: routingPlan.trace.humanDispatch.routingRuleId,
           routingRuleName: routingPlan.trace.humanDispatch.routingRuleName,
           matchedConditions: routingPlan.trace.humanDispatch.matchedConditions,
@@ -257,7 +258,7 @@ export function createInboundWorker() {
         return {
           planId,
           executionId,
-          customerId: customer.customerId,
+          customerId: conversationCustomer.customerId,
           conversationId: conversation.conversationId,
           messageId: saved.messageId,
           unreadCount,
@@ -292,6 +293,9 @@ export function createInboundWorker() {
           customerId: result.customerId,
           channelId: job.data.channelId,
           channelType: job.data.channelType,
+          chatType: unifiedMessage.chatType,
+          chatExternalRef: unifiedMessage.chatExternalRef,
+          chatName: unifiedMessage.chatName ?? null,
           lastMessagePreview: unifiedMessage.text ?? previewForMessage(unifiedMessage),
           occurredAt: new Date().toISOString()
         });
@@ -303,6 +307,9 @@ export function createInboundWorker() {
         messageId: result.messageId,
         externalId: unifiedMessage.externalId,
         messageType: unifiedMessage.messageType,
+        chatType: unifiedMessage.chatType,
+        chatExternalRef: unifiedMessage.chatExternalRef,
+        chatName: unifiedMessage.chatName ?? null,
         text: unifiedMessage.text,
         senderExternalRef: unifiedMessage.senderExternalRef,
         occurredAt: new Date().toISOString()
@@ -349,6 +356,36 @@ function parseInboundMessage(
   }
 ) {
   return resolveChannelAdapter(channelType).parseInbound(rawMessage, context);
+}
+
+async function resolveConversationCustomer(
+  trx: Knex | Knex.Transaction,
+  tenantId: string,
+  unifiedMessage: UnifiedMessage
+) {
+  if (unifiedMessage.chatType === "group") {
+    return customerService.getOrCreateByExternalRef(trx, {
+      tenantId,
+      channelType: unifiedMessage.channelType,
+      externalRef: unifiedMessage.chatExternalRef,
+      displayName: unifiedMessage.chatName,
+      metadata: {
+        entityKind: "group",
+        chatType: unifiedMessage.chatType
+      }
+    });
+  }
+
+  return customerService.getOrCreateByExternalRef(trx, {
+    tenantId,
+    channelType: unifiedMessage.channelType,
+    externalRef: unifiedMessage.senderExternalRef,
+    displayName: unifiedMessage.participantDisplayName,
+    metadata: {
+      entityKind: "contact",
+      chatType: unifiedMessage.chatType
+    }
+  });
 }
 
 function previewForMessage(message: { messageType: string }) {

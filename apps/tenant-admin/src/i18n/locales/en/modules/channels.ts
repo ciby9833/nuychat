@@ -54,7 +54,7 @@ export default {
       widgetNamePlaceholder: "Example: NuyChat Web",
       publicChannelKey: "Web Identifier (publicChannelKey)",
       publicChannelKeyRequired: "Please enter publicChannelKey",
-      publicChannelKeyPlaceholder: "Example: demo-web-public",
+      publicChannelKeyPlaceholder: "Example: wc-your-tenant",
       allowedOrigins: "Allowed Origins (comma-separated)",
       allowedOriginsPlaceholder: "Example: http://localhost:5176,https://www.example.com",
       thirdPartyOutboundUrl: "Third-Party Outbound Callback URL"

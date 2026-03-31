@@ -9,8 +9,8 @@ export async function up(knex: Knex): Promise<void> {
   const tenants = await knex("tenants").select("tenant_id", "slug") as TenantRow[];
 
   for (const tenant of tenants) {
-    const channelId = tenant.slug === "demo-tenant" ? "demo-web-channel" : `web-${tenant.slug}`;
-    const publicChannelKey = tenant.slug === "demo-tenant" ? "demo-web-public" : `wc-${tenant.slug}`;
+    const channelId = `web-${tenant.slug}`;
+    const publicChannelKey = `wc-${tenant.slug}`;
     const existing = await knex("channel_configs")
       .where({ tenant_id: tenant.tenant_id, channel_type: "web" })
       .first("config_id");
@@ -56,7 +56,7 @@ export async function up(knex: Knex): Promise<void> {
     }
 
     const tenant = tenants.find((item) => item.tenant_id === row.tenant_id);
-    const fallback = tenant?.slug === "demo-tenant" ? "demo-web-public" : `wc-${tenant?.slug ?? row.config_id.slice(0, 8)}`;
+    const fallback = `wc-${tenant?.slug ?? row.config_id.slice(0, 8)}`;
     config.publicChannelKey = fallback;
 
     await knex("channel_configs")

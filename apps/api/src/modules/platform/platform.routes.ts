@@ -3275,12 +3275,12 @@ function buildStatementTemplateOptions(input: z.infer<typeof BillingStatementQue
     lang: input.lang,
     includeTax: input.includeTax,
     taxRate: input.taxRate,
-    brandName: input.brandName?.trim() || "NuyChat Platform",
-    companyName: input.companyName?.trim() || "NuyChat Technology Ltd.",
-    companyAddress: input.companyAddress?.trim() || "N/A",
-    supportEmail: input.supportEmail?.trim() || "support@nuychat.local",
-    website: input.website?.trim() || "https://nuychat.local",
-    taxId: input.taxId?.trim() || "N/A"
+    brandName: input.brandName?.trim() || "Platform Billing",
+    companyName: input.companyName?.trim() || "",
+    companyAddress: input.companyAddress?.trim() || "",
+    supportEmail: input.supportEmail?.trim() || "",
+    website: input.website?.trim() || "",
+    taxId: input.taxId?.trim() || ""
   };
 }
 
@@ -3472,13 +3472,14 @@ function csvField(value: string): string {
 function buildInvoiceStatementPdf(data: InvoiceStatementData, template: StatementTemplateOptions): Buffer {
   const subtotal = template.includeTax ? round2(data.amountDue / (1 + template.taxRate)) : data.amountDue;
   const taxAmount = template.includeTax ? round2(data.amountDue - subtotal) : 0;
+  const supportLine = [template.supportEmail, template.website].filter(Boolean).join(" | ") || "-";
   const lines = [
     `${template.brandName} - Invoice Statement`,
     `Language: ${template.lang}`,
-    `Company: ${template.companyName}`,
-    `Address: ${template.companyAddress}`,
-    `Tax ID: ${template.taxId}`,
-    `Support: ${template.supportEmail} | ${template.website}`,
+    `Company: ${template.companyName || "-"}`,
+    `Address: ${template.companyAddress || "-"}`,
+    `Tax ID: ${template.taxId || "-"}`,
+    `Support: ${supportLine}`,
     `Invoice No: ${data.invoiceNo}`,
     `Tenant: ${data.tenantName} (${data.tenantSlug})`,
     `Period: ${data.periodStart} ~ ${data.periodEnd}`,

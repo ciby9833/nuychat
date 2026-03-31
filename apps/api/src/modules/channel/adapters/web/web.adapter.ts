@@ -40,9 +40,14 @@ export const webAdapter = {
       tenantId: context.tenantId,
       channelId: context.channelId,
       channelType: "web",
+      chatType: "direct",
+      chatExternalRef: customerRef,
+      chatName: displayName,
       direction: "inbound",
       messageType,
       senderExternalRef: customerRef,
+      participantExternalRef: customerRef,
+      participantDisplayName: displayName,
       text,
       attachments: attachments.map((attachment) => ({
         url: attachment.url,
@@ -64,6 +69,7 @@ export const webAdapter = {
       structured?: unknown;
       actions?: unknown;
       to: string;
+      recipientType?: "individual" | "group";
       attachment?: { url: string; mimeType: string; fileName?: string };
       contextMessageId?: string;
       reactionEmoji?: string;

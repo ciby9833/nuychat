@@ -54,7 +54,7 @@ export default {
       widgetNamePlaceholder: "例如：NuyChat Web",
       publicChannelKey: "Web 标识 (publicChannelKey)",
       publicChannelKeyRequired: "请输入 publicChannelKey",
-      publicChannelKeyPlaceholder: "例如：demo-web-public",
+      publicChannelKeyPlaceholder: "例如：wc-your-tenant",
       allowedOrigins: "允许来源 (逗号分隔)",
       allowedOriginsPlaceholder: "例如：http://localhost:5176,https://www.example.com",
       thirdPartyOutboundUrl: "第三方出站回调地址"

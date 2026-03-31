@@ -48,6 +48,9 @@ export async function webchatRoutes(app: FastifyInstance) {
         customerId: customer.customerId,
         channelId: channel.channelId,
         channelType: "web",
+        chatType: "direct",
+        chatExternalRef: customerRef,
+        chatName: displayName ?? undefined,
         lastMessageAt: new Date(),
         lastMessagePreview: undefined
       });

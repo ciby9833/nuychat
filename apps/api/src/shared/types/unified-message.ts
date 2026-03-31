@@ -31,9 +31,14 @@ export type UnifiedMessage = {
   tenantId: string;
   channelId: string;
   channelType: string;
+  chatType: "direct" | "group";
+  chatExternalRef: string;
+  chatName?: string;
   direction: "inbound" | "outbound";
   messageType: UnifiedMessageType;
   senderExternalRef: string;
+  participantExternalRef?: string;
+  participantDisplayName?: string;
   recipientExternalRef?: string;
   text?: string;
   attachments?: UnifiedAttachment[];

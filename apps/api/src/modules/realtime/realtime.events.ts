@@ -12,6 +12,9 @@ type ConversationCreatedEvent = RealtimeEventBase & {
   customerId: string;
   channelId: string;
   channelType: string;
+  chatType?: "direct" | "group";
+  chatExternalRef?: string;
+  chatName?: string | null;
   lastMessagePreview: string | null;
   occurredAt: string;
 };
@@ -34,6 +37,9 @@ type MessageReceivedEvent = RealtimeEventBase & {
   messageId: string | null;
   externalId: string;
   messageType: string;
+  chatType?: "direct" | "group";
+  chatExternalRef?: string;
+  chatName?: string | null;
   text?: string;
   senderExternalRef: string;
   occurredAt: string;

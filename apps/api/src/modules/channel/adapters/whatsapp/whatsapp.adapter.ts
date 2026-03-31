@@ -10,8 +10,13 @@ import { assertWhatsAppMessagingConfigured } from "../../whatsapp-platform-confi
 type WhatsAppRawMessage = {
   id?: string;
   from?: string;
+  to?: string;
   timestamp?: string;
   type?: string;
+  recipient_type?: string;
+  group_id?: string;
+  group_name?: string;
+  group_subject?: string;
   context?: {
     id?: string;
     forwarded?: boolean;
@@ -31,6 +36,14 @@ type WhatsAppRawMessage = {
     button_reply?: { id?: string; title?: string };
     list_reply?: { id?: string; title?: string; description?: string };
   };
+  __nuychat_contact?: {
+    wa_id?: string;
+    profile?: { name?: string };
+  };
+  __nuychat_metadata?: {
+    phone_number_id?: string;
+    display_phone_number?: string;
+  };
 };
 
 export const whatsappAdapter = {
@@ -43,18 +56,33 @@ export const whatsappAdapter = {
     }
   ): UnifiedMessage {
     const message = rawMessage as WhatsAppRawMessage;
+    const groupId = readString(message as unknown as Record<string, unknown>, ["group_id", "groupId", "chat_id", "chatId"]);
+    const groupName = readString(message as unknown as Record<string, unknown>, ["group_name", "groupName", "group_subject", "groupSubject", "subject"]);
+    const isGroupMessage = Boolean(groupId);
+    const participantDisplayName = message.__nuychat_contact?.profile?.name;
+    const chatExternalRef = isGroupMessage ? groupId! : (message.from ?? "unknown");
     const base = {
       id: crypto.randomUUID(),
       externalId: message.id ?? crypto.randomUUID(),
       tenantId: context.tenantId,
       channelId: context.channelId,
       channelType: "whatsapp",
+      chatType: isGroupMessage ? "group" as const : "direct" as const,
+      chatExternalRef,
+      chatName: isGroupMessage ? groupName ?? undefined : participantDisplayName ?? undefined,
       direction: "inbound" as const,
       senderExternalRef: message.from ?? "unknown",
+      participantExternalRef: message.from ?? "unknown",
+      participantDisplayName: participantDisplayName ?? undefined,
       recipientExternalRef: readString(context.config.rawConfig, ["phoneNumberId"]),
       receivedAt: resolveTimestamp(message.timestamp),
       metadata: {
-        rawType: message.type ?? "unknown"
+        rawType: message.type ?? "unknown",
+        recipientType: message.recipient_type ?? (isGroupMessage ? "group" : "individual"),
+        groupId: groupId ?? undefined,
+        groupName: groupName ?? undefined,
+        displayPhoneNumber: message.__nuychat_metadata?.display_phone_number,
+        phoneNumberId: message.__nuychat_metadata?.phone_number_id
       },
       context: {
         externalMessageId: message.context?.id,
@@ -143,6 +171,7 @@ export const whatsappAdapter = {
       structured?: unknown;
       actions?: unknown;
       to: string;
+      recipientType?: "individual" | "group";
       attachment?: { url: string; mimeType: string; fileName?: string };
       contextMessageId?: string;
       reactionEmoji?: string;
@@ -169,6 +198,7 @@ export const whatsappAdapter = {
     if (input.reactionEmoji && input.reactionMessageId) {
       requestBody = {
         messaging_product: "whatsapp",
+        recipient_type: input.recipientType ?? "individual",
         to: input.to,
         type: "reaction",
         reaction: {
@@ -185,30 +215,30 @@ export const whatsappAdapter = {
 
       if (mediaType === "sticker") {
         requestBody = {
-          messaging_product: "whatsapp", to: input.to, type: "sticker",
+          messaging_product: "whatsapp", recipient_type: input.recipientType ?? "individual", to: input.to, type: "sticker",
           sticker: { link: mediaUrl }
         };
       } else if (mediaType === "image") {
         requestBody = {
-          messaging_product: "whatsapp", to: input.to, type: "image",
+          messaging_product: "whatsapp", recipient_type: input.recipientType ?? "individual", to: input.to, type: "image",
           image: { link: mediaUrl, caption: resolvedText || undefined },
           context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       } else if (mediaType === "video") {
         requestBody = {
-          messaging_product: "whatsapp", to: input.to, type: "video",
+          messaging_product: "whatsapp", recipient_type: input.recipientType ?? "individual", to: input.to, type: "video",
           video: { link: mediaUrl, caption: resolvedText || undefined },
           context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       } else if (mediaType === "audio") {
         requestBody = {
-          messaging_product: "whatsapp", to: input.to, type: "audio",
+          messaging_product: "whatsapp", recipient_type: input.recipientType ?? "individual", to: input.to, type: "audio",
           audio: { link: mediaUrl },
           context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
       } else {
         requestBody = {
-          messaging_product: "whatsapp", to: input.to, type: "document",
+          messaging_product: "whatsapp", recipient_type: input.recipientType ?? "individual", to: input.to, type: "document",
           document: { link: mediaUrl, caption: resolvedText || undefined, filename: input.attachment.fileName },
           context: input.contextMessageId ? { message_id: input.contextMessageId } : undefined
         };
@@ -216,6 +246,7 @@ export const whatsappAdapter = {
     } else if (actions.length > 0) {
       requestBody = buildInteractiveRequestBody({
         to: input.to,
+        recipientType: input.recipientType ?? "individual",
         text: resolvedText,
         actions,
         contextMessageId: input.contextMessageId
@@ -223,6 +254,7 @@ export const whatsappAdapter = {
     } else {
       requestBody = {
         messaging_product: "whatsapp",
+        recipient_type: input.recipientType ?? "individual",
         to: input.to,
         type: "text",
         text: { body: resolvedText },
@@ -256,6 +288,7 @@ export const whatsappAdapter = {
 
 function buildInteractiveRequestBody(input: {
   to: string;
+  recipientType: "individual" | "group";
   text: string;
   actions: StructuredMessageAction[];
   contextMessageId?: string;
@@ -264,6 +297,7 @@ function buildInteractiveRequestBody(input: {
   if (input.actions.length <= 3) {
     return {
       messaging_product: "whatsapp",
+      recipient_type: input.recipientType,
       to: input.to,
       type: "interactive",
       interactive: {
@@ -285,6 +319,7 @@ function buildInteractiveRequestBody(input: {
 
   return {
     messaging_product: "whatsapp",
+    recipient_type: input.recipientType,
     to: input.to,
     type: "interactive",
     interactive: {

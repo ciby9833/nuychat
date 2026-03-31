@@ -227,6 +227,19 @@ type InboundMessage = {
   [key: string]: unknown;
 };
 
+type WhatsAppInboundValue = {
+  metadata?: {
+    phone_number_id?: string;
+    display_phone_number?: string;
+  };
+  contacts?: Array<{
+    wa_id?: string;
+    profile?: { name?: string };
+  }>;
+  messages?: InboundMessage[];
+  statuses?: WhatsAppStatus[];
+};
+
 type WhatsAppStatus = {
   id?: string;
   status?: string;
@@ -235,42 +248,41 @@ type WhatsAppStatus = {
 };
 
 function extractWhatsAppMessages(payload: Record<string, unknown>): InboundMessage[] {
-  const entry = Array.isArray(payload.entry) ? payload.entry[0] : undefined;
-  const changes =
-    entry && typeof entry === "object" && Array.isArray((entry as { changes?: unknown[] }).changes)
-      ? (entry as { changes: unknown[] }).changes[0]
-      : undefined;
-  const value = changes && typeof changes === "object" ? (changes as { value?: unknown }).value : undefined;
-  return value && typeof value === "object" && Array.isArray((value as { messages?: unknown[] }).messages)
-    ? ((value as { messages: InboundMessage[] }).messages ?? [])
-    : [];
+  const value = extractWhatsAppValue(payload);
+  if (!value?.messages?.length) return [];
+
+  return value.messages.map((message) => {
+    const from = typeof message.from === "string" ? message.from : undefined;
+    const contact = value.contacts?.find((item) => item.wa_id === from);
+    return {
+      ...message,
+      __nuychat_contact: contact,
+      __nuychat_metadata: value.metadata
+    };
+  });
 }
 
 function extractWhatsAppStatuses(payload: Record<string, unknown>): WhatsAppStatus[] {
-  const entry = Array.isArray(payload.entry) ? payload.entry[0] : undefined;
-  const changes =
-    entry && typeof entry === "object" && Array.isArray((entry as { changes?: unknown[] }).changes)
-      ? (entry as { changes: unknown[] }).changes[0]
-      : undefined;
-  const value = changes && typeof changes === "object" ? (changes as { value?: unknown }).value : undefined;
-  return value && typeof value === "object" && Array.isArray((value as { statuses?: unknown[] }).statuses)
-    ? ((value as { statuses: WhatsAppStatus[] }).statuses ?? [])
-    : [];
+  return extractWhatsAppValue(payload)?.statuses ?? [];
 }
 
 function extractWhatsAppPhoneNumberId(payload: Record<string, unknown>) {
-  const entry = Array.isArray(payload.entry) ? payload.entry[0] : undefined;
-  const changes =
-    entry && typeof entry === "object" && Array.isArray((entry as { changes?: unknown[] }).changes)
-      ? (entry as { changes: unknown[] }).changes[0]
-      : undefined;
-  const value = changes && typeof changes === "object" ? (changes as { value?: unknown }).value : undefined;
-  const metadata = value && typeof value === "object" ? (value as { metadata?: unknown }).metadata : undefined;
+  const metadata = extractWhatsAppValue(payload)?.metadata;
   if (!metadata || typeof metadata !== "object") {
     return undefined;
   }
   const phoneNumberId = (metadata as { phone_number_id?: unknown }).phone_number_id;
   return typeof phoneNumberId === "string" && phoneNumberId.length > 0 ? phoneNumberId : undefined;
+}
+
+function extractWhatsAppValue(payload: Record<string, unknown>): WhatsAppInboundValue | null {
+  const entry = Array.isArray(payload.entry) ? payload.entry[0] : undefined;
+  const changes =
+    entry && typeof entry === "object" && Array.isArray((entry as { changes?: unknown[] }).changes)
+      ? (entry as { changes: unknown[] }).changes[0]
+      : undefined;
+  const value = changes && typeof changes === "object" ? (changes as { value?: unknown }).value : undefined;
+  return value && typeof value === "object" ? (value as WhatsAppInboundValue) : null;
 }
 
 function readString(source: Record<string, unknown>, keys: string[]) {

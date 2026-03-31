@@ -1,0 +1,22 @@
+[Unit]
+Description=NuyChat API Service
+After=network.target postgresql.service redis.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=nuychat
+Group=www-data
+WorkingDirectory=/srv/nuychat/nuyess-chat
+Environment=NODE_ENV=production
+EnvironmentFile=/srv/nuychat/env/nuychat-api.env
+ExecStart=/usr/bin/env pnpm --filter @nuychat/api start
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

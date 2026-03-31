@@ -8,8 +8,8 @@ import { writeSession } from "../session";
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@demo.com");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,10 +35,21 @@ export function LoginPage() {
         <Typography.Paragraph type="secondary">请输入平台管理员账号。</Typography.Paragraph>
         <Form layout="vertical" onFinish={() => { void onLogin(); }}>
           <Form.Item label="Email" required>
-            <Input prefix={<MailOutlined />} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Input
+              prefix={<MailOutlined />}
+              type="email"
+              value={email}
+              placeholder="admin@example.com"
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </Form.Item>
           <Form.Item label="Password" required>
-            <Input.Password prefix={<LockOutlined />} value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Input.Password
+              prefix={<LockOutlined />}
+              value={password}
+              placeholder="Enter your password"
+              onChange={(e) => setPassword(e.target.value)}
+            />
           </Form.Item>
           {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
           <Button type="primary" htmlType="submit" loading={loading} block>

@@ -50,12 +50,17 @@ export function createOutboundWorker() {
       const conversation = await withTenantTransaction(job.data.tenantId, async (trx) => {
         return trx("conversations")
           .join("customers", "customers.customer_id", "conversations.customer_id")
-          .select("customers.external_ref")
+          .select("customers.external_ref", "conversations.chat_type", "conversations.chat_external_ref")
           .where("conversations.conversation_id", job.data.conversationId)
           .first();
       });
 
-      if (!conversation?.external_ref) {
+      const recipientRef =
+        conversation?.chat_type === "group"
+          ? (conversation.chat_external_ref as string | null | undefined)
+          : (conversation?.external_ref as string | null | undefined);
+
+      if (!recipientRef) {
         throw new Error(`Conversation recipient not found: ${job.data.conversationId}`);
       }
 
@@ -65,7 +70,8 @@ export function createOutboundWorker() {
           text: job.data.message.text,
           structured: job.data.message.structured ?? null,
           actions: job.data.message.actions ?? [],
-          to: conversation.external_ref as string,
+          to: recipientRef,
+          recipientType: conversation?.chat_type === "group" ? "group" : "individual",
           attachment: job.data.message.attachment ?? undefined,
           contextMessageId: job.data.message.replyToExternalId ?? undefined,
           reactionEmoji: job.data.message.reactionEmoji ?? undefined,
@@ -250,6 +256,7 @@ async function sendOutboundByChannel(
     structured?: OutboundJobPayload["message"]["structured"];
     actions?: OutboundJobPayload["message"]["actions"];
     to: string;
+    recipientType?: "individual" | "group";
     attachment?: { url: string; mimeType: string; fileName?: string };
     contextMessageId?: string;
     reactionEmoji?: string;

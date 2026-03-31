@@ -51,9 +51,14 @@ export const webhookAdapter = {
       tenantId: context.tenantId,
       channelId: context.channelId,
       channelType: "webhook",
+      chatType: "direct",
+      chatExternalRef: customerRef,
+      chatName: msg.displayName,
       direction: "inbound",
       messageType,
       senderExternalRef: customerRef,
+      participantExternalRef: customerRef,
+      participantDisplayName: msg.displayName,
       text,
       attachments: attachments.length > 0
         ? attachments.map((a) => ({
@@ -76,6 +81,7 @@ export const webhookAdapter = {
       structured?: unknown;
       actions?: unknown;
       to: string;
+      recipientType?: "individual" | "group";
       attachment?: { url: string; mimeType: string; fileName?: string };
       contextMessageId?: string;
       reactionEmoji?: string;
@@ -96,6 +102,7 @@ export const webhookAdapter = {
     const body = JSON.stringify({
       event: "message.outbound",
       to: input.to,
+      recipientType: input.recipientType ?? "individual",
       text: resolvedText,
       structured: structured ?? undefined,
       actions: actions.length > 0 ? actions : undefined,

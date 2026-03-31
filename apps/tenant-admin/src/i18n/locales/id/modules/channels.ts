@@ -54,7 +54,7 @@ export default {
       widgetNamePlaceholder: "Contoh: NuyChat Web",
       publicChannelKey: "Identitas Web (publicChannelKey)",
       publicChannelKeyRequired: "Masukkan publicChannelKey",
-      publicChannelKeyPlaceholder: "Contoh: demo-web-public",
+      publicChannelKeyPlaceholder: "Contoh: wc-tenant-anda",
       allowedOrigins: "Asal yang Diizinkan (dipisah koma)",
       allowedOriginsPlaceholder: "Contoh: http://localhost:5176,https://www.example.com",
       thirdPartyOutboundUrl: "Alamat Callback Outbound Pihak Ketiga"

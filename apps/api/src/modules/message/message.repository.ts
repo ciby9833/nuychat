@@ -20,6 +20,11 @@ export async function getRecentMessages(tenantId: string, conversationId: string
       "m.channel_message_type",
       "m.message_status",
       "m.message_type",
+      "m.chat_type",
+      "m.chat_external_ref",
+      "m.chat_name",
+      "m.participant_external_ref",
+      "m.participant_display_name",
       "m.content",
       "m.reply_to_message_id",
       "m.reply_to_external_id",
@@ -101,7 +106,7 @@ export async function updateMessageStatusByExternalId(
 
 export async function getConversationSummary(tenantId: string, conversationId: string) {
   return db("conversations")
-    .select("conversation_id", "channel_id", "channel_type", "status", "assigned_agent_id")
+    .select("conversation_id", "channel_id", "channel_type", "chat_type", "chat_external_ref", "chat_name", "status", "assigned_agent_id")
     .where({
       tenant_id: tenantId,
       conversation_id: conversationId

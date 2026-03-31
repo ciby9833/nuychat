@@ -12,6 +12,9 @@ export class ConversationService {
       customerId: string;
       channelId: string;
       channelType: string;
+      chatType: "direct" | "group";
+      chatExternalRef: string;
+      chatName?: string;
       operatingMode?: string;
       lastMessagePreview?: string;
       lastMessageAt: Date;
@@ -23,8 +26,9 @@ export class ConversationService {
       .select("conversation_id")
       .where({
         tenant_id: input.tenantId,
-        customer_id: input.customerId,
-        channel_id: input.channelId
+        channel_id: input.channelId,
+        chat_type: input.chatType,
+        chat_external_ref: input.chatExternalRef
       } as any)
       .whereIn("status", activeStatuses)
       .orderBy("updated_at", "desc")
@@ -35,7 +39,8 @@ export class ConversationService {
         .where({ conversation_id: existing.conversation_id })
         .update({
           last_message_at: input.lastMessageAt,
-          last_message_preview: input.lastMessagePreview ?? null
+          last_message_preview: input.lastMessagePreview ?? null,
+          chat_name: input.chatName ?? null
         });
 
       return { conversationId: existing.conversation_id, created: false };
@@ -47,8 +52,9 @@ export class ConversationService {
       .select("conversation_id")
       .where({
         tenant_id: input.tenantId,
-        customer_id: input.customerId,
-        channel_id: input.channelId
+        channel_id: input.channelId,
+        chat_type: input.chatType,
+        chat_external_ref: input.chatExternalRef
       } as any)
       .whereIn("status", ["resolved", "closed"])
       .orderBy("updated_at", "desc")
@@ -65,6 +71,7 @@ export class ConversationService {
           current_segment_id: null,
           last_message_at: input.lastMessageAt,
           last_message_preview: input.lastMessagePreview ?? null,
+          chat_name: input.chatName ?? null,
           unread_count: 0,
           updated_at: new Date()
         });
@@ -78,6 +85,9 @@ export class ConversationService {
         customer_id: input.customerId,
         channel_type: input.channelType,
         channel_id: input.channelId,
+        chat_type: input.chatType,
+        chat_external_ref: input.chatExternalRef,
+        chat_name: input.chatName ?? null,
         status: "open",
         operating_mode: input.operatingMode ?? "ai_first",
         last_message_at: input.lastMessageAt,
