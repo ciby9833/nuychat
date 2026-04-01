@@ -3,20 +3,13 @@ import type { AIProvider } from "../../../../../packages/ai-sdk/src/index.ts";
 import { resolveTenantAISettingsForScene } from "../ai/provider-config.service.js";
 import { assertTenantAIBudgetAllowsUsage, recordAIUsage } from "../ai/usage-meter.service.js";
 import { buildCustomerIntelligenceContext } from "../memory/customer-intelligence.service.js";
+import { buildFactSnapshot, formatFactSnapshotForPrompt } from "../ai/fact-layer.service.js";
 
 type MsgRow = {
   message_id: string;
   direction: string;
   content: { text?: string };
   created_at: string;
-};
-
-type SkillInvocationRow = {
-  skill_name: string;
-  decision: string;
-  args: unknown;
-  result: unknown;
-  invoked_at: string;
 };
 
 export interface CopilotResult {
@@ -72,22 +65,32 @@ export class CopilotService {
     const messages = [...rows].reverse();
     const textFeed = messages.filter((m) => m.content?.text).map((m) => m.content.text!);
     const entities = extractEntities(textFeed.join(" "));
-    const latestSkillInvocation = await db<SkillInvocationRow>("skill_invocations")
-      .select("skill_name", "decision", "args", "result", "invoked_at")
-      .where({ tenant_id: input.tenantId, conversation_id: input.conversationId } as any)
-      .andWhere("decision", "allowed")
-      .orderBy("invoked_at", "desc")
-      .first();
-    const skillContext = latestSkillInvocation ? buildSkillContext(latestSkillInvocation) : null;
-    const latestSkillFacts = latestSkillInvocation
-      ? extractLatestFacts(parseObject(latestSkillInvocation.result), parseObject(latestSkillInvocation.args))
-      : null;
-    const memoryContext = await buildCustomerIntelligenceContext(
-      db,
-      input.tenantId,
-      input.conversationId,
-      conversationRow?.customer_id ?? undefined
-    ).catch(() => "");
+
+    // ── Fact Layer: shared fact source with orchestrator & skills/assist ──
+    const [factSnapshot, memoryContext] = await Promise.all([
+      buildFactSnapshot(db, {
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        customerId: conversationRow?.customer_id
+      }),
+      buildCustomerIntelligenceContext(
+        db,
+        input.tenantId,
+        input.conversationId,
+        conversationRow?.customer_id ?? undefined
+      ).catch(() => "")
+    ]);
+
+    const factLayerContext = formatFactSnapshotForPrompt(factSnapshot);
+    const topFact = factSnapshot.verifiedFacts[0] ?? null;
+    const latestToolResult = topFact ? {
+      type: "tool_result",
+      tool_name: topFact.skillName,
+      invoked_at: topFact.invokedAt,
+      args: topFact.args,
+      result: topFact.result
+    } : null;
+    const latestSkillFacts = topFact?.keyFacts ?? null;
 
     // ── LLM-powered analysis (when API key is available) ─────────────────────
     const aiSettings = await resolveTenantAISettingsForScene(db, input.tenantId, "agent_assist");
@@ -102,9 +105,10 @@ export class CopilotService {
           aiSettings.temperature,
           Math.min(1000, aiSettings.maxTokens),
           messages,
-          skillContext,
           memoryContext,
-          latestSkillFacts
+          latestToolResult,
+          latestSkillFacts,
+          factLayerContext
         ).catch(() => null);
 
         if (completion && completion.result.suggestions.length > 0) {
@@ -126,7 +130,7 @@ export class CopilotService {
 
     const result: CopilotResult = llmResult
       ? { ...llmResult, entities }
-      : buildFallback(textFeed, entities, skillContext);
+      : buildFallback(textFeed, entities, latestSkillFacts);
 
     // ── Persist AI trace ─────────────────────────────────────────────────────
     await db("ai_traces").insert({
@@ -156,9 +160,10 @@ async function runLLMCopilot(
   temperature: number,
   maxTokens: number,
   rows: MsgRow[],
-  skillContext: string | null,
   memoryContext: string,
-  latestSkillFacts: ReturnType<typeof extractLatestFacts>
+  latestToolResult: Record<string, unknown> | null,
+  latestSkillFacts: { trackingNumber: string | null; status: string | null; time: string | null; location: string | null; description: string | null } | null,
+  factLayerContext: string | null
 ): Promise<{ result: Omit<CopilotResult, "entities">; inputTokens: number; outputTokens: number }> {
   const chatHistory = rows
     .filter((m) => m.content?.text)
@@ -171,8 +176,19 @@ async function runLLMCopilot(
     model,
     messages: [
       { role: "system", content: COPILOT_SYSTEM },
-      ...(!latestSkillFacts && memoryContext
+      // Fact Layer context — includes verified facts + task facts + state facts
+      ...(factLayerContext
+        ? [{ role: "system" as const, content: factLayerContext }]
+        : []),
+      // Memory context is supplemental only when there is no fresh verified tool result.
+      ...(!latestToolResult && !latestSkillFacts && !factLayerContext && memoryContext
         ? [{ role: "system" as const, content: `Customer intelligence context:\n${memoryContext}` }]
+        : []),
+      ...(latestToolResult
+        ? [{
+            role: "system" as const,
+            content: `Authoritative tool result (single source of truth for current state):\n${JSON.stringify(latestToolResult, null, 2)}`
+          }]
         : []),
       ...(latestSkillFacts
         ? [{
@@ -180,7 +196,6 @@ async function runLLMCopilot(
             content: `Authoritative latest skill facts:\n${JSON.stringify(latestSkillFacts, null, 2)}`
           }]
         : []),
-      ...(skillContext ? [{ role: "system" as const, content: `Latest verified skill result:\n${skillContext}` }] : []),
       ...chatHistory
     ],
     maxTokens,
@@ -207,10 +222,13 @@ async function runLLMCopilot(
 
 // ─── Keyword fallback (when provider is unavailable) ─────────────────────────
 
-function buildFallback(textFeed: string[], entities: CopilotResult["entities"], skillContext: string | null): CopilotResult {
+function buildFallback(
+  textFeed: string[],
+  entities: CopilotResult["entities"],
+  latestFacts: { trackingNumber: string | null; status: string | null; time: string | null; location: string | null; description: string | null } | null
+): CopilotResult {
   const lastText = textFeed.at(-1) ?? "";
   const sentiment = kwSentiment(lastText);
-  const latestFacts = extractLatestFactsFromSkillContext(skillContext);
   return {
     summary: textFeed.length > 0
       ? `会话聚焦于：${textFeed.slice(-2).join(" / ")}`.slice(0, 160)
@@ -248,9 +266,16 @@ function sanitizeCopilotSuggestions(suggestions: string[]) {
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function extractEntities(text: string) {
+  const rawOrderIds = [
+    ...(text.match(/\b[A-Z]{1,6}-?\d{4,}\b/g) ?? []),
+    ...(text.match(/\b\d{8,20}\b/g) ?? [])
+  ];
+  const orderIds = [...new Set(rawOrderIds)];
+  const orderIdSet = new Set(orderIds);
+  const phones = (text.match(/\+?\d{8,15}/g) ?? []).filter((value) => !orderIdSet.has(value));
   return {
-    orderIds: text.match(/\b[A-Z]{2,5}\d{3,}\b/g) ?? [],
-    phones: text.match(/\+?\d{8,15}/g) ?? [],
+    orderIds,
+    phones: [...new Set(phones)],
     addresses: text.includes("地址") || text.includes("alamat") ? [text.slice(0, 60)] : []
   };
 }
@@ -263,116 +288,6 @@ function kwSentiment(text: string): CopilotResult["sentiment"] {
 function toSentiment(v: unknown): CopilotResult["sentiment"] {
   if (v === "positive" || v === "neutral" || v === "negative" || v === "angry") return v;
   return "neutral";
-}
-
-function buildSkillContext(row: SkillInvocationRow) {
-  const args = parseObject(row.args);
-  const result = parseObject(row.result);
-  const summary = summarizeSkillResult(result);
-  const latestFacts = extractLatestFacts(result, args);
-  return [
-    `skillName: ${row.skill_name}`,
-    `invokedAt: ${row.invoked_at}`,
-    Object.keys(args).length > 0 ? `args: ${JSON.stringify(args)}` : null,
-    summary ? `summary: ${summary}` : null,
-    latestFacts ? `latestFacts: ${JSON.stringify(latestFacts)}` : null,
-    result.customerReply ? `customerReply: ${String(result.customerReply)}` : null,
-    result.message ? `message: ${String(result.message)}` : null
-  ].filter(Boolean).join("\n");
-}
-
-function summarizeSkillResult(result: Record<string, unknown>) {
-  const data = parseObject(result.data);
-  const response = parseObject(result.response);
-  const source = Object.keys(response).length > 0 ? response : data;
-  if (Object.keys(source).length === 0) return "";
-  return Object.entries(source)
-    .filter(([key, value]) => value !== null && value !== undefined && value !== "" && !["code", "msg", "data"].includes(key))
-    .slice(0, 6)
-    .map(([key, value]) => `${key}: ${formatSummaryValue(value)}`)
-    .join("; ");
-}
-
-function formatSummaryValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    const latestObject = pickMostRecentObjectRecord(value);
-    if (latestObject) return summarizeObjectRecord(latestObject);
-    return `${value.length} items`;
-  }
-  if (value && typeof value === "object") return summarizeObjectRecord(value as Record<string, unknown>);
-  return String(value);
-}
-
-function summarizeObjectRecord(value: Record<string, unknown>) {
-  return Object.entries(value)
-    .filter(([, item]) => item !== null && item !== undefined && item !== "")
-    .slice(0, 5)
-    .map(([key, item]) => `${key}: ${String(item)}`)
-    .join("; ");
-}
-
-function extractLatestBusinessObject(result: Record<string, unknown>) {
-  const data = parseObject(result.data);
-  const response = parseObject(result.response);
-  const source = Object.keys(response).length > 0 ? response : data;
-  for (const key of ["details", "records", "events", "tracks", "history", "items"]) {
-    const value = source[key];
-    if (!Array.isArray(value) || value.length === 0) continue;
-    const latest = pickMostRecentObjectRecord(value);
-    if (latest) return latest as Record<string, unknown>;
-  }
-  return null;
-}
-
-function findRecordValue(record: Record<string, unknown>, patterns: RegExp[]) {
-  for (const [key, value] of Object.entries(record)) {
-    if (value === null || value === undefined || value === "") continue;
-    if (patterns.some((pattern) => pattern.test(key))) return String(value);
-  }
-  return null;
-}
-
-function firstNonEmptyString(...values: unknown[]) {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-}
-
-function extractLatestFacts(result: Record<string, unknown>, args: Record<string, unknown>) {
-  const latestObject = extractLatestBusinessObject(result);
-  if (!latestObject) return null;
-  return {
-    trackingNumber: firstNonEmptyString(
-      args.billCodes,
-      args.trackingNumber,
-      args.tracking_number,
-      args.waybillNumber,
-      args.waybill_number
-    ),
-    status: findRecordValue(latestObject, [/^status$/i, /状态/, /scan\s*type/i]),
-    time: findRecordValue(latestObject, [/^time$/i, /时间/, /date/i]),
-    location: findRecordValue(latestObject, [/outlet/i, /网点/, /branch/i, /location/i]),
-    description: findRecordValue(latestObject, [/description/i, /说明/, /remark/i, /detail/i])
-  };
-}
-
-function extractLatestFactsFromSkillContext(skillContext: string | null) {
-  if (!skillContext) return null;
-  const match = skillContext.match(/latestFacts:\s*(\{.+\})/);
-  if (!match?.[1]) return null;
-  try {
-    const parsed = JSON.parse(match[1]) as Record<string, unknown>;
-    return {
-      trackingNumber: firstNonEmptyString(parsed.trackingNumber),
-      status: firstNonEmptyString(parsed.status),
-      time: firstNonEmptyString(parsed.time),
-      location: firstNonEmptyString(parsed.location),
-      description: firstNonEmptyString(parsed.description)
-    };
-  } catch {
-    return null;
-  }
 }
 
 function buildFactGroundedFallback(facts: {
@@ -392,51 +307,7 @@ function buildFactGroundedFallback(facts: {
   return `${leading}${details.length > 0 ? `，${details.join("，")}` : "，已查询到最新物流信息"}。`;
 }
 
-function parseObject(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
-  if (typeof value === "string" && value.trim()) {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
+// parseObject is now imported from ../ai/fact-layer.service.ts
 
-function pickMostRecentObjectRecord(value: unknown[]) {
-  const records = value.filter((item) => item && typeof item === "object" && !Array.isArray(item)) as Record<string, unknown>[];
-  if (records.length === 0) return null;
-
-  let best: Record<string, unknown> | null = null;
-  let bestScore = Number.NEGATIVE_INFINITY;
-
-  for (const record of records) {
-    const score = extractTemporalScore(record);
-    if (score > bestScore) {
-      best = record;
-      bestScore = score;
-    }
-  }
-
-  return best ?? records[0] ?? null;
-}
-
-function extractTemporalScore(record: Record<string, unknown>) {
-  let bestScore = Number.NEGATIVE_INFINITY;
-  for (const [key, value] of Object.entries(record)) {
-    if (!/(time|date|updated|created|timestamp|ts|scan)/i.test(key)) continue;
-    const score = parseDateScore(value);
-    if (score > bestScore) bestScore = score;
-  }
-  return bestScore;
-}
-
-function parseDateScore(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value !== "string") return Number.NEGATIVE_INFINITY;
-  const normalized = value.trim().replace(" ", "T");
-  const parsed = Date.parse(normalized);
-  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
-}
+// pickMostRecentObjectRecord, extractTemporalScore, parseDateScore
+// moved to ../ai/fact-layer.service.ts

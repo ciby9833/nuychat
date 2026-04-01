@@ -45,6 +45,18 @@ import {
   evaluatePreReplyPolicy
 } from "../ai/pre-reply-policy.service.js";
 import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
+import {
+  buildFactSnapshot,
+  buildVerifiedFactFromToolResult,
+  formatFactSnapshotForPrompt,
+  type FactSnapshot,
+  type VerifiedFact
+} from "../ai/fact-layer.service.js";
+import {
+  evaluatePointA,
+  evaluatePointB,
+  type VerifierVerdict
+} from "../ai/verifier/index.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -346,9 +358,9 @@ export class OrchestratorService {
     const skillsBlocked: Array<{ name: string; reason: string }> = [];
 
     // ── Build system prompt context ────────────────────────────────────────────
-    // Load long-term memory + short-term tool results in parallel; both feed
-    // into the system prompt so the LLM has: identity → history → fresh data.
-    const [memoryContext, recentSkillContext] = await Promise.all([
+    // Load long-term memory + Fact Layer snapshot in parallel; both feed
+    // into the system prompt so the LLM has: identity → history → fresh data → tasks.
+    const [memoryContext, factSnapshot] = await Promise.all([
       buildCustomerIntelligenceContext(
         db,
         input.tenantId,
@@ -358,15 +370,20 @@ export class OrchestratorService {
           excludeMemoryTypes: selectedSkill || continuationSkill ? ["unresolved_issue"] : []
         }
       ),
-      buildRecentSkillInvocationContext(db, {
+      buildFactSnapshot(db, {
         tenantId: input.tenantId,
-        conversationId: input.conversationId
+        conversationId: input.conversationId,
+        customerId: input.customerId
       })
     ]);
+    // Track in-flight verified facts accumulated during this orchestration run
+    const runVerifiedFacts: VerifiedFact[] = [...factSnapshot.verifiedFacts];
+
+    const factLayerContext = formatFactSnapshotForPrompt(factSnapshot);
     const systemPrompt = buildSystemPrompt({
       basePrompt: SYSTEM_PROMPT_BASE,
       memoryContext,
-      recentSkillContext,
+      recentSkillContext: factLayerContext,
       aiAgent,
       candidateSkills
     });
@@ -388,6 +405,7 @@ export class OrchestratorService {
         ...llmMessages
       ];
       const seenToolCalls = new Set<string>();
+      const verifierSteps: Array<{ point: string; loop?: number; verdict: VerifierVerdict }> = [];
       const MAX_AGENT_LOOPS = 3;
 
       for (let loopIndex = 0; loopIndex < MAX_AGENT_LOOPS; loopIndex += 1) {
@@ -523,6 +541,11 @@ export class OrchestratorService {
                 policyMap: runtimePolicy
               });
               toolResult = JSON.stringify(result);
+
+              // ── Fact Layer: register this tool result as a verified fact ──
+              runVerifiedFacts.push(
+                buildVerifiedFactFromToolResult(toolCall.function.name, args, result)
+              );
             } else {
               const reason = gate.action === "allow"
                 ? (plannerToolGuard.allowed ? "guard_unknown" : plannerToolGuard.reason)
@@ -579,6 +602,19 @@ export class OrchestratorService {
             toolCallId: toolCall.id
           });
         }
+
+        // ── Verifier Point A: mid-loop evaluation ────────────────────────────
+        const pointAVerdict = evaluatePointA({
+          runVerifiedFacts,
+          factSnapshot,
+          loopIndex,
+          maxLoops: MAX_AGENT_LOOPS,
+          skillsInvoked,
+          skillsBlocked,
+          loopMessages,
+          chatHistory: llmMessages
+        });
+        verifierSteps.push({ point: "A", loop: loopIndex, verdict: pointAVerdict });
       }
 
       if (lastToolCalls.length > 0 && !finalContent.trim()) {
@@ -622,6 +658,28 @@ export class OrchestratorService {
         chatHistory,
         defaultAction: "reply"
       });
+
+      // ── Verifier Point B: post-answer evaluation ───────────────────────────
+      const pointBVerdict = evaluatePointB({
+        finalContent,
+        proposedAction: aiDecision.action,
+        runVerifiedFacts,
+        factSnapshot,
+        skillsInvoked,
+        loopMessages,
+        chatHistory: llmMessages
+      });
+      verifierSteps.push({ point: "B", verdict: pointBVerdict });
+
+      // If verifier says handoff, override the AI decision
+      if (pointBVerdict.action === "handoff" && aiDecision.action !== "handoff") {
+        aiDecision.action = "handoff" as AIControlAction;
+        aiDecision.handoffReason = pointBVerdict.findings
+          .filter((f) => f.triggered)
+          .map((f) => f.reason)
+          .join("; ");
+      }
+
       const policyEnforcement = enforcePreReplyPolicy({
         policy: preReplyPolicy,
         invokedBindings: skillsInvoked,
@@ -728,7 +786,8 @@ export class OrchestratorService {
         skillsInvoked,
         skillsBlocked,
         toolCalls: lastToolCalls,
-        handoffReason: effectiveHandoffReason ?? null
+        handoffReason: effectiveHandoffReason ?? null,
+        verifierSteps
       }).catch(() => null);
 
       if (effectiveAction === "handoff") {
@@ -800,6 +859,7 @@ async function scheduleExecutionArchive(input: {
   skillsBlocked: Array<{ name: string; reason: string }>;
   toolCalls: AIToolCall[];
   handoffReason: string | null;
+  verifierSteps: Array<{ point: string; loop?: number; verdict: VerifierVerdict }>;
 }) {
   await scheduleLongTask({
     tenantId: input.tenantId,
@@ -833,7 +893,14 @@ async function scheduleExecutionArchive(input: {
           name: call.function.name,
           arguments: call.function.arguments
         })),
-        handoffReason: input.handoffReason
+        handoffReason: input.handoffReason,
+        verifierSteps: input.verifierSteps.map((s) => ({
+          point: s.point,
+          loop: s.loop,
+          action: s.verdict.action,
+          summary: s.verdict.summary,
+          findings: s.verdict.findings.filter((f) => f.triggered)
+        }))
       }
     }
   });
@@ -1233,58 +1300,8 @@ async function checkRecentSkillContext(
 
 // Builds a compact [RECENT TOOL RESULTS] block injected into the system prompt.
 // This is the key mechanism that aligns NuyChat with Claude's native tool-use
-// pattern: the LLM can see what data was already fetched this conversation and
-// naturally decides whether to re-invoke a tool or answer from existing context.
-async function buildRecentSkillInvocationContext(
-  db: Knex | Knex.Transaction,
-  input: { tenantId: string; conversationId: string }
-): Promise<string | null> {
-  const rows = (await db("skill_invocations")
-    .where("tenant_id", input.tenantId)
-    .where("conversation_id", input.conversationId)
-    .where("decision", "allowed")
-    .where("invoked_at", ">=", db.raw("now() - interval '5 minutes'"))
-    .select("skill_name", "result", "invoked_at")
-    .orderBy("invoked_at", "desc")
-    .limit(5)) as Array<{ skill_name: string; result: unknown; invoked_at: string }>;
-
-  if (rows.length === 0) return null;
-
-  // Fields that are too verbose or irrelevant for the LLM summary
-  const SKIP_KEYS = new Set([
-    "timeline", "details", "raw", "raw_response_code", "raw_response_msg",
-    "httpStatus", "request", "response", "scriptKey", "scriptName",
-    "runtime", "stderr", "_async"
-  ]);
-
-  const lines = rows.map((row) => {
-    const result: Record<string, unknown> =
-      row.result && typeof row.result === "object" && !Array.isArray(row.result)
-        ? (row.result as Record<string, unknown>)
-        : typeof row.result === "string"
-          ? (() => { try { return JSON.parse(row.result as string) as Record<string, unknown>; } catch { return {}; } })()
-          : {};
-
-    const keyParts = Object.entries(result)
-      .filter(([k, v]) =>
-        !SKIP_KEYS.has(k) &&
-        !Array.isArray(v) &&
-        v !== null && v !== undefined && v !== ""
-      )
-      .map(([k, v]) => `${k}=${String(v).slice(0, 80)}`)
-      .slice(0, 10);
-
-    const ts = new Date(row.invoked_at).toISOString().slice(11, 19); // HH:MM:SS UTC
-    return `  [${row.skill_name} @ ${ts}] ${keyParts.join(" | ").slice(0, 320)}`;
-  });
-
-  return [
-    "[RECENT TOOL RESULTS — fetched in this conversation, last 5 minutes]",
-    lines.join("\n"),
-    "If the customer asks a follow-up about data already present above, answer directly without re-invoking the tool.",
-    "If a new identifier (order/tracking number, etc.) appears that is NOT in the results above, invoke the relevant tool to fetch fresh data."
-  ].join("\n");
-}
+// NOTE: buildRecentSkillInvocationContext removed — replaced by Fact Layer
+// (buildFactSnapshot + formatFactSnapshotForPrompt from ai/fact-layer.service.ts)
 
 function noAiResult(reason: string): OrchestratorResult {
   return {
