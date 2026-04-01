@@ -49,14 +49,21 @@ import {
   buildFactSnapshot,
   buildVerifiedFactFromToolResult,
   formatFactSnapshotForPrompt,
+  summarizeSkillResult,
   type FactSnapshot,
   type VerifiedFact
 } from "../ai/fact-layer.service.js";
+import { recordSkillExecutionAsTask } from "../tasks/ai-task-bridge.service.js";
 import {
   evaluatePointA,
   evaluatePointB,
   type VerifierVerdict
 } from "../ai/verifier/index.js";
+import {
+  revisePointA,
+  revisePointB,
+  type ReviserOutcome
+} from "../ai/reviser/index.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -406,6 +413,7 @@ export class OrchestratorService {
       ];
       const seenToolCalls = new Set<string>();
       const verifierSteps: Array<{ point: string; loop?: number; verdict: VerifierVerdict }> = [];
+      const reviserSteps: Array<{ point: string; loop?: number; outcome: ReviserOutcome }> = [];
       const MAX_AGENT_LOOPS = 3;
 
       for (let loopIndex = 0; loopIndex < MAX_AGENT_LOOPS; loopIndex += 1) {
@@ -546,6 +554,19 @@ export class OrchestratorService {
               runVerifiedFacts.push(
                 buildVerifiedFactFromToolResult(toolCall.function.name, args, result)
               );
+
+              // ── Task Bridge: auto-generate case_task for AI skill execution ──
+              void recordSkillExecutionAsTask(db, {
+                tenantId: input.tenantId,
+                conversationId: input.conversationId,
+                caseId: input.caseId ?? null,
+                customerId: input.customerId,
+                skillName: toolCall.function.name,
+                args,
+                resultSummary: summarizeSkillResult(result) || "执行完成",
+                creatorType: "ai",
+                creatorId: input.aiAgentId ?? null
+              }).catch(() => null);
             } else {
               const reason = gate.action === "allow"
                 ? (plannerToolGuard.allowed ? "guard_unknown" : plannerToolGuard.reason)
@@ -615,6 +636,26 @@ export class OrchestratorService {
           chatHistory: llmMessages
         });
         verifierSteps.push({ point: "A", loop: loopIndex, verdict: pointAVerdict });
+
+        // ── Reviser Point A: inject hint if continue_tools ───────────────────
+        const pointARevision = revisePointA({
+          verdict: pointAVerdict,
+          runVerifiedFacts,
+          factSnapshot,
+          loopIndex,
+          maxLoops: MAX_AGENT_LOOPS,
+          skillsInvoked,
+          skillsBlocked,
+          loopMessages,
+          chatHistory: llmMessages
+        });
+        if (pointARevision.modified && pointARevision.revisedContent) {
+          loopMessages.push({
+            role: "system",
+            content: pointARevision.revisedContent
+          });
+        }
+        reviserSteps.push({ point: "A", loop: loopIndex, outcome: pointARevision });
       }
 
       if (lastToolCalls.length > 0 && !finalContent.trim()) {
@@ -671,13 +712,54 @@ export class OrchestratorService {
       });
       verifierSteps.push({ point: "B", verdict: pointBVerdict });
 
-      // If verifier says handoff, override the AI decision
-      if (pointBVerdict.action === "handoff" && aiDecision.action !== "handoff") {
-        aiDecision.action = "handoff" as AIControlAction;
-        aiDecision.handoffReason = pointBVerdict.findings
-          .filter((f) => f.triggered)
-          .map((f) => f.reason)
-          .join("; ");
+      // ── Reviser Point B: execute corrective action ─────────────────────────
+      const pointBRevision = await revisePointB({
+        verdict: pointBVerdict,
+        finalContent,
+        proposedAction: aiDecision.action,
+        runVerifiedFacts,
+        factSnapshot,
+        skillsInvoked,
+        loopMessages,
+        chatHistory: llmMessages,
+        llm: {
+          provider: aiSettings.provider,
+          model,
+          temperature: aiSettings.temperature,
+          maxTokens: aiSettings.maxTokens
+        }
+      });
+      reviserSteps.push({ point: "B", outcome: pointBRevision });
+      inputTokens += pointBRevision.extraInputTokens;
+      outputTokens += pointBRevision.extraOutputTokens;
+
+      if (pointBRevision.modified) {
+        if (pointBRevision.action === "handoff") {
+          aiDecision.action = "handoff" as AIControlAction;
+          aiDecision.handoffReason = pointBRevision.handoffReason ?? "verifier_forced_handoff";
+        } else if (pointBRevision.action === "rewrite_answer" && pointBRevision.revisedContent) {
+          // Re-parse the rewritten content through the contract normalizer
+          const revised = normalizeAIInteractionContract(pointBRevision.revisedContent, {
+            chatHistory,
+            defaultAction: "reply"
+          });
+          aiDecision.action = revised.action;
+          aiDecision.response = revised.response;
+          aiDecision.intent = revised.intent;
+          aiDecision.sentiment = revised.sentiment;
+          aiDecision.confidence = revised.confidence;
+          finalContent = pointBRevision.revisedContent;
+        } else if (pointBRevision.action === "clarify" && pointBRevision.revisedContent) {
+          const revised = normalizeAIInteractionContract(pointBRevision.revisedContent, {
+            chatHistory,
+            defaultAction: "reply"
+          });
+          aiDecision.action = revised.action;
+          aiDecision.response = revised.response;
+          aiDecision.intent = "clarification_request";
+          aiDecision.confidence = revised.confidence;
+          finalContent = pointBRevision.revisedContent;
+        }
       }
 
       const policyEnforcement = enforcePreReplyPolicy({
@@ -787,7 +869,8 @@ export class OrchestratorService {
         skillsBlocked,
         toolCalls: lastToolCalls,
         handoffReason: effectiveHandoffReason ?? null,
-        verifierSteps
+        verifierSteps,
+        reviserSteps
       }).catch(() => null);
 
       if (effectiveAction === "handoff") {
@@ -860,6 +943,7 @@ async function scheduleExecutionArchive(input: {
   toolCalls: AIToolCall[];
   handoffReason: string | null;
   verifierSteps: Array<{ point: string; loop?: number; verdict: VerifierVerdict }>;
+  reviserSteps: Array<{ point: string; loop?: number; outcome: ReviserOutcome }>;
 }) {
   await scheduleLongTask({
     tenantId: input.tenantId,
@@ -900,6 +984,13 @@ async function scheduleExecutionArchive(input: {
           action: s.verdict.action,
           summary: s.verdict.summary,
           findings: s.verdict.findings.filter((f) => f.triggered)
+        })),
+        reviserSteps: input.reviserSteps.map((s) => ({
+          point: s.point,
+          loop: s.loop,
+          action: s.outcome.action,
+          modified: s.outcome.modified,
+          summary: s.outcome.summary
         }))
       }
     }

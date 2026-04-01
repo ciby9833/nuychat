@@ -64,12 +64,24 @@ export interface StateFact {
   updatedAt: string;
 }
 
+/** 从 case_task_events 提取的任务变更事实 */
+export interface TaskEventFact {
+  taskId: string;
+  eventType: string;
+  fromValue: string | null;
+  toValue: string | null;
+  actorType: string;
+  createdAt: string;
+}
+
 /** 完整快照 — 三条链共享的事实上下文 */
 export interface FactSnapshot {
   /** 最新已验证的技能执行事实（按 invoked_at DESC 排序） */
   verifiedFacts: VerifiedFact[];
   /** 当前 case 的手工任务状态 */
   taskFacts: TaskFact[];
+  /** 最近的任务变更事件 */
+  taskEventFacts: TaskEventFact[];
   /** 客户活跃状态 */
   stateFacts: StateFact[];
   /** 快照生成时间 */
@@ -128,16 +140,18 @@ export async function buildFactSnapshot(
 ): Promise<FactSnapshot> {
   const { tenantId, conversationId, customerId } = input;
 
-  // 并行查询三个数据源
-  const [invocationRows, taskRows, stateRows] = await Promise.all([
+  // 并行查询四个数据源
+  const [invocationRows, taskRows, stateRows, taskEventRows] = await Promise.all([
     fetchRecentInvocations(db, tenantId, conversationId),
     fetchCaseTasks(db, tenantId, conversationId),
     customerId ? fetchActiveStates(db, tenantId, customerId) : Promise.resolve([]),
+    fetchRecentTaskEvents(db, tenantId, conversationId),
   ]);
 
   return {
     verifiedFacts: invocationRows.map(mapInvocationToFact),
     taskFacts: taskRows.map(mapTaskRowToFact),
+    taskEventFacts: taskEventRows,
     stateFacts: stateRows.map(mapStateRowToFact),
     snapshotAt: new Date().toISOString(),
   };
@@ -212,6 +226,21 @@ export function formatFactSnapshotForPrompt(snapshot: FactSnapshot): string | nu
     );
   }
 
+  // ── Task Events ──
+  if (snapshot.taskEventFacts.length > 0) {
+    const lines = snapshot.taskEventFacts.map((e) => {
+      const parts = [`- ${e.eventType}`];
+      if (e.fromValue) parts.push(`from: ${e.fromValue}`);
+      if (e.toValue) parts.push(`to: ${e.toValue}`);
+      parts.push(`by: ${e.actorType}`);
+      parts.push(`at: ${e.createdAt}`);
+      return parts.join(" | ");
+    });
+    sections.push(
+      `[Recent Task Changes (last 2h)]\n${lines.join("\n")}`,
+    );
+  }
+
   // ── State Facts ──
   if (snapshot.stateFacts.length > 0) {
     const lines = snapshot.stateFacts.map((s) => {
@@ -281,6 +310,45 @@ async function fetchCaseTasks(
     .whereIn("ct.status", ["open", "in_progress"])
     .orderBy("ct.created_at", "desc")
     .limit(10);
+}
+
+async function fetchRecentTaskEvents(
+  db: Knex | Knex.Transaction,
+  tenantId: string,
+  conversationId: string,
+): Promise<TaskEventFact[]> {
+  // Get case_id first
+  const conv = await db("conversations")
+    .select("current_case_id")
+    .where({ conversation_id: conversationId, tenant_id: tenantId } as Record<string, unknown>)
+    .first() as { current_case_id: string | null } | undefined;
+
+  if (!conv?.current_case_id) return [];
+
+  const rows = await db("case_task_events as cte")
+    .join("case_tasks as ct", "ct.task_id", "cte.task_id")
+    .where("cte.tenant_id", tenantId)
+    .where("ct.case_id", conv.current_case_id)
+    .andWhere("cte.created_at", ">=", db.raw("now() - interval '2 hours'"))
+    .orderBy("cte.created_at", "desc")
+    .limit(10)
+    .select(
+      "cte.task_id",
+      "cte.event_type",
+      "cte.from_value",
+      "cte.to_value",
+      "cte.actor_type",
+      "cte.created_at"
+    );
+
+  return rows.map((r) => ({
+    taskId: r.task_id,
+    eventType: r.event_type,
+    fromValue: r.from_value,
+    toValue: r.to_value,
+    actorType: r.actor_type,
+    createdAt: new Date(r.created_at).toISOString()
+  }));
 }
 
 async function fetchActiveStates(

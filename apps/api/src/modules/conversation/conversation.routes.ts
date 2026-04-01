@@ -44,6 +44,8 @@ import {
 import { CustomerAnalysisService } from "../memory/customer-analysis.service.js";
 import { cancelAssignmentAcceptTimeout, cancelFollowUpTimeout, scheduleAssignmentAcceptTimeout } from "../sla/conversation-sla.service.js";
 import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
+import { recordSkillExecutionAsTask } from "../tasks/ai-task-bridge.service.js";
+import { summarizeSkillResult } from "../ai/fact-layer.service.js";
 
 const copilotService = new CopilotService();
 const conversationCaseService = new ConversationCaseService();
@@ -518,8 +520,7 @@ export async function conversationRoutes(app: FastifyInstance) {
 
       const normalizedParameters = normalizeSkillExecutionArgs({
         inputSchema: selectedSkill.inputSchema,
-        parameters,
-        sourceMessageText: typeof parameters.sourceMessageText === "string" ? parameters.sourceMessageText : undefined
+        parameters
       });
 
       const startedAt = Date.now();
@@ -672,9 +673,36 @@ export async function conversationRoutes(app: FastifyInstance) {
       const normalizedArgs = normalizeSkillExecutionArgs({
         inputSchema: assistedSkill.inputSchema,
         parameters: args,
-        sourceMessageText: sourceMessage.text,
         sourceAttachments: sourceMessage.attachments
       });
+
+      const missingRequiredArgs = findMissingRequiredSkillArgs(assistedSkill.inputSchema, normalizedArgs);
+      if (missingRequiredArgs.length > 0) {
+        const needInputResult = buildNeedInputAssistResult({
+          skillName: script.scriptKey,
+          inputSchema: assistedSkill.inputSchema,
+          missingFields: missingRequiredArgs
+        });
+        await recordSkillInvocation(trx, {
+          tenantId,
+          conversationId,
+          skillName: script.scriptKey,
+          actorType: "agent",
+          args: normalizedArgs,
+          decision: "blocked",
+          denyReason: "missing_required_args",
+          result: needInputResult
+        });
+        return {
+          assist: {
+            skillName: script.scriptKey,
+            sourceMessageId: sourceMessage.messageId,
+            sourceMessagePreview: sourceMessage.text,
+            parameters: normalizedArgs,
+            result: needInputResult
+          }
+        };
+      }
 
       const startedAt = Date.now();
       const result = await runCapabilityScriptExecution({
@@ -710,6 +738,19 @@ export async function conversationRoutes(app: FastifyInstance) {
         durationMs: Date.now() - startedAt,
         result
       });
+
+      // ── Task Bridge: auto-generate case_task for agent skill execution ──
+      await recordSkillExecutionAsTask(trx, {
+        tenantId,
+        conversationId,
+        caseId: conversation.caseId ?? null,
+        customerId: conversation.customerId ?? null,
+        skillName: script.scriptKey,
+        args: normalizedArgs,
+        resultSummary: summarizeSkillResult(result as Record<string, unknown>) || "执行完成",
+        creatorType: "agent",
+        creatorId: agentId ?? null
+      }).catch(() => null);
 
       // Post-process raw skill result through LLM so the frontend receives
       // a clean customerReply + structured timeline (if applicable) instead
@@ -2509,13 +2550,7 @@ async function extractSkillAssistArgs(input: {
     extracted = {};
   }
 
-  return fillSkillAssistArgsFromContext({
-    inputSchema: input.skill.inputSchema,
-    parameters: extracted,
-    sourceMessageText: input.sourceMessageText,
-    sourceAttachments: input.sourceAttachments,
-    skillDocs: [input.skill.skillMarkdown, input.skill.formsMarkdown, input.skill.referenceMarkdown].filter((item): item is string => Boolean(item?.trim())).join("\n\n")
-  });
+  return extracted;
 }
 
 function normalizeConversationSkillSchema(inputSchema: Record<string, unknown>) {
@@ -2545,7 +2580,6 @@ function normalizeConversationSkillSchema(inputSchema: Record<string, unknown>) 
 function normalizeSkillExecutionArgs(input: {
   inputSchema: Record<string, unknown>;
   parameters: Record<string, unknown>;
-  sourceMessageText?: string;
   sourceAttachments?: Array<{
     url: string;
     mimeType: string;
@@ -2554,28 +2588,6 @@ function normalizeSkillExecutionArgs(input: {
 }) {
   const next = { ...input.parameters };
   const properties = parseJsonObject(input.inputSchema.properties);
-  const required = Array.isArray(input.inputSchema.required)
-    ? input.inputSchema.required.map((item) => String(item))
-    : [];
-
-  const trackingNumber =
-    readNonEmptyString(next.billCodes) ??
-    readNonEmptyString(next.bill_codes) ??
-    readNonEmptyString(next.trackingNumber) ??
-    readNonEmptyString(next.tracking_number) ??
-    readNonEmptyString(next.waybillNumber) ??
-    readNonEmptyString(next.waybill_number) ??
-    extractTrackingLikeToken(input.sourceMessageText);
-
-  if ("billCodes" in properties && trackingNumber && !readNonEmptyString(next.billCodes)) {
-    next.billCodes = trackingNumber;
-  }
-  if ("trackingNumber" in properties && trackingNumber && !readNonEmptyString(next.trackingNumber)) {
-    next.trackingNumber = trackingNumber;
-  }
-  if ("waybillNumber" in properties && trackingNumber && !readNonEmptyString(next.waybillNumber)) {
-    next.waybillNumber = trackingNumber;
-  }
   if ("image_url" in properties && !readNonEmptyString(next.image_url)) {
     const firstAttachment = input.sourceAttachments?.find((item) => item.url);
     if (firstAttachment?.url) {
@@ -2583,72 +2595,10 @@ function normalizeSkillExecutionArgs(input: {
     }
   }
 
-  for (const field of required) {
-    if (!readNonEmptyString(next[field]) && trackingNumber && /(bill|track|waybill|awb|resi)/i.test(field)) {
-      next[field] = trackingNumber;
-    }
-  }
-
   delete next.bill_codes;
   delete next.tracking_number;
   delete next.waybill_number;
   delete next.sourceMessageText;
-  return next;
-}
-
-function fillSkillAssistArgsFromContext(input: {
-  inputSchema: Record<string, unknown>;
-  parameters: Record<string, unknown>;
-  sourceMessageText: string;
-  sourceAttachments?: Array<{
-    url: string;
-    mimeType: string;
-    fileName?: string;
-  }>;
-  skillDocs?: string;
-}) {
-  const next = { ...input.parameters };
-  const properties = parseJsonObject(input.inputSchema.properties);
-  const required = Array.isArray(input.inputSchema.required)
-    ? input.inputSchema.required.map((item) => String(item)).filter(Boolean)
-    : [];
-  const candidateFields = Array.from(new Set([...Object.keys(properties), ...required]));
-  const identifier = extractTrackingLikeToken(input.sourceMessageText);
-
-  for (const field of candidateFields) {
-    if (readNonEmptyString(next[field])) continue;
-    const property = parseJsonObject(properties[field]);
-    const descriptor = `${field} ${typeof property.description === "string" ? property.description : ""}`.toLowerCase();
-
-    if (identifier && isIdentifierLikeField(descriptor)) {
-      next[field] = identifier;
-      continue;
-    }
-
-    if (!identifier && descriptor.includes("query")) {
-      next[field] = input.sourceMessageText.trim();
-      continue;
-    }
-
-    if (descriptor.includes("image") && field.toLowerCase() === "image_url") {
-      const firstAttachment = input.sourceAttachments?.find((item) => item.url);
-      if (firstAttachment?.url) {
-        next[field] = firstAttachment.url;
-      }
-    }
-  }
-
-  if (identifier && candidateFields.length === 1) {
-    const [field] = candidateFields;
-    if (field && !readNonEmptyString(next[field])) next[field] = identifier;
-  }
-
-  if (identifier && input.skillDocs?.trim()) {
-    for (const field of extractFieldHintsFromDocs(input.skillDocs)) {
-      if (!readNonEmptyString(next[field])) next[field] = identifier;
-    }
-  }
-
   return next;
 }
 
@@ -2680,32 +2630,44 @@ function normalizeExtractedSkillArgs(
   return flattened;
 }
 
-function extractTrackingLikeToken(value: string | undefined) {
-  if (!value) return null;
-  const match = value.match(/\b([A-Z0-9-]{8,32})\b/i);
-  return match?.[1]?.toUpperCase() ?? null;
-}
-
-function isIdentifierLikeField(descriptor: string) {
-  return /(bill|track|tracking|waybill|awb|resi|identifier|运单|单号|物流|bill code)/i.test(descriptor);
-}
-
-function extractFieldHintsFromDocs(value: string) {
-  const hints = new Set<string>();
-  const pattern = /(?:^|\n)\s*(?:[-*]\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*[:：]\s*(.+)$/gm;
-  for (const match of value.matchAll(pattern)) {
-    const field = match[1]?.trim();
-    const description = match[2]?.trim() ?? "";
-    if (!field) continue;
-    if (isIdentifierLikeField(`${field} ${description}`)) hints.add(field);
-  }
-  return [...hints];
-}
-
 function readNonEmptyString(value: unknown) {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized ? normalized : null;
+}
+
+function findMissingRequiredSkillArgs(inputSchema: Record<string, unknown>, parameters: Record<string, unknown>) {
+  const required = Array.isArray(inputSchema.required)
+    ? inputSchema.required.map((item) => String(item)).filter(Boolean)
+    : [];
+  return required.filter((field) => {
+    const value = parameters[field];
+    if (typeof value === "string") return value.trim().length === 0;
+    if (Array.isArray(value)) return value.length === 0;
+    return value === null || value === undefined;
+  });
+}
+
+function buildNeedInputAssistResult(input: {
+  skillName: string;
+  inputSchema: Record<string, unknown>;
+  missingFields: string[];
+}) {
+  const properties = parseJsonObject(input.inputSchema.properties);
+  const labels = input.missingFields.map((field) => {
+    const property = parseJsonObject(properties[field]);
+    return typeof property.description === "string" && property.description.trim()
+      ? property.description.trim()
+      : field;
+  });
+  const joined = labels.join("、");
+  return {
+    status: "need_input",
+    missingInputs: input.missingFields,
+    message: joined ? `缺少必要参数：${joined}` : "缺少必要参数，暂时无法执行技能。",
+    customerReply: joined ? `请先提供${joined}，我再继续帮您处理。` : "请先补充必要信息，我再继续帮您处理。",
+    skillName: input.skillName
+  };
 }
 
 function buildRequestOrigin(req: { protocol?: string; headers: Record<string, unknown> }) {

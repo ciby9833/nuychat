@@ -46,6 +46,40 @@ export type ConversationCapabilityState = {
   lastUserMessage: string | null;
 };
 
+function normalizeJsonObject(value: unknown): string {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return JSON.stringify(parsed);
+      }
+    } catch {
+      return JSON.stringify({});
+    }
+  }
+  return JSON.stringify({});
+}
+
+function normalizeJsonStringArray(value: unknown): string {
+  if (Array.isArray(value)) {
+    return JSON.stringify(value.map((item) => String(item)).filter(Boolean));
+  }
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (Array.isArray(parsed)) {
+        return JSON.stringify(parsed.map((item) => String(item)).filter(Boolean));
+      }
+    } catch {
+      return JSON.stringify([]);
+    }
+  }
+  return JSON.stringify([]);
+}
+
 export async function getConversationCapabilityState(
   db: Knex | Knex.Transaction,
   input: {
@@ -86,6 +120,9 @@ export async function upsertConversationCapabilityState(
     lastUserMessage?: string | null;
   }
 ) {
+  const missingInputsJson = normalizeJsonStringArray(input.missingInputs ?? []);
+  const resolvedInputsJson = normalizeJsonObject(input.resolvedInputs ?? {});
+
   await db("conversation_capability_states")
     .insert({
       tenant_id: input.tenantId,
@@ -94,8 +131,8 @@ export async function upsertConversationCapabilityState(
       capability_id: input.capabilityId,
       status: input.status,
       clarification_question: input.clarificationQuestion ?? null,
-      missing_inputs: input.missingInputs ?? [],
-      resolved_inputs: input.resolvedInputs ?? {},
+      missing_inputs: missingInputsJson,
+      resolved_inputs: resolvedInputsJson,
       last_user_message: input.lastUserMessage ?? null
     })
     .onConflict(["conversation_id"])
@@ -104,8 +141,8 @@ export async function upsertConversationCapabilityState(
       capability_id: input.capabilityId,
       status: input.status,
       clarification_question: input.clarificationQuestion ?? null,
-      missing_inputs: input.missingInputs ?? [],
-      resolved_inputs: input.resolvedInputs ?? {},
+      missing_inputs: missingInputsJson,
+      resolved_inputs: resolvedInputsJson,
       last_user_message: input.lastUserMessage ?? null,
       updated_at: db.fn.now()
     });

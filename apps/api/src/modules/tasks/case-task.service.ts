@@ -1,4 +1,5 @@
 import type { Knex } from "knex";
+import { recordCaseTaskEvent, recordCaseTaskEvents, type CaseTaskEventInput } from "./case-task-event.service.js";
 
 type TaskStatus = "open" | "in_progress" | "done" | "cancelled";
 type TaskPriority = "low" | "normal" | "high" | "urgent";
@@ -359,6 +360,21 @@ export class CaseTaskService {
       .where({ tenant_id: input.tenantId, task_id: taskId })
       .update({ last_commented_at: now, updated_at: now });
 
+    // ── Audit event ──
+    await recordCaseTaskEvent(trx, {
+      tenantId: input.tenantId,
+      taskId,
+      eventType: "created",
+      toValue: "open",
+      actorType: input.creatorType as "agent" | "admin" | "ai" | "system",
+      actorId: input.creatorAgentId ?? input.creatorIdentityId ?? null,
+      metadata: {
+        title: input.title,
+        priority: normalizeTaskPriority(input.priority),
+        assigneeAgentId: input.assigneeAgentId ?? null
+      }
+    });
+
     return taskId;
   }
 
@@ -371,9 +387,21 @@ export class CaseTaskService {
       priority?: string | null;
       assigneeAgentId?: string | null;
       dueAt?: string | null;
+      actorType?: "agent" | "admin" | "ai" | "system";
+      actorId?: string | null;
     }
   ) {
+    // Read current state for audit events
+    const current = await trx("case_tasks")
+      .where({ tenant_id: input.tenantId, task_id: input.taskId })
+      .select("status", "priority", "owner_agent_id")
+      .first<{ status: string; priority: string; owner_agent_id: string | null } | undefined>();
+
     const patch: Record<string, unknown> = {};
+    const events: CaseTaskEventInput[] = [];
+    const actor = input.actorType ?? "system";
+    const actorId = input.actorId ?? null;
+
     if (input.status !== undefined) {
       const status = normalizeTaskStatus(input.status);
       patch.status = status;
@@ -388,9 +416,49 @@ export class CaseTaskService {
       if (status === "cancelled") {
         patch.cancelled_at = trx.fn.now();
       }
+      if (current && current.status !== status) {
+        events.push({
+          tenantId: input.tenantId, taskId: input.taskId,
+          eventType: "status_changed",
+          fromValue: current.status, toValue: status,
+          actorType: actor, actorId
+        });
+      }
     }
-    if (input.priority !== undefined) patch.priority = normalizeTaskPriority(input.priority);
-    if (input.assigneeAgentId !== undefined) patch.owner_agent_id = input.assigneeAgentId;
+    if (input.priority !== undefined) {
+      const priority = normalizeTaskPriority(input.priority);
+      patch.priority = priority;
+      if (current && current.priority !== priority) {
+        events.push({
+          tenantId: input.tenantId, taskId: input.taskId,
+          eventType: "priority_changed",
+          fromValue: current.priority, toValue: priority,
+          actorType: actor, actorId
+        });
+      }
+    }
+    if (input.assigneeAgentId !== undefined) {
+      patch.owner_agent_id = input.assigneeAgentId;
+      const oldOwner = current?.owner_agent_id ?? null;
+      if (oldOwner !== input.assigneeAgentId) {
+        if (oldOwner) {
+          events.push({
+            tenantId: input.tenantId, taskId: input.taskId,
+            eventType: "unassigned",
+            fromValue: oldOwner,
+            actorType: actor, actorId
+          });
+        }
+        if (input.assigneeAgentId) {
+          events.push({
+            tenantId: input.tenantId, taskId: input.taskId,
+            eventType: "assigned",
+            toValue: input.assigneeAgentId,
+            actorType: actor, actorId
+          });
+        }
+      }
+    }
     if (input.dueAt !== undefined) patch.due_at = input.dueAt ? new Date(input.dueAt) : null;
     if (Object.keys(patch).length === 0) return;
     patch.updated_at = trx.fn.now();
@@ -398,6 +466,9 @@ export class CaseTaskService {
     await trx("case_tasks")
       .where({ tenant_id: input.tenantId, task_id: input.taskId })
       .update(patch);
+
+    // ── Audit events ──
+    await recordCaseTaskEvents(trx, events);
   }
 
   async addComment(
@@ -425,6 +496,16 @@ export class CaseTaskService {
     await trx("case_tasks")
       .where({ tenant_id: input.tenantId, task_id: input.taskId })
       .update({ last_commented_at: now, updated_at: now });
+
+    // ── Audit event ──
+    await recordCaseTaskEvent(trx, {
+      tenantId: input.tenantId,
+      taskId: input.taskId,
+      eventType: "comment_added",
+      actorType: input.authorType as "agent" | "admin" | "ai" | "system",
+      actorId: input.authorAgentId ?? input.authorIdentityId ?? null,
+      metadata: { bodyPreview: input.body.slice(0, 100) }
+    });
   }
 
   async listAdminTasks(

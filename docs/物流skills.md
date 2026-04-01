@@ -84,15 +84,16 @@ def read_input():
 
 
 def extract_bill_codes(args):
-    candidates = []
-    for key in ['billCodes', 'trackingNumber', 'identifier', 'orderId', 'query']:
+    for key in ['billCodes', 'trackingNumber', 'waybillNumber']:
         value = args.get(key)
-        if isinstance(value, str) and value.strip():
-            candidates.append(value.strip())
-    for value in candidates:
-        if ',' in value:
-            return ','.join([part.strip() for part in value.split(',') if part.strip()])
-        return value
+        if not isinstance(value, str) or not value.strip():
+            continue
+        raw = value.strip()
+        parts = [part.strip() for part in raw.split(',') if part.strip()]
+        if not parts:
+            continue
+        if all(part.isdigit() and 8 <= len(part) <= 20 for part in parts):
+            return ','.join(parts)
     return ''
 
 
