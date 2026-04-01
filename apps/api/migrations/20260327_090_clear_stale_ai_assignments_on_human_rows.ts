@@ -1,6 +1,12 @@
 import type { Knex } from "knex";
 
 export async function up(knex: Knex): Promise<void> {
+  const hasQueueAssignments = await knex.schema.hasTable("queue_assignments");
+  if (!hasQueueAssignments) return;
+
+  const hasAssignedAiAgentId = await knex.schema.hasColumn("queue_assignments", "assigned_ai_agent_id");
+  if (!hasAssignedAiAgentId) return;
+
   await knex.raw(`
     update queue_assignments qa
     set assigned_ai_agent_id = null,
