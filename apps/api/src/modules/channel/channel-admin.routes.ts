@@ -348,9 +348,9 @@ export async function channelAdminRoutes(app: FastifyInstance) {
 
     return withTenantTransaction(tenantId, async (trx) => {
       const row = await trx("channel_configs")
-        .select("config_id", "channel_type", "encrypted_config")
+        .select("config_id", "channel_id", "channel_type", "encrypted_config")
         .where({ tenant_id: tenantId, config_id: configId })
-        .first<{ config_id: string; channel_type: string; encrypted_config: unknown }>();
+        .first<{ config_id: string; channel_id: string; channel_type: string; encrypted_config: unknown }>();
       if (!row) throw app.httpErrors.notFound("Channel config not found");
 
       if (row.channel_type !== "whatsapp") {
@@ -360,6 +360,14 @@ export async function channelAdminRoutes(app: FastifyInstance) {
       const config = parseStoredChannelConfig(row.encrypted_config);
       if (config.onboardingStatus !== "unbound" || config.phoneNumberId) {
         throw app.httpErrors.badRequest("WhatsApp instance must be unbound before deletion; call /whatsapp/unbind first");
+      }
+
+      const usage = await trx("conversations")
+        .where({ tenant_id: tenantId, channel_id: row.channel_id })
+        .count<{ cnt: string }>("conversation_id as cnt")
+        .first();
+      if (Number(usage?.cnt ?? 0) > 0) {
+        throw app.httpErrors.conflict("WhatsApp instance is already referenced by historical conversations and cannot be deleted");
       }
 
       await trx("channel_configs").where({ tenant_id: tenantId, config_id: configId }).delete();

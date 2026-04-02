@@ -78,8 +78,12 @@ export async function ensureTenantChannelConfigs(trx: Knex | Knex.Transaction, t
     singletonByType.set(channelType, created as ChannelConfigRow);
   }
 
-  // 多实例渠道：whatsapp 全部返回
+  // 多实例渠道：whatsapp 至少保留一个占位实例，确保租户始终看得到 WhatsApp 渠道入口
   const whatsappRows = rows.filter((r) => r.channel_type === "whatsapp");
+  if (whatsappRows.length === 0) {
+    const created = await createWhatsAppChannelConfig(trx, tenantId, { isPrimary: true });
+    whatsappRows.push(created);
+  }
 
   return [
     singletonByType.get("web"),
