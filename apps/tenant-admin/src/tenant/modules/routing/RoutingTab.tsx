@@ -91,6 +91,7 @@ export function RoutingTab() {
           </Typography.Text>
           <RuleTable
             rules={data.rules}
+            channels={data.channels}
             departments={data.departments}
             teams={data.teams}
             aiAgents={data.aiAgents}
@@ -168,6 +169,7 @@ export function RoutingTab() {
         open={editorOpen}
         saving={data.saving}
         rule={editingRule}
+        channels={data.channels}
         departments={data.departments}
         teams={data.teams}
         aiAgents={data.aiAgents}

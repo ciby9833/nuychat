@@ -380,6 +380,7 @@ async function findMatchedRule(
 function matchesRule(conditions: Record<string, unknown>, context: RoutingContext): boolean {
   return Object.entries(conditions).every(([key, value]) => {
     if (key === "channelType") return context.channelType === value;
+    if (key === "channelId") return context.channelId === value;
     if (key === "customerLanguage") return context.customerLanguage === value;
     if (key === "customerTier") return context.customerTier === value;
     return false;

@@ -12,7 +12,7 @@ import { CheckCircleOutlined, DeleteOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Table, Tag, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 
-import type { DepartmentItem, RoutingRule, TeamItem, TenantAIAgent } from "../../../types";
+import type { ChannelConfig, DepartmentItem, RoutingRule, TeamItem, TenantAIAgent } from "../../../types";
 import { buildRuleSummary } from "../helpers";
 import { EXECUTION_MODE_OPTIONS } from "../types";
 
@@ -26,6 +26,7 @@ const executionModeColor: Record<string, string> = {
 
 export function RuleTable({
   rules,
+  channels,
   departments,
   teams,
   aiAgents,
@@ -34,6 +35,7 @@ export function RuleTable({
   onDelete
 }: {
   rules: RoutingRule[];
+  channels: ChannelConfig[];
   departments: DepartmentItem[];
   teams: TeamItem[];
   aiAgents: TenantAIAgent[];
@@ -70,10 +72,11 @@ export function RuleTable({
           title: t("routing.table.conditions"),
           width: 220,
           render: (_, row) => {
-            const s = buildRuleSummary(row, departments, teams);
+            const s = buildRuleSummary(row, departments, teams, channels);
             return (
               <Space size={4} wrap>
                 <Tag>{s.channel}</Tag>
+                {s.channelInstance ? <Tag color="blue">{s.channelInstance}</Tag> : null}
                 <Tag>{s.language}</Tag>
                 <Tag>{s.tier}</Tag>
               </Space>
@@ -84,7 +87,7 @@ export function RuleTable({
           title: t("routing.table.target"),
           width: 180,
           render: (_, row) => {
-            const s = buildRuleSummary(row, departments, teams);
+            const s = buildRuleSummary(row, departments, teams, channels);
             return (
               <Space direction="vertical" size={0}>
                 <Typography.Text>{s.departmentName}</Typography.Text>
@@ -97,7 +100,7 @@ export function RuleTable({
           title: t("routing.table.skillAndStrategy"),
           width: 200,
           render: (_, row) => {
-            const s = buildRuleSummary(row, departments, teams);
+            const s = buildRuleSummary(row, departments, teams, channels);
             return (
               <Space direction="vertical" size={0}>
                 <Typography.Text>{s.skillGroupCode}</Typography.Text>

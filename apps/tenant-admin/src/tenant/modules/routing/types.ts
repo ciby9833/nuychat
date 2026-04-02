@@ -30,6 +30,7 @@ export type RuleFormValues = {
   name: string;
   priority: number;
   channelType?: string;
+  channelId?: string;
   customerLanguage?: string;
   customerTier?: string;
   executionMode: "ai_first" | "human_first" | "ai_only" | "human_only" | "hybrid";
@@ -69,7 +70,7 @@ export const AI_STRATEGY_OPTIONS = [
 export const CHANNEL_OPTIONS = [
   { value: "whatsapp", label: "WhatsApp" },
   { value: "web", label: "Web Chat" },
-  { value: "telegram", label: "Telegram" }
+  { value: "webhook", label: "Webhook" }
 ];
 
 export const LANGUAGE_OPTIONS = [

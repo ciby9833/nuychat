@@ -28,6 +28,8 @@ export default {
       matchConditions: "Kondisi cocok",
       channel: "Kanal",
       anyChannel: "Semua kanal",
+      channelInstance: "Nomor / Instance Kanal",
+      anyChannelInstance: "Semua nomor / instance",
       language: "Bahasa",
       anyLanguage: "Semua bahasa",
       customerTier: "Tier pelanggan",

@@ -19,6 +19,7 @@ import {
   deleteModule,
   deleteRoutingRule,
   deleteSkillGroup,
+  listChannelConfigs,
   listDepartments,
   listModules,
   listRoutingRules,
@@ -29,7 +30,7 @@ import {
   patchRoutingRule,
   patchSkillGroup
 } from "../../../api";
-import type { DepartmentItem, ModuleItem, RoutingRule, SkillGroup, TeamItem, TenantAIAgent } from "../../../types";
+import type { ChannelConfig, DepartmentItem, ModuleItem, RoutingRule, SkillGroup, TeamItem, TenantAIAgent } from "../../../types";
 import { buildRulePayload } from "../helpers";
 import type { ModuleFormValues, RuleFormValues, SkillGroupFormValues } from "../types";
 
@@ -37,6 +38,7 @@ export function useRoutingData() {
   const [modules, setModules] = useState<ModuleItem[]>([]);
   const [rules, setRules] = useState<RoutingRule[]>([]);
   const [groups, setGroups] = useState<SkillGroup[]>([]);
+  const [channels, setChannels] = useState<ChannelConfig[]>([]);
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [teams, setTeams] = useState<TeamItem[]>([]);
   const [aiAgents, setAIAgents] = useState<TenantAIAgent[]>([]);
@@ -48,10 +50,11 @@ export function useRoutingData() {
     setLoading(true);
     setError("");
     try {
-      const [moduleRows, ruleRows, groupRows, departmentRows, teamRows, aiAgentRows] = await Promise.all([
+      const [moduleRows, ruleRows, groupRows, channelRows, departmentRows, teamRows, aiAgentRows] = await Promise.all([
         listModules(),
         listRoutingRules(),
         listSkillGroups(),
+        listChannelConfigs(),
         listDepartments(),
         listTeams(),
         listTenantAIAgents()
@@ -59,6 +62,7 @@ export function useRoutingData() {
       setModules(moduleRows);
       setRules(ruleRows);
       setGroups(groupRows);
+      setChannels(channelRows);
       setDepartments(departmentRows);
       setTeams(teamRows);
       setAIAgents(aiAgentRows.items);
@@ -174,7 +178,7 @@ export function useRoutingData() {
   };
 
   return {
-    modules, rules, groups, departments, teams, aiAgents,
+    modules, rules, groups, channels, departments, teams, aiAgents,
     loading, saving, error,
     load, submitRule, removeRule,
     submitModule, removeModule,

@@ -28,6 +28,8 @@ export default {
       matchConditions: "命中条件",
       channel: "渠道",
       anyChannel: "任意渠道",
+      channelInstance: "号码/渠道实例",
+      anyChannelInstance: "任意号码/实例",
       language: "语言",
       anyLanguage: "任意语言",
       customerTier: "客户等级",

@@ -28,6 +28,8 @@ export default {
       matchConditions: "Matched Conditions",
       channel: "Channel",
       anyChannel: "Any channel",
+      channelInstance: "Number / Channel Instance",
+      anyChannelInstance: "Any number / instance",
       language: "Language",
       anyLanguage: "Any language",
       customerTier: "Customer Tier",

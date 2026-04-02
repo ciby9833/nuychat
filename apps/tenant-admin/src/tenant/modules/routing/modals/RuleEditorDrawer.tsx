@@ -24,7 +24,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useEffect, useMemo } from "react";
 
-import type { DepartmentItem, RoutingRule, SkillGroup, TeamItem, TenantAIAgent } from "../../../types";
+import type { ChannelConfig, DepartmentItem, RoutingRule, SkillGroup, TeamItem, TenantAIAgent } from "../../../types";
 import {
   readAiAgentId,
   readAiAssignmentStrategy,
@@ -52,6 +52,7 @@ export function RuleEditorDrawer({
   open,
   saving,
   rule,
+  channels,
   departments,
   teams,
   aiAgents,
@@ -62,6 +63,7 @@ export function RuleEditorDrawer({
   open: boolean;
   saving: boolean;
   rule: RoutingRule | null;
+  channels: ChannelConfig[];
   departments: DepartmentItem[];
   teams: TeamItem[];
   aiAgents: TenantAIAgent[];
@@ -74,6 +76,7 @@ export function RuleEditorDrawer({
   const selectedDepartmentId = Form.useWatch("targetDepartmentId", form);
   const selectedFallbackDepartmentId = Form.useWatch("fallbackDepartmentId", form);
   const selectedExecutionMode = Form.useWatch("executionMode", form);
+  const selectedChannelType = Form.useWatch("channelType", form);
 
   useEffect(() => {
     if (!open) return;
@@ -85,6 +88,7 @@ export function RuleEditorDrawer({
       name: rule?.name ?? "",
       priority: rule?.priority ?? 100,
       channelType: rule?.conditions.channelType,
+      channelId: rule?.conditions.channelId,
       customerLanguage: rule?.conditions.customerLanguage,
       customerTier: rule?.conditions.customerTier,
       executionMode: rule ? readExecutionMode(rule) : "ai_first",
@@ -133,6 +137,31 @@ export function RuleEditorDrawer({
     () => aiAgents.filter((a) => a.status === "active").map((a) => ({ value: a.aiAgentId, label: a.name })),
     [aiAgents]
   );
+
+  const channelInstanceOptions = useMemo(() => {
+    const filtered = selectedChannelType
+      ? channels.filter((channel) => channel.channel_type === selectedChannelType)
+      : channels;
+
+    return filtered.map((channel) => {
+      let label = channel.channel_id;
+      if (channel.channel_type === "whatsapp") {
+        label = channel.label?.trim()
+          || channel.display_phone_number?.trim()
+          || channel.phone_number_id?.trim()
+          || channel.channel_id;
+      } else if (channel.channel_type === "web") {
+        label = channel.widget_name?.trim()
+          || channel.public_channel_key?.trim()
+          || channel.channel_id;
+      }
+
+      return {
+        value: channel.channel_id,
+        label: `${label} (${channel.channel_id})`
+      };
+    });
+  }, [channels, selectedChannelType]);
 
   const showAiHint = selectedExecutionMode !== "human_only" && selectedExecutionMode !== "human_first";
 
@@ -200,7 +229,24 @@ export function RuleEditorDrawer({
         <Row gutter={16}>
           <Col span={8}>
             <Form.Item label={t("routing.form.channel")} name="channelType">
-              <Select allowClear options={CHANNEL_OPTIONS} placeholder={t("routing.form.anyChannel")} />
+              <Select
+                allowClear
+                options={CHANNEL_OPTIONS}
+                placeholder={t("routing.form.anyChannel")}
+                onChange={() => form.setFieldValue("channelId", undefined)}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label={t("routing.form.channelInstance")} name="channelId">
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                options={channelInstanceOptions}
+                placeholder={t("routing.form.anyChannelInstance")}
+                disabled={channelInstanceOptions.length === 0}
+              />
             </Form.Item>
           </Col>
           <Col span={8}>

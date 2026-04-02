@@ -210,6 +210,10 @@ export function getTenantAIConfig() {
   return api<AIConfig>("/api/admin/ai-config");
 }
 
+export function listChannelConfigs() {
+  return api<import("./types").ChannelConfig[]>("/api/admin/channel-configs");
+}
+
 export function listTenantAIAgents() {
   return api<TenantAIAgentListResponse>("/api/admin/ai-agents");
 }

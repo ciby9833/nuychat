@@ -270,6 +270,7 @@ export type RoutingRule = {
   is_active: boolean;
   conditions: {
     channelType?: string;
+    channelId?: string;
     customerLanguage?: string;
     customerTier?: string;
   };

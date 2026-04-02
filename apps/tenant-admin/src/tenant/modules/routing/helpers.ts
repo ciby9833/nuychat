@@ -8,10 +8,31 @@
  * - ./types.ts
  */
 
-import type { DepartmentItem, RoutingRule, TeamItem } from "../../types";
+import type { ChannelConfig, DepartmentItem, RoutingRule, TeamItem } from "../../types";
 import i18next from "i18next";
 import type { RuleFormValues } from "./types";
 import { STRATEGY_OPTIONS } from "./types";
+
+function formatChannelInstanceLabel(channel: ChannelConfig): string {
+  if (channel.channel_type === "whatsapp") {
+    return channel.label?.trim()
+      || channel.display_phone_number?.trim()
+      || channel.phone_number_id?.trim()
+      || channel.channel_id;
+  }
+
+  if (channel.channel_type === "web") {
+    return channel.widget_name?.trim()
+      || channel.public_channel_key?.trim()
+      || channel.channel_id;
+  }
+
+  if (channel.channel_type === "webhook") {
+    return channel.channel_id;
+  }
+
+  return channel.channel_id;
+}
 
 export function readHumanTarget(rule: RoutingRule) {
   return {
@@ -63,15 +84,28 @@ export function readOverrides(rule: RoutingRule) {
   };
 }
 
-export function buildRuleSummary(rule: RoutingRule, departments: DepartmentItem[], teams: TeamItem[]) {
+export function buildRuleSummary(
+  rule: RoutingRule,
+  departments: DepartmentItem[],
+  teams: TeamItem[],
+  channels: ChannelConfig[] = []
+) {
   const humanTarget = readHumanTarget(rule);
   const department = departments.find((item) => item.departmentId === humanTarget.targetDepartmentId);
   const team = teams.find((item) => item.teamId === humanTarget.targetTeamId);
   const fallback = readFallbackTarget(rule);
+  const matchedChannel = rule.conditions.channelId
+    ? channels.find((item) => item.channel_id === rule.conditions.channelId)
+    : undefined;
+  const channelTypeLabel = matchedChannel?.channel_type ?? rule.conditions.channelType ?? i18next.t("routing.summary.any");
+  const channelInstanceLabel = matchedChannel
+    ? formatChannelInstanceLabel(matchedChannel)
+    : (rule.conditions.channelId ?? null);
 
   return {
     executionMode: readExecutionMode(rule),
-    channel: rule.conditions.channelType ?? i18next.t("routing.summary.any"),
+    channel: channelTypeLabel,
+    channelInstance: channelInstanceLabel,
     language: rule.conditions.customerLanguage ? i18next.t(`routing.options.language.${rule.conditions.customerLanguage}`, { defaultValue: rule.conditions.customerLanguage }) : i18next.t("routing.summary.any"),
     tier: rule.conditions.customerTier ?? i18next.t("routing.summary.any"),
     departmentName: team?.departmentName ?? department?.name ?? i18next.t("routing.summary.anyDepartment"),
@@ -93,6 +127,7 @@ export function buildRulePayload(values: RuleFormValues) {
     priority: values.priority,
     conditions: {
       ...(values.channelType ? { channelType: values.channelType } : {}),
+      ...(values.channelId ? { channelId: values.channelId } : {}),
       ...(values.customerLanguage ? { customerLanguage: values.customerLanguage } : {}),
       ...(values.customerTier ? { customerTier: values.customerTier } : {})
     },
