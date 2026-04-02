@@ -129,7 +129,7 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
     const nextExpires = refreshExpiryDate(1); // 24-hour sessions
     await rotateRefreshToken(payload.sessionId, nextRefreshJti, nextExpires);
 
-    const agentId = membership.agent_id ?? null;
+    const agentId = await getAgentIdByMembership(membership.tenant_id, membership.membership_id);
 
     const accessToken = await reply.jwtSign(
       {
@@ -222,7 +222,7 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
       const memberships = await getIdentityMemberships(payload.sub);
       await Promise.allSettled(
         memberships.map(async (m) => {
-          const aid = m.agent_id ?? null;
+          const aid = await getAgentIdByMembership(m.tenant_id, m.membership_id);
           if (!aid) return;
           await withTenantTransaction(m.tenant_id, async (trx) => {
             await trx("agent_profiles")
@@ -280,7 +280,7 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
     const membershipAgentPairs = await Promise.all(
       memberships.map(async (m) => ({
         membershipId: m.membership_id,
-      agentId: m.agent_id ?? null
+      agentId: await getAgentIdByMembership(m.tenant_id, m.membership_id)
       }))
     );
     const agentIdByMembership = new Map(membershipAgentPairs.map((item) => [item.membershipId, item.agentId]));
@@ -366,11 +366,11 @@ async function issueTokensForMembership(
     userAgent
   });
 
-  const agentId = activeMembership.agent_id ?? null;
+  const agentId = await getAgentIdByMembership(activeMembership.tenant_id, activeMembership.membership_id);
   const membershipAgentPairs = await Promise.all(
     memberships.map(async (row) => ({
       membershipId: row.membership_id,
-      agentId: row.agent_id ?? null
+      agentId: await getAgentIdByMembership(row.tenant_id, row.membership_id)
     }))
   );
   const agentIdByMembership = new Map(membershipAgentPairs.map((item) => [item.membershipId, item.agentId]));

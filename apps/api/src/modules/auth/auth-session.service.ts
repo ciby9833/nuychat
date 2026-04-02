@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 import type { FastifyRequest } from "fastify";
 
-import { db } from "../../infra/db/client.js";
+import { db, withTenantTransaction } from "../../infra/db/client.js";
 
 export type AccessPayload = {
   sub: string;
@@ -59,7 +59,6 @@ type MembershipRow = {
   tenant_slug: string;
   tenant_name: string;
   is_default: boolean;
-  agent_id: string | null;
 };
 
 type ActiveMembershipRow = {
@@ -240,9 +239,6 @@ export async function assertActiveRefreshPayload(payload: RefreshPayload): Promi
 export async function getIdentityMemberships(identityId: string): Promise<MembershipRow[]> {
   return db("tenant_memberships as tm")
     .join("tenants as t", "t.tenant_id", "tm.tenant_id")
-    .leftJoin("agent_profiles as ap", function joinAgentProfiles() {
-      this.on("ap.tenant_id", "=", "tm.tenant_id").andOn("ap.membership_id", "=", "tm.membership_id");
-    })
     .where({
       "tm.identity_id": identityId,
       "tm.status": "active",
@@ -254,8 +250,7 @@ export async function getIdentityMemberships(identityId: string): Promise<Member
       "tm.role",
       "tm.is_default",
       "t.slug as tenant_slug",
-      "t.name as tenant_name",
-      "ap.agent_id"
+      "t.name as tenant_name"
     )
     .orderBy("tm.is_default", "desc")
     .orderBy("tm.created_at", "asc") as Promise<MembershipRow[]>;
@@ -266,10 +261,10 @@ export async function getAgentIdByMembership(tenantId: string, membershipId: str
     return null;
   }
 
-  const row = await db("agent_profiles")
+  const row = await withTenantTransaction(tenantId, async (trx) => trx("agent_profiles")
     .where({ tenant_id: tenantId, membership_id: membershipId })
     .select("agent_id")
-    .first();
+    .first());
 
   return (row?.agent_id as string | undefined) ?? null;
 }
