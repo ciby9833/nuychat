@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { createWebchatSession, fetchWebchatMessages, sendWebchatMessage, uploadWebchatAttachment, WebchatApiError } from "../api";
 import { resolvePublicChannelKey } from "../config";
@@ -64,6 +64,7 @@ export function ChatPage() {
   const [messages, setMessages] = useState<WebchatMessage[]>([]);
   const [error, setError] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const [replyTargetMessageId, setReplyTargetMessageId] = useState<string | null>(null);
 
   const persistSession = useCallback((value: WebchatSession | null) => {
     setSession(value);
@@ -152,6 +153,7 @@ export function ChatPage() {
     if (session && session.publicChannelKey !== publicKey) {
       persistSession(null);
       setMessages([]);
+      setReplyTargetMessageId(null);
     }
   }, [publicKey, persistSession, session]);
 
@@ -159,7 +161,24 @@ export function ChatPage() {
     void ensureSession();
   }, [ensureSession]);
 
-  const onSend = async (payload: { text?: string; attachments?: File[] }) => {
+  useEffect(() => {
+    if (!replyTargetMessageId) return;
+    if (messages.some((message) => message.id === replyTargetMessageId)) return;
+    setReplyTargetMessageId(null);
+  }, [messages, replyTargetMessageId]);
+
+  const replyTarget = useMemo(
+    () => messages.find((message) => message.id === replyTargetMessageId) ?? null,
+    [messages, replyTargetMessageId]
+  );
+
+  const onSend = async (payload: {
+    text?: string;
+    attachments?: File[];
+    replyToMessageId?: string;
+    reactionEmoji?: string;
+    reactionToMessageId?: string;
+  }) => {
     if (!session) return;
 
     setError("");
@@ -176,8 +195,12 @@ export function ChatPage() {
         customerRef: session.customerRef,
         text: payload.text,
         attachments,
+        replyToMessageId: payload.replyToMessageId,
+        reactionEmoji: payload.reactionEmoji,
+        reactionToMessageId: payload.reactionToMessageId,
         client
       });
+      setReplyTargetMessageId(null);
       await pullMessages(session);
     } catch (err) {
       if (err instanceof WebchatApiError && err.status === 404) {
@@ -221,8 +244,20 @@ export function ChatPage() {
           displayName={session.displayName}
           deviceType={client.deviceType}
         />
-        <ChatMessages messages={messages} loading={connecting} />
-        <ChatComposer onSend={onSend} disabled={connecting} />
+        <ChatMessages
+          messages={messages}
+          loading={connecting}
+          onReply={setReplyTargetMessageId}
+          onReact={async (messageId, emoji) => {
+            await onSend({ reactionEmoji: emoji, reactionToMessageId: messageId });
+          }}
+        />
+        <ChatComposer
+          onSend={onSend}
+          disabled={connecting}
+          replyTarget={replyTarget}
+          onCancelReply={() => setReplyTargetMessageId(null)}
+        />
         <footer className="chat-footer">
           <button onClick={() => persistSession(null)}>退出会话</button>
           {error ? <p className="error">{error}</p> : null}

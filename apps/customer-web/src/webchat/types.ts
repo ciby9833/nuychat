@@ -18,6 +18,11 @@ export type WebchatAttachment = {
   url?: string;
 };
 
+export type WebchatReplyContent = {
+  text?: string;
+  attachments?: WebchatAttachment[];
+};
+
 export type WebchatSession = {
   tenantId: string;
   tenantName: string;
@@ -34,6 +39,7 @@ export type WebchatMessage = {
   id: string;
   direction: "inbound" | "outbound";
   type: string;
+  sender_type?: string | null;
   text: string;
   structured?: {
     version: "2026-03-28";
@@ -49,6 +55,12 @@ export type WebchatMessage = {
   } | null;
   actions?: Array<{ type?: "button" | "list" | "postback"; label: string; value: string }>;
   attachments?: WebchatAttachment[];
+  replyToMessageId?: string | null;
+  replyToExternalId?: string | null;
+  replyToContent?: WebchatReplyContent | null;
+  reactionTargetMessageId?: string | null;
+  reactionTargetExternalId?: string | null;
+  reactionEmoji?: string | null;
   createdAt: string;
 };
 

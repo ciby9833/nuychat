@@ -74,6 +74,9 @@ export async function sendWebchatMessage(input: {
   displayName?: string;
   text?: string;
   attachments?: WebchatAttachment[];
+  replyToMessageId?: string;
+  reactionEmoji?: string;
+  reactionToMessageId?: string;
   client?: WebchatClientContext;
 }): Promise<void> {
   const response = await fetch(`${API_BASE}/api/webchat/public/${encodeURIComponent(input.publicKey)}/messages`, {

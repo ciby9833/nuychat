@@ -8,12 +8,20 @@ type WebRawInboundMessage = {
   customerRef?: string;
   displayName?: string;
   text?: string;
+  messageType?: "text" | "media" | "reaction";
   attachments?: Array<{
     name?: string;
     mimeType?: string;
     size?: number;
     url?: string;
   }>;
+  context?: {
+    externalMessageId?: string;
+  };
+  reaction?: {
+    emoji?: string;
+    targetExternalMessageId?: string;
+  };
   client?: Record<string, unknown>;
   timestamp?: string;
 };
@@ -32,7 +40,15 @@ export const webAdapter = {
     const displayName = message.displayName?.trim();
     const text = message.text?.trim() ?? "";
     const attachments = Array.isArray(message.attachments) ? message.attachments.slice(0, 3) : [];
-    const messageType = attachments.length > 0 ? "media" : "text";
+    const reactionEmoji = message.reaction?.emoji?.trim();
+    const reactionTargetExternalMessageId = message.reaction?.targetExternalMessageId?.trim();
+    const contextExternalMessageId = message.context?.externalMessageId?.trim();
+    const messageType =
+      message.messageType === "reaction" && reactionEmoji && reactionTargetExternalMessageId
+        ? "reaction"
+        : attachments.length > 0
+          ? "media"
+          : "text";
 
     return {
       id: crypto.randomUUID(),
@@ -54,9 +70,18 @@ export const webAdapter = {
         mimeType: attachment.mimeType,
         fileName: attachment.name
       })),
+      context: contextExternalMessageId
+        ? { externalMessageId: contextExternalMessageId }
+        : undefined,
+      reaction: reactionEmoji && reactionTargetExternalMessageId
+        ? {
+            emoji: reactionEmoji,
+            targetExternalMessageId: reactionTargetExternalMessageId
+          }
+        : undefined,
       metadata: {
         displayName,
-        rawType: "web_text",
+        rawType: messageType === "reaction" ? "web_reaction" : "web_text",
         attachments,
         client: message.client ?? {}
       },

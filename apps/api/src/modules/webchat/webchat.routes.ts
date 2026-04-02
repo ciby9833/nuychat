@@ -106,16 +106,32 @@ export async function webchatRoutes(app: FastifyInstance) {
       }
 
       const messageQuery = trx("messages")
-        .select("message_id", "direction", "sender_type", "message_type", "content", "created_at")
-        .where({
-          tenant_id: channel.tenantId,
-          conversation_id: conversation.conversation_id
+        .leftJoin("messages as rm", function joinReplyMessage() {
+          this.on("rm.message_id", "=", "messages.reply_to_message_id").andOn("rm.tenant_id", "=", "messages.tenant_id");
         })
-        .orderBy("created_at", "asc")
+        .select(
+          "messages.message_id",
+          "messages.direction",
+          "messages.sender_type",
+          "messages.message_type",
+          "messages.content",
+          "messages.reply_to_message_id",
+          "messages.reply_to_external_id",
+          "messages.reaction_target_message_id",
+          "messages.reaction_target_external_id",
+          "messages.reaction_emoji",
+          "messages.created_at",
+          "rm.content as reply_to_content"
+        )
+        .where({
+          "messages.tenant_id": channel.tenantId,
+          "messages.conversation_id": conversation.conversation_id
+        })
+        .orderBy("messages.created_at", "asc")
         .limit(200);
 
       if (since && !Number.isNaN(since.valueOf())) {
-        messageQuery.andWhere("created_at", ">", since);
+        messageQuery.andWhere("messages.created_at", ">", since);
       }
 
       const messages = await messageQuery;
@@ -134,23 +150,50 @@ export async function webchatRoutes(app: FastifyInstance) {
       displayName?: string;
       text?: string;
       attachments?: WebAttachmentInput[];
+      replyToMessageId?: string;
+      reactionEmoji?: string;
+      reactionToMessageId?: string;
       client?: WebClientContextInput;
     } | undefined) ?? {};
     const customerRef = body.customerRef?.trim();
     const text = body.text?.trim();
     const attachments = normalizeAttachments(body.attachments);
     const displayName = body.displayName?.trim();
+    const replyToMessageId = normalizeString(body.replyToMessageId);
+    const reactionEmoji = normalizeString(body.reactionEmoji);
+    const reactionToMessageId = normalizeString(body.reactionToMessageId);
     const client = readClientContext(req.headers, body.client);
 
     if (!customerRef) {
       throw app.httpErrors.badRequest("customerRef is required");
     }
-    if (!text && attachments.length === 0) {
-      throw app.httpErrors.badRequest("text or attachments is required");
+    if (reactionEmoji && !reactionToMessageId) {
+      throw app.httpErrors.badRequest("reactionToMessageId is required");
+    }
+    if (!reactionEmoji && reactionToMessageId) {
+      throw app.httpErrors.badRequest("reactionEmoji is required");
+    }
+    if (reactionEmoji && (text || attachments.length > 0 || replyToMessageId)) {
+      throw app.httpErrors.badRequest("reaction cannot be combined with text, attachments, or reply");
+    }
+    if (!reactionEmoji && !text && attachments.length === 0) {
+      throw app.httpErrors.badRequest("text, attachments, or reaction is required");
     }
 
     const channel = await resolveWebChannelByPublicKey(app, publicKey);
     const messageId = crypto.randomUUID();
+
+    const [replyContext, reactionContext] = await withTenantTransaction(channel.tenantId, async (trx) => Promise.all([
+      resolveWebchatMessageReference(trx, channel.tenantId, replyToMessageId),
+      resolveWebchatMessageReference(trx, channel.tenantId, reactionToMessageId)
+    ]));
+
+    if (replyToMessageId && !replyContext.externalId) {
+      throw app.httpErrors.badRequest("reply target message not found");
+    }
+    if (reactionToMessageId && !reactionContext.externalId) {
+      throw app.httpErrors.badRequest("reaction target message not found");
+    }
 
     await inboundQueue.add(
       "process-inbound",
@@ -164,7 +207,15 @@ export async function webchatRoutes(app: FastifyInstance) {
           customerRef,
           displayName,
           text,
+          messageType: reactionEmoji && reactionContext.externalId ? "reaction" : attachments.length > 0 ? "media" : "text",
           attachments,
+          context: replyContext.externalId ? { externalMessageId: replyContext.externalId } : undefined,
+          reaction: reactionEmoji && reactionContext.externalId
+            ? {
+                emoji: reactionEmoji,
+                targetExternalMessageId: reactionContext.externalId
+              }
+            : undefined,
           client,
           timestamp: new Date().toISOString()
         }
@@ -385,6 +436,12 @@ function serializeWebchatMessageRow(message: {
   sender_type?: string | null;
   message_type: string;
   content: unknown;
+  reply_to_message_id?: string | null;
+  reply_to_external_id?: string | null;
+  reply_to_content?: unknown;
+  reaction_target_message_id?: string | null;
+  reaction_target_external_id?: string | null;
+  reaction_emoji?: string | null;
   created_at: string;
 }) {
   const payload = typeof message.content === "object" && message.content
@@ -404,6 +461,12 @@ function serializeWebchatMessageRow(message: {
     : [];
   const structured = normalizeStructuredMessage(payload.structured);
   const actions = normalizeStructuredActions(payload.actions);
+  const replyPayload = typeof message.reply_to_content === "object" && message.reply_to_content
+    ? (message.reply_to_content as Record<string, unknown>)
+    : null;
+  const replyAttachments = Array.isArray(replyPayload?.attachments)
+    ? (replyPayload.attachments as Array<{ url?: string; mimeType?: string; fileName?: string }>)
+    : [];
 
   return {
     id: message.message_id,
@@ -414,7 +477,43 @@ function serializeWebchatMessageRow(message: {
     structured,
     actions,
     attachments,
+    replyToMessageId: message.reply_to_message_id ?? null,
+    replyToExternalId: message.reply_to_external_id ?? null,
+    replyToContent: replyPayload
+      ? {
+          text: typeof replyPayload.text === "string" ? replyPayload.text : "",
+          attachments: replyAttachments.map((item) => ({
+            name: String(item.fileName ?? "file"),
+            mimeType: String(item.mimeType ?? "application/octet-stream"),
+            size: 0,
+            url: typeof item.url === "string" ? item.url : undefined
+          }))
+        }
+      : null,
+    reactionTargetMessageId: message.reaction_target_message_id ?? null,
+    reactionTargetExternalId: message.reaction_target_external_id ?? null,
+    reactionEmoji: message.reaction_emoji ?? null,
     createdAt: new Date(message.created_at).toISOString()
+  };
+}
+
+async function resolveWebchatMessageReference(
+  trx: Knex.Transaction,
+  tenantId: string,
+  messageId: string | null
+) {
+  if (!messageId) {
+    return { messageId: null, externalId: null };
+  }
+
+  const row = await trx("messages")
+    .select("message_id", "external_id")
+    .where({ tenant_id: tenantId, message_id: messageId })
+    .first<{ message_id: string; external_id: string | null } | undefined>();
+
+  return {
+    messageId: row?.message_id ?? null,
+    externalId: row?.external_id ?? null
   };
 }
 
