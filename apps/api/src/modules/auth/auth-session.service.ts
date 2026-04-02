@@ -66,6 +66,13 @@ type ActiveMembershipRow = {
   tenant_id: string;
 };
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string | null | undefined): value is string {
+  return typeof value === "string" && UUID_PATTERN.test(value.trim());
+}
+
 export async function createAuthSession(input: {
   identityId: string;
   membershipId: string;
@@ -250,6 +257,10 @@ export async function getIdentityMemberships(identityId: string): Promise<Member
 }
 
 export async function getAgentIdByMembership(tenantId: string, membershipId: string): Promise<string | null> {
+  if (!isUuid(tenantId) || !isUuid(membershipId)) {
+    return null;
+  }
+
   const row = await db("agent_profiles")
     .where({ tenant_id: tenantId, membership_id: membershipId })
     .select("agent_id")
@@ -275,6 +286,10 @@ export function readRequestMeta(req: FastifyRequest) {
 }
 
 async function getActiveMembership(identityId: string, membershipId: string, tenantId: string): Promise<ActiveMembershipRow | null> {
+  if (!isUuid(identityId) || !isUuid(membershipId) || !isUuid(tenantId)) {
+    return null;
+  }
+
   const row = await db("tenant_memberships as tm")
     .join("tenants as t", "t.tenant_id", "tm.tenant_id")
     .where({
