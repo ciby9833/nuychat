@@ -1090,10 +1090,12 @@ export async function conversationRoutes(app: FastifyInstance) {
       }
     }
 
-    const [replyContext, reactionContext] = await Promise.all([
-      resolveReplyContext(tenantId, body.replyToMessageId),
-      resolveReplyContext(tenantId, body.reactionToMessageId)
-    ]);
+    const [replyContext, reactionContext] = await withTenantTransaction(tenantId, async (trx) => {
+      return Promise.all([
+        resolveReplyContext(tenantId, body.replyToMessageId, trx),
+        resolveReplyContext(tenantId, body.reactionToMessageId, trx)
+      ]);
+    });
 
     for (const message of outboundMessages) {
       await outboundQueue.add(
@@ -2916,13 +2918,14 @@ function normalizeReplyAttachments(body: {
 
 async function resolveReplyContext(
   tenantId: string,
-  replyToMessageId: string | undefined
+  replyToMessageId: string | undefined,
+  executor?: Knex | Knex.Transaction
 ) {
   if (!replyToMessageId) {
     return { replyToMessageId: null, replyToExternalId: null };
   }
 
-  const row = await db("messages")
+  const row = await (executor ?? db)("messages")
     .select("message_id", "external_id")
     .where({ tenant_id: tenantId, message_id: replyToMessageId })
     .first<{ message_id: string; external_id: string | null } | undefined>();
