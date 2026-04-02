@@ -10,12 +10,25 @@
 
 import type { VerifierRule, PointAContext, PointBContext, RuleFinding } from "../types.js";
 
-/** Keywords indicating the customer asked a specific/factual question */
+/**
+ * Keywords indicating the customer asked a specific/factual question
+ * that likely requires tool/data lookup to answer accurately.
+ * Industry-agnostic — covers common service scenarios across verticals.
+ */
 const SPECIFIC_QUESTION_KEYWORDS = [
-  "订单", "物流", "快递", "退款", "退货", "换货", "发货",
-  "tracking", "order", "refund", "delivery", "shipment",
-  "pengiriman", "pesanan", "resi",
-  "单号", "运单", "status", "状态"
+  // Universal service terms
+  "status", "状态", "进度", "查询",
+  // Reference lookups
+  "tracking", "order", "ticket", "case", "booking", "appointment", "reservation",
+  "订单", "单号", "工单", "预约", "账单",
+  "pesanan", "resi", "tiket",
+  // Financial
+  "refund", "payment", "invoice", "balance",
+  "退款", "退货", "付款", "发票", "余额",
+  "pengembalian", "bayar",
+  // Account
+  "account", "password", "subscription",
+  "账号", "密码", "订阅"
 ];
 
 function customerAskedSpecificQuestion(messages: Array<{ role: string; content: unknown }>): boolean {

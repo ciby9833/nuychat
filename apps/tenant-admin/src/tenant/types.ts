@@ -210,6 +210,11 @@ export type ChannelConfig = {
   outbound_webhook_url?: string | null;
   webhook_secret?: string | null;
   is_active: boolean;
+  // WhatsApp 多实例扩展字段
+  label?: string | null;
+  usage_scene?: string | null;
+  is_primary?: boolean | null;
+  onboarding_status?: string | null;
 };
 
 export type WhatsAppEmbeddedSignupSetup = {

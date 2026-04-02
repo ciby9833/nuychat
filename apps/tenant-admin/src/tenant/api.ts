@@ -667,8 +667,8 @@ export function getWebhookChannelLinkInfo(configId: string) {
   return api<WebhookChannelLinkInfo>(`/api/admin/channel-configs/webhook-link/${configId}`);
 }
 
-export function getWhatsAppEmbeddedSignupSetup() {
-  return api<WhatsAppEmbeddedSignupSetup>("/api/admin/channel-configs/whatsapp/setup");
+export function getWhatsAppEmbeddedSignupSetup(configId: string) {
+  return api<WhatsAppEmbeddedSignupSetup>(`/api/admin/channel-configs/${configId}/whatsapp/setup`);
 }
 
 export function completeWhatsAppEmbeddedSignup(configId: string, input: {
@@ -680,6 +680,25 @@ export function completeWhatsAppEmbeddedSignup(configId: string, input: {
   return api(`/api/admin/channel-configs/${configId}/whatsapp/embedded-signup/complete`, {
     method: "POST",
     body: JSON.stringify(input)
+  });
+}
+
+export function createWhatsAppChannel(input?: { label?: string; usageScene?: string; isPrimary?: boolean }) {
+  return api<import("./types").ChannelConfig>("/api/admin/channel-configs/whatsapp", {
+    method: "POST",
+    body: JSON.stringify(input ?? {})
+  });
+}
+
+export function unbindWhatsAppChannel(configId: string) {
+  return api(`/api/admin/channel-configs/${configId}/whatsapp/unbind`, {
+    method: "POST"
+  });
+}
+
+export function deleteWhatsAppChannel(configId: string) {
+  return api(`/api/admin/channel-configs/${configId}`, {
+    method: "DELETE"
   });
 }
 

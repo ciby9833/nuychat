@@ -27,7 +27,7 @@ Analyse the conversation and respond with valid JSON only — no markdown, no ex
 Return exactly this JSON shape:
 {
   "summary": "<1-2 sentences: what does the customer need and what has been done>",
-  "intent": "<one of: order_inquiry | delivery_inquiry | refund_request | cancellation | complaint | payment_inquiry | general_inquiry>",
+  "intent": "<short intent label describing the customer's primary need>",
   "sentiment": "<one of: positive | neutral | negative | angry>",
   "suggestions": ["<3 short ready-to-send reply options in the customer's language>", "...", "..."]
 }
@@ -39,7 +39,7 @@ Rules:
 - Suggestions must be direct agent replies that can be sent immediately.
 - Default to declarative statements, not questions.
 - Only ask a follow-up question when the skill result explicitly says required input is missing.
-- When a verified skill result includes concrete facts, mention at least one concrete fact in each suggestion, such as current status, latest location, or latest update time.
+- When a verified skill result includes concrete facts, mention at least one concrete fact in each suggestion.
 - Do not say you are checking, querying, or waiting when a verified result already exists.
 - Do not use placeholders such as [insert status], <status>, TBD, or similar filler.
 - Do not offer translation, summarization, or reformatting unless the customer explicitly asked for it.
@@ -231,26 +231,32 @@ function buildFallback(
   const sentiment = kwSentiment(lastText);
   return {
     summary: textFeed.length > 0
-      ? `会话聚焦于：${textFeed.slice(-2).join(" / ")}`.slice(0, 160)
-      : "暂无会话内容。",
+      ? `Conversation focus: ${textFeed.slice(-2).join(" / ")}`.slice(0, 160)
+      : "No conversation content yet.",
     intent: "general_inquiry",
     sentiment,
     entities,
     suggestions: latestFacts
       ? [buildFactGroundedFallback(latestFacts)]
       : sentiment === "angry"
-      ? ["已收到您的反馈，我先帮您核对当前处理进度。",
-         "抱歉让您久等了，我现在立即为您跟进。",
-         "我先确认订单和处理状态，再给您明确答复。"]
+      ? buildAngrySuggestions()
       : defaultSuggestions()
   };
 }
 
+function buildAngrySuggestions() {
+  return [
+    "I've noted your concern and will look into the current status for you right away.",
+    "I apologize for the inconvenience. Let me check on this immediately.",
+    "Thank you for your patience. I'm reviewing the details now."
+  ];
+}
+
 function defaultSuggestions() {
   return [
-    "您好，我正在为您核对详情，请稍等。",
-    "我先帮您查看当前状态，稍后回复您结果。",
-    "收到，我这边先核对信息后马上反馈。"
+    "Let me look into the details for you.",
+    "I'll check the current status and get back to you shortly.",
+    "Noted — let me verify the information and follow up."
   ];
 }
 
@@ -258,30 +264,35 @@ function sanitizeCopilotSuggestions(suggestions: string[]) {
   return suggestions
     .map((item) => item.replace(/\[(.+?)\]|<(.+?)>/g, "").replace(/\s+/g, " ").trim())
     .filter(Boolean)
-    .filter((item) => item.length >= 12)
+    .filter((item) => item.length >= 8)
     .filter((item) => !/[?？]$/.test(item))
-    .filter((item) => !/(整理成中文|翻译成中文|translate|please wait|稍候|稍等|正在查询|正在核对)/i.test(item));
+    .filter((item) => !/(translate|please wait|稍候|稍等|正在查询|正在核对)/i.test(item));
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function extractEntities(text: string) {
-  const rawOrderIds = [
+  // Extract reference numbers (order IDs, tracking numbers, ticket IDs, etc.)
+  const rawReferenceIds = [
     ...(text.match(/\b[A-Z]{1,6}-?\d{4,}\b/g) ?? []),
     ...(text.match(/\b\d{8,20}\b/g) ?? [])
   ];
-  const orderIds = [...new Set(rawOrderIds)];
-  const orderIdSet = new Set(orderIds);
-  const phones = (text.match(/\+?\d{8,15}/g) ?? []).filter((value) => !orderIdSet.has(value));
+  const referenceIds = [...new Set(rawReferenceIds)];
+  const refIdSet = new Set(referenceIds);
+  const phones = (text.match(/\+?\d{8,15}/g) ?? []).filter((value) => !refIdSet.has(value));
   return {
-    orderIds,
+    orderIds: referenceIds,
     phones: [...new Set(phones)],
-    addresses: text.includes("地址") || text.includes("alamat") ? [text.slice(0, 60)] : []
+    addresses: [] as string[]
   };
 }
 
 function kwSentiment(text: string): CopilotResult["sentiment"] {
-  const angry = ["退款", "投诉", "生气", "差评", "marah", "kecewa", "angry", "complaint", "fraud", "penipuan"];
+  const angry = [
+    "angry", "furious", "terrible", "worst", "scam", "fraud", "complaint",
+    "生气", "愤怒", "投诉", "差评", "骗子",
+    "marah", "kecewa", "penipuan"
+  ];
   return angry.some((kw) => text.toLowerCase().includes(kw)) ? "angry" : "neutral";
 }
 
@@ -297,14 +308,14 @@ function buildFactGroundedFallback(facts: {
   location: string | null;
   description: string | null;
 }) {
-  const leading = facts.trackingNumber ? `这个单号 ${facts.trackingNumber}` : "这个单子";
+  const ref = facts.trackingNumber ? `Reference ${facts.trackingNumber}` : "Your request";
   const details = [
-    facts.location ? `目前到达【 ${facts.location} 】` : null,
-    facts.status ? `当前状态是 ${facts.status}` : null,
-    facts.time ? `最新时间是 ${facts.time}` : null,
+    facts.status ? `current status: ${facts.status}` : null,
+    facts.location ? `location: ${facts.location}` : null,
+    facts.time ? `last updated: ${facts.time}` : null,
     facts.description ? facts.description : null
   ].filter(Boolean);
-  return `${leading}${details.length > 0 ? `，${details.join("，")}` : "，已查询到最新物流信息"}。`;
+  return `${ref} — ${details.length > 0 ? details.join(", ") : "latest information retrieved"}.`;
 }
 
 // parseObject is now imported from ../ai/fact-layer.service.ts

@@ -14,9 +14,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
   completeWhatsAppEmbeddedSignup,
+  createWhatsAppChannel,
+  deleteWhatsAppChannel,
   getWebChannelLinkInfo,
   getWebhookChannelLinkInfo,
-  getWhatsAppEmbeddedSignupSetup
+  getWhatsAppEmbeddedSignupSetup,
+  unbindWhatsAppChannel
 } from "../../../api";
 import type { ChannelConfig, WebChannelLinkInfo, WebhookChannelLinkInfo, WhatsAppEmbeddedSignupSetup } from "../../../types";
 import type { ChannelFormValues } from "../types";
@@ -88,7 +91,7 @@ export function useChannelsData() {
     } else {
       void (async () => {
         try {
-          const info = await getWhatsAppEmbeddedSignupSetup();
+          const info = await getWhatsAppEmbeddedSignupSetup(selectedChannel.config_id);
           setWhatsAppSetup(info);
         } catch {
           setWhatsAppSetup(null);
@@ -112,9 +115,6 @@ export function useChannelsData() {
   }, [selectedChannel?.channel_type, selectedChannel?.config_id]);
 
   const openEdit = (row: ChannelConfig) => {
-    if (row.channel_type === "whatsapp") {
-      return;
-    }
     setEditing(row);
     form.setFieldsValue({
       channel_id: row.channel_id,
@@ -123,7 +123,9 @@ export function useChannelsData() {
       public_channel_key: row.public_channel_key ?? "",
       allowed_origins: (row.allowed_origins ?? []).join(", "),
       outbound_webhook_url: row.outbound_webhook_url ?? "",
-      webhook_secret: row.webhook_secret ?? ""
+      webhook_secret: row.webhook_secret ?? "",
+      label: row.label ?? "",
+      usage_scene: row.usage_scene ?? ""
     });
   };
 
@@ -147,6 +149,8 @@ export function useChannelsData() {
       }
       if (editing.channel_type === "whatsapp") {
         payload.channelId = values.channel_id.trim();
+        payload.label = values.label?.trim() ?? "";
+        payload.usageScene = values.usage_scene?.trim() ?? "";
       }
       if (editing.channel_type === "webhook") {
         payload.verifyToken = values.verify_token?.trim() ?? "";
@@ -182,7 +186,7 @@ export function useChannelsData() {
       await completeWhatsAppEmbeddedSignup(row.config_id, result);
       void message.success(i18next.t("channelsModule.messages.whatsappBound"));
       await load();
-      const nextSetup = await getWhatsAppEmbeddedSignupSetup();
+      const nextSetup = await getWhatsAppEmbeddedSignupSetup(row.config_id);
       setWhatsAppSetup(nextSetup);
     } catch (err) {
       setError((err as Error).message);
@@ -191,11 +195,45 @@ export function useChannelsData() {
     }
   };
 
+  const onCreateWhatsApp = async () => {
+    setError("");
+    try {
+      await createWhatsAppChannel();
+      void message.success(i18next.t("channelsModule.messages.whatsappCreated", "WhatsApp 实例已创建"));
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const onUnbindWhatsApp = async (row: ChannelConfig) => {
+    setError("");
+    try {
+      await unbindWhatsAppChannel(row.config_id);
+      void message.success(i18next.t("channelsModule.messages.whatsappUnbound", "WhatsApp 号码已解绑"));
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const onDeleteWhatsApp = async (row: ChannelConfig) => {
+    setError("");
+    try {
+      await deleteWhatsAppChannel(row.config_id);
+      void message.success(i18next.t("channelsModule.messages.whatsappDeleted", "WhatsApp 实例已删除"));
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   return {
     channels, filtered, typeOptions, selectedChannel,
     error, saving, binding, form, editing,
     typeFilter, setTypeFilter, statusFilter, setStatusFilter,
     selectedId, setSelectedId, selectedWebInfo, selectedWebhookInfo, whatsAppSetup,
-    load, openEdit, setEditing, onSave, onBindWhatsApp
+    load, openEdit, setEditing, onSave,
+    onBindWhatsApp, onCreateWhatsApp, onUnbindWhatsApp, onDeleteWhatsApp
   };
 }

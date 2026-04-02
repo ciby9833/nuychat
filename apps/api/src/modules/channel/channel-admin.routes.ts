@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
 import { attachTenantAdminGuard } from "../tenant/tenant-admin.auth.js";
-import { buildChannelConfigPayload, ensureTenantChannelConfigs, normalizeTenantChannelType, serializeTenantChannelConfig } from "./tenant-channel-config.service.js";
+import { buildChannelConfigPayload, createWhatsAppChannelConfig, ensureTenantChannelConfigs, normalizeTenantChannelType, serializeTenantChannelConfig } from "./tenant-channel-config.service.js";
 import { type ChannelConfigMutationBody, normalizeChannelAdminString, parseStoredChannelConfig } from "./channel-admin.serializer.js";
 import { buildWebChannelLinkInfo, buildWebhookChannelLinkInfo } from "./channel-web-link.helper.js";
 import { buildEmbeddedSignupSetupView, hydrateEmbeddedSignupBinding } from "./whatsapp-embedded-signup.service.js";
@@ -22,8 +22,27 @@ export async function channelAdminRoutes(app: FastifyInstance) {
     });
   });
 
+  // 创建新的 WhatsApp 渠道实例（多号码支持）
+  app.post("/api/admin/channel-configs/whatsapp", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) {
+      throw app.httpErrors.badRequest("Missing tenant context");
+    }
+
+    const body = req.body as { label?: string; usageScene?: string; isPrimary?: boolean } | undefined;
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const created = await createWhatsAppChannelConfig(trx, tenantId, {
+        label: typeof body?.label === "string" ? body.label.trim() || undefined : undefined,
+        usageScene: typeof body?.usageScene === "string" ? body.usageScene.trim() || undefined : undefined,
+        isPrimary: typeof body?.isPrimary === "boolean" ? body.isPrimary : undefined
+      });
+      return serializeTenantChannelConfig(created);
+    });
+  });
+
   app.post("/api/admin/channel-configs", async () => {
-    throw app.httpErrors.methodNotAllowed("Channel configs are provisioned per tenant automatically and cannot be created manually");
+    throw app.httpErrors.methodNotAllowed("Use POST /api/admin/channel-configs/whatsapp to add a WhatsApp instance");
   });
 
   app.get("/api/admin/channel-configs/web-link", async (req) => {
@@ -83,19 +102,24 @@ export async function channelAdminRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get("/api/admin/channel-configs/whatsapp/setup", async (req) => {
+  // 实例级 setup（新接口，前端应使用此接口）
+  app.get("/api/admin/channel-configs/:configId/whatsapp/setup", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) {
       throw app.httpErrors.badRequest("Missing tenant context");
     }
 
+    const { configId } = req.params as { configId: string };
+
     return withTenantTransaction(tenantId, async (trx) => {
-      await ensureTenantChannelConfigs(trx, tenantId);
       const row = await trx("channel_configs")
         .select("encrypted_config")
-        .where({ tenant_id: tenantId, channel_type: "whatsapp" })
+        .where({ tenant_id: tenantId, config_id: configId, channel_type: "whatsapp" })
         .first<{ encrypted_config: unknown }>();
-      return buildEmbeddedSignupSetupView(parseStoredChannelConfig(row?.encrypted_config ?? {}));
+      if (!row) {
+        throw app.httpErrors.notFound("WhatsApp channel config not found");
+      }
+      return buildEmbeddedSignupSetupView(parseStoredChannelConfig(row.encrypted_config));
     });
   });
 
@@ -186,6 +210,66 @@ export async function channelAdminRoutes(app: FastifyInstance) {
     });
   });
 
+  // 解绑 WhatsApp 号码：清空绑定数据 + 停用实例
+  app.post("/api/admin/channel-configs/:configId/whatsapp/unbind", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) {
+      throw app.httpErrors.badRequest("Missing tenant context");
+    }
+
+    const { configId } = req.params as { configId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const row = await trx("channel_configs")
+        .select("config_id", "tenant_id", "channel_type", "channel_id", "encrypted_config", "is_active")
+        .where({ tenant_id: tenantId, config_id: configId, channel_type: "whatsapp" })
+        .first<{
+          config_id: string;
+          tenant_id: string;
+          channel_type: string;
+          channel_id: string;
+          encrypted_config: unknown;
+          is_active: boolean;
+        }>();
+      if (!row) {
+        throw app.httpErrors.notFound("WhatsApp channel config not found");
+      }
+
+      const currentConfig = parseStoredChannelConfig(row.encrypted_config);
+      // 清空所有绑定数据，使 phoneNumberId 唯一约束释放
+      const nextConfig = { ...currentConfig };
+      delete nextConfig.phoneNumberId;
+      delete nextConfig.wabaId;
+      delete nextConfig.displayPhoneNumber;
+      delete nextConfig.businessAccountName;
+      delete nextConfig.connectedAt;
+      nextConfig.onboardingStatus = "unbound";
+
+      await trx("channel_configs")
+        .where({ tenant_id: tenantId, config_id: configId })
+        .update({
+          encrypted_config: JSON.stringify(nextConfig),
+          is_active: false,
+          updated_at: trx.fn.now()
+        });
+
+      const updatedRow = await trx("channel_configs")
+        .select("config_id", "tenant_id", "channel_type", "channel_id", "encrypted_config", "is_active")
+        .where({ tenant_id: tenantId, config_id: configId })
+        .first();
+      if (!updatedRow) throw app.httpErrors.notFound("Channel config not found");
+
+      return serializeTenantChannelConfig(updatedRow as {
+        config_id: string;
+        tenant_id: string;
+        channel_type: string;
+        channel_id: string;
+        encrypted_config: unknown;
+        is_active: boolean;
+      });
+    });
+  });
+
   app.patch("/api/admin/channel-configs/:configId", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) {
@@ -252,7 +336,34 @@ export async function channelAdminRoutes(app: FastifyInstance) {
     });
   });
 
-  app.delete("/api/admin/channel-configs/:configId", async () => {
-    throw app.httpErrors.methodNotAllowed("Channel configs cannot be deleted; set isActive=false instead");
+  // 仅允许删除未绑定 (onboardingStatus=unbound) 的 WhatsApp 实例
+  // web / webhook 不允许删除，使用 isActive=false 停用
+  app.delete("/api/admin/channel-configs/:configId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) {
+      throw app.httpErrors.badRequest("Missing tenant context");
+    }
+
+    const { configId } = req.params as { configId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const row = await trx("channel_configs")
+        .select("config_id", "channel_type", "encrypted_config")
+        .where({ tenant_id: tenantId, config_id: configId })
+        .first<{ config_id: string; channel_type: string; encrypted_config: unknown }>();
+      if (!row) throw app.httpErrors.notFound("Channel config not found");
+
+      if (row.channel_type !== "whatsapp") {
+        throw app.httpErrors.methodNotAllowed("Only WhatsApp channel instances can be deleted; set isActive=false to disable other channels");
+      }
+
+      const config = parseStoredChannelConfig(row.encrypted_config);
+      if (config.onboardingStatus !== "unbound" || config.phoneNumberId) {
+        throw app.httpErrors.badRequest("WhatsApp instance must be unbound before deletion; call /whatsapp/unbind first");
+      }
+
+      await trx("channel_configs").where({ tenant_id: tenantId, config_id: configId }).delete();
+      return { deleted: true };
+    });
   });
 }

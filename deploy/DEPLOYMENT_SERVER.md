@@ -317,6 +317,32 @@ cp -r /srv/nuychat/nuyess-chat/apps/agent-workspace/dist/* /srv/nuychat/www/agen
 cp -r /srv/nuychat/nuyess-chat/apps/customer-web/dist/* /srv/nuychat/www/customer-web/
 ```
 
+完整发布
+cd /srv/nuychat/nuyess-chat
+git pull origin main
+
+
+
+cd /srv/nuychat/nuyess-chat
+
+pnpm install
+pnpm build
+
+rm -rf /srv/nuychat/www/platform-admin/*
+rm -rf /srv/nuychat/www/tenant-admin/*
+rm -rf /srv/nuychat/www/agent-workspace/*
+rm -rf /srv/nuychat/www/customer-web/*
+
+cp -r /srv/nuychat/nuyess-chat/apps/platform-admin/dist/* /srv/nuychat/www/platform-admin/
+cp -r /srv/nuychat/nuyess-chat/apps/tenant-admin/dist/* /srv/nuychat/www/tenant-admin/
+cp -r /srv/nuychat/nuyess-chat/apps/agent-workspace/dist/* /srv/nuychat/www/agent-workspace/
+cp -r /srv/nuychat/nuyess-chat/apps/customer-web/dist/* /srv/nuychat/www/customer-web/
+
+systemctl restart nuychat-api
+systemctl status nuychat-api --no-pager
+
+
+
 说明：
 
 - 前端环境变量是构建时注入的
@@ -365,7 +391,8 @@ cd /srv/nuychat
 git clone git@github.com:ciby9833/nuychat.git nuyess-chat
 cd /srv/nuychat/nuyess-chat
 ```
-
+cd /srv/nuychat/nuyess-chat
+git pull origin main
 ### 6.2 安装依赖
 
 ```bash

@@ -24,7 +24,8 @@ export function ChannelGrid({
   onRefresh,
   onSelect,
   onEdit,
-  onBindWhatsApp
+  onBindWhatsApp,
+  onCreateWhatsApp
 }: {
   filtered: ChannelConfig[];
   typeFilter: string;
@@ -38,6 +39,7 @@ export function ChannelGrid({
   onSelect: (id: string) => void;
   onEdit: (row: ChannelConfig) => void;
   onBindWhatsApp: (row: ChannelConfig) => void;
+  onCreateWhatsApp: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -59,7 +61,15 @@ export function ChannelGrid({
         </Space>
       </Card>
 
-      <Card title={t("channelsModule.grid.listTitle")} extra={<Tag color="blue">{t("channelsModule.grid.count", { count: filtered.length })}</Tag>}>
+      <Card
+        title={t("channelsModule.grid.listTitle")}
+        extra={(
+          <Space>
+            <Tag color="blue">{t("channelsModule.grid.count", { count: filtered.length })}</Tag>
+            <Button size="small" type="primary" onClick={onCreateWhatsApp}>{t("channelsModule.grid.addWhatsApp", "添加 WhatsApp")}</Button>
+          </Space>
+        )}
+      >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
           {filtered.map((row) => {
             const active = row.config_id === selectedChannel?.config_id;

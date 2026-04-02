@@ -79,6 +79,17 @@ export function ChannelEditModal({
             </Form.Item>
           </>
         ) : null}
+
+        {editing?.channel_type === "whatsapp" ? (
+          <>
+            <Form.Item label={t("channelsModule.modal.whatsappLabel", "标签（如：销售号、售后号）")} name="label">
+              <Input placeholder={t("channelsModule.modal.whatsappLabelPlaceholder", "Sales WA")} />
+            </Form.Item>
+            <Form.Item label={t("channelsModule.modal.whatsappUsageScene", "用途场景")} name="usage_scene">
+              <Input placeholder={t("channelsModule.modal.whatsappUsageScenePlaceholder", "sales / support / vip")} />
+            </Form.Item>
+          </>
+        ) : null}
       </Form>
     </Modal>
   );

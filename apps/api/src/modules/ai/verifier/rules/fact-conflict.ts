@@ -14,7 +14,12 @@ import type { VerifierRule, PointBContext, RuleFinding } from "../types.js";
 
 /**
  * Check if the final answer contradicts known verified facts.
- * Uses simple keyword presence heuristic — not LLM-based.
+ *
+ * Strategy: if a verified fact has a status value and the answer contains
+ * a negation of that status (e.g., verified="completed" but answer says
+ * "not completed"), flag it as a conflict.
+ *
+ * This is a generic negation-detection heuristic — not tied to any industry.
  */
 function detectConflict(
   finalContent: string,
@@ -23,40 +28,29 @@ function detectConflict(
   const content = finalContent.toLowerCase();
   for (const fact of facts) {
     if (!fact.keyFacts) continue;
-    const { status, location } = fact.keyFacts;
+    const { status } = fact.keyFacts;
 
-    // If verified status exists and answer contains a contradictory status keyword
     if (status) {
       const normalizedStatus = status.toLowerCase();
-      // Check for explicit contradictions: e.g., verified="已签收" but answer says "未签收"/"未送达"
-      const contradictions: Array<[string, string[]]> = [
-        ["已签收", ["未签收", "未送达", "未到达", "未收到", "belum diterima", "not delivered"]],
-        ["已发货", ["未发货", "belum dikirim", "not shipped"]],
-        ["已退款", ["未退款", "belum dikembalikan", "not refunded"]],
-        ["delivered", ["not delivered", "undelivered", "未签收"]],
-        ["shipped", ["not shipped", "未发货"]],
-        ["refunded", ["not refunded", "未退款"]]
-      ];
-      for (const [truthKeyword, conflictKeywords] of contradictions) {
-        if (normalizedStatus.includes(truthKeyword)) {
-          for (const ck of conflictKeywords) {
-            if (content.includes(ck)) {
-              return `Answer says "${ck}" but verified status is "${status}"`;
-            }
-          }
+      // Generic negation patterns: if the verified status contains X,
+      // check if the answer says "not X", "未X", "belum X", etc.
+      const negationPrefixes = ["not ", "no ", "未", "没有", "belum ", "tidak "];
+      for (const prefix of negationPrefixes) {
+        // Check if answer contains "not <status>" or "<neg-prefix><status>"
+        if (content.includes(`${prefix}${normalizedStatus}`)) {
+          return `Answer says "${prefix}${normalizedStatus}" but verified status is "${status}"`;
         }
       }
-    }
-
-    // If verified location exists, check the answer doesn't claim a completely different location
-    // (lightweight: only flag if answer explicitly says "not in <location>" or "未到达<location>")
-    if (location) {
-      const loc = location.toLowerCase();
-      if (
-        (content.includes("未到达") && content.includes(loc)) ||
-        (content.includes("not in") && content.includes(loc))
-      ) {
-        return `Answer contradicts verified location "${location}"`;
+      // Also check the reverse: if verified status starts with a negation
+      // but the answer asserts the positive
+      for (const prefix of negationPrefixes) {
+        if (normalizedStatus.startsWith(prefix)) {
+          const positive = normalizedStatus.slice(prefix.length);
+          // Only flag if the positive form appears as a standalone assertion
+          if (positive.length >= 3 && content.includes(positive) && !content.includes(normalizedStatus)) {
+            return `Answer asserts "${positive}" but verified status is "${status}"`;
+          }
+        }
       }
     }
   }

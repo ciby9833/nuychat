@@ -20,6 +20,8 @@ export function ChannelDetail({
   whatsAppSetup,
   binding,
   onBindWhatsApp,
+  onUnbindWhatsApp,
+  onDeleteWhatsApp,
   onEdit
 }: {
   selectedChannel: ChannelConfig | null;
@@ -28,6 +30,8 @@ export function ChannelDetail({
   whatsAppSetup: WhatsAppEmbeddedSignupSetup | null;
   binding: boolean;
   onBindWhatsApp: (row: ChannelConfig) => void;
+  onUnbindWhatsApp: (row: ChannelConfig) => void;
+  onDeleteWhatsApp: (row: ChannelConfig) => void;
   onEdit: (row: ChannelConfig) => void;
 }) {
   const { t } = useTranslation();
@@ -92,6 +96,16 @@ export function ChannelDetail({
               }
             />
             <Descriptions size="small" bordered column={1}>
+              {selectedChannel.label ? (
+                <Descriptions.Item label={t("channelsModule.detail.label", "标签")}>
+                  {selectedChannel.label}
+                </Descriptions.Item>
+              ) : null}
+              {selectedChannel.usage_scene ? (
+                <Descriptions.Item label={t("channelsModule.detail.usageScene", "用途")}>
+                  {selectedChannel.usage_scene}
+                </Descriptions.Item>
+              ) : null}
               <Descriptions.Item label={t("channelsModule.detail.platformWebhookUrl")}>
                 {selectedChannel.whatsapp_webhook_url ?? whatsAppSetup?.webhookUrl ?? "-"}
               </Descriptions.Item>
@@ -108,7 +122,10 @@ export function ChannelDetail({
                 {selectedChannel.business_account_name ?? "-"}
               </Descriptions.Item>
             </Descriptions>
-            <Space>
+            <Space wrap>
+              <Button onClick={() => onEdit(selectedChannel)}>
+                {t("channelsModule.detail.editLabel", "编辑标签")}
+              </Button>
               <Button
                 type="primary"
                 loading={binding}
@@ -117,6 +134,22 @@ export function ChannelDetail({
               >
                 {whatsappBound ? t("channelsModule.grid.rebindWhatsApp") : t("channelsModule.grid.bindWhatsApp")}
               </Button>
+              {whatsappBound ? (
+                <Button
+                  danger
+                  onClick={() => { void onUnbindWhatsApp(selectedChannel); }}
+                >
+                  {t("channelsModule.detail.unbindWhatsApp", "解绑号码")}
+                </Button>
+              ) : null}
+              {!whatsappBound ? (
+                <Button
+                  danger
+                  onClick={() => { void onDeleteWhatsApp(selectedChannel); }}
+                >
+                  {t("channelsModule.detail.deleteInstance", "删除实例")}
+                </Button>
+              ) : null}
               <Button
                 onClick={() => { void copyToClipboard(selectedChannel.whatsapp_webhook_url ?? whatsAppSetup?.webhookUrl, "WhatsApp Webhook URL"); }}
                 disabled={!selectedChannel.whatsapp_webhook_url && !whatsAppSetup?.webhookUrl}

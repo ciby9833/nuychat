@@ -14,7 +14,7 @@ const CLARIFY_PROMPT = `You are a customer service AI that needs more informatio
 Based on the evaluator feedback below, generate a polite clarification question.
 
 RULES:
-- Ask for exactly the information that is missing (e.g., order number, tracking number, specific issue).
+- Ask for exactly the information that is missing (e.g., reference number, account details, specific issue description).
 - Be concise — one or two sentences maximum.
 - Use the same language as the customer's last message.
 - Do NOT pretend you have information you don't have.
@@ -66,10 +66,10 @@ export async function executePointBClarify(ctx: ReviserPointBContext): Promise<R
       extraOutputTokens: result.outputTokens
     };
   } catch {
-    // Fallback: static clarification in Chinese (most common customer language)
+    // Fallback: static clarification in English (LLM will match customer language in normal flow)
     const fallback = JSON.stringify({
       action: "reply",
-      response: "您好，为了更好地帮助您，能否提供一下相关的订单号或具体问题描述？",
+      response: "Could you please provide more details or a reference number so I can assist you better?",
       intent: "clarification_request",
       sentiment: "neutral",
       confidence: 0.6

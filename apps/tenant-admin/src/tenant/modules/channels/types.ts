@@ -16,6 +16,8 @@ export type ChannelFormValues = {
   verify_token?: string;
   outbound_webhook_url?: string;
   webhook_secret?: string;
+  label?: string;
+  usage_scene?: string;
 };
 
 export type EmbeddedSignupFinishPayload = {

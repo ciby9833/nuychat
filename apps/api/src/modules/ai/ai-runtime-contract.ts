@@ -80,18 +80,30 @@ export function normalizeAIInteractionContract(
   };
 }
 
+/**
+ * Fallback intent inference when LLM fails to return a valid intent.
+ * Uses multilingual keyword heuristics — industry-agnostic categories.
+ */
 export function inferConversationIntent(history: ChatMessage[]): string {
   const text = history
     .filter((message) => message.role === "user")
     .map((message) => message.content.toLowerCase())
     .join(" ");
 
-  if (/\b(order|pesanan|订单|注文|ord)\b/i.test(text)) return "order_inquiry";
-  if (/\b(refund|返款|退款|pengembalian)\b/i.test(text)) return "refund_request";
-  if (/\b(delivery|pengiriman|配送|配达|track|resi|awb)\b/i.test(text)) return "delivery_inquiry";
-  if (/\b(cancel|batal|取消|キャンセル)\b/i.test(text)) return "cancellation";
-  if (/\b(complaint|keluhan|投诉|クレーム|complain)\b/i.test(text)) return "complaint";
-  if (/\b(payment|bayar|付款|支払|transfer)\b/i.test(text)) return "payment_inquiry";
+  // Complaint / escalation (high priority — check first)
+  if (/\b(complaint|keluhan|投诉|クレーム|complain|举报)\b/i.test(text)) return "complaint";
+  // Cancellation
+  if (/\b(cancel|batal|取消|キャンセル|撤销)\b/i.test(text)) return "cancellation";
+  // Refund / return
+  if (/\b(refund|返款|退款|退货|pengembalian|return)\b/i.test(text)) return "refund_request";
+  // Status / tracking inquiry
+  if (/\b(status|track|resi|awb|进度|状态|查询|pengiriman)\b/i.test(text)) return "status_inquiry";
+  // Payment / billing
+  if (/\b(payment|bayar|付款|支払|transfer|invoice|账单|发票)\b/i.test(text)) return "payment_inquiry";
+  // Account / profile
+  if (/\b(account|akun|账号|密码|password|login|register|注册)\b/i.test(text)) return "account_inquiry";
+  // Appointment / booking
+  if (/\b(appointment|booking|预约|预订|reservation|jadwal)\b/i.test(text)) return "booking_inquiry";
   return "general_inquiry";
 }
 
@@ -101,17 +113,26 @@ export function inferConversationSentiment(history: ChatMessage[]): AISentiment 
     .map((message) => message.content.toLowerCase())
     .join(" ");
 
+  // Multilingual anger/escalation keywords (industry-agnostic)
   const angryPhrases = [
-    "marah", "kecewa", "jelek", "buruk", "complaint", "penipuan", "fraud",
-    "退款", "投诉", "生气", "差评", "angry", "terrible", "worst", "scam",
-    "tidak puas", "tidak beres", "bohong", "bohongin"
+    "angry", "furious", "terrible", "worst", "scam", "fraud", "lawsuit", "lawyer", "sue",
+    "生气", "愤怒", "投诉", "差评", "骗子", "举报", "曝光",
+    "marah", "kecewa", "penipuan", "bohong", "tidak puas", "tidak beres"
   ];
   if (angryPhrases.some((keyword) => text.includes(keyword))) return "angry";
 
-  const negativePhrases = ["not happy", "bad", "late", "delay", "problem", "issue", "salah", "buruk"];
+  const negativePhrases = [
+    "not happy", "bad", "late", "delay", "problem", "issue", "wrong", "broken", "failed",
+    "不满", "有问题", "出错", "太慢",
+    "salah", "buruk", "lambat", "rusak"
+  ];
   if (negativePhrases.some((keyword) => text.includes(keyword))) return "negative";
 
-  const positivePhrases = ["terima kasih", "thank", "thanks", "感谢", "ありがとう", "mantap", "bagus", "good"];
+  const positivePhrases = [
+    "thank", "thanks", "great", "excellent", "perfect", "awesome", "good",
+    "感谢", "谢谢", "很好", "满意",
+    "terima kasih", "mantap", "bagus", "ありがとう"
+  ];
   if (positivePhrases.some((keyword) => text.includes(keyword))) return "positive";
 
   return "neutral";

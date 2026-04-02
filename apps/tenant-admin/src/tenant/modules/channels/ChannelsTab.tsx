@@ -37,6 +37,7 @@ export function ChannelsTab() {
         onSelect={data.setSelectedId}
         onEdit={data.openEdit}
         onBindWhatsApp={(row) => { void data.onBindWhatsApp(row); }}
+        onCreateWhatsApp={() => { void data.onCreateWhatsApp(); }}
       />
 
       <ChannelDetail
@@ -46,6 +47,8 @@ export function ChannelsTab() {
         whatsAppSetup={data.whatsAppSetup}
         binding={data.binding}
         onBindWhatsApp={(row) => { void data.onBindWhatsApp(row); }}
+        onUnbindWhatsApp={(row) => { void data.onUnbindWhatsApp(row); }}
+        onDeleteWhatsApp={(row) => { void data.onDeleteWhatsApp(row); }}
         onEdit={data.openEdit}
       />
 

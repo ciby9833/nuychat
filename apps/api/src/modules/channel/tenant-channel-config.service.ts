@@ -32,26 +32,38 @@ export type TenantChannelConfigView = {
   outbound_webhook_url: string | null;
   webhook_secret: string | null;
   is_active: boolean;
+  // WhatsApp 多实例扩展字段
+  label: string | null;
+  usage_scene: string | null;
+  is_primary: boolean | null;
+  onboarding_status: string | null;
 };
 
 export const SUPPORTED_TENANT_CHANNEL_TYPES: readonly TenantChannelType[] = ["web", "whatsapp", "webhook"] as const;
 
+// web/webhook 单例渠道，租户注册时自动补齐
+const SINGLETON_CHANNEL_TYPES: readonly TenantChannelType[] = ["web", "webhook"] as const;
+
 export async function ensureTenantChannelConfigs(trx: Knex | Knex.Transaction, tenantId: string) {
+  // 查询全部已有渠道（包含多条 whatsapp）
   const rows = await trx("channel_configs")
     .select("config_id", "tenant_id", "channel_type", "channel_id", "encrypted_config", "is_active")
     .where({ tenant_id: tenantId })
     .whereIn("channel_type", [...SUPPORTED_TENANT_CHANNEL_TYPES])
     .orderBy("created_at", "asc") as ChannelConfigRow[];
 
-  const byType = new Map<TenantChannelType, ChannelConfigRow>();
+  // 单例渠道：web / webhook 确保各只有一条
+  const singletonByType = new Map<TenantChannelType, ChannelConfigRow>();
   for (const row of rows) {
     const channelType = normalizeTenantChannelType(row.channel_type);
-    if (!channelType || byType.has(channelType)) continue;
-    byType.set(channelType, row);
+    if (!channelType || channelType === "whatsapp") continue;
+    if (!singletonByType.has(channelType)) {
+      singletonByType.set(channelType, row);
+    }
   }
 
-  for (const channelType of SUPPORTED_TENANT_CHANNEL_TYPES) {
-    if (byType.has(channelType)) continue;
+  for (const channelType of SINGLETON_CHANNEL_TYPES) {
+    if (singletonByType.has(channelType)) continue;
 
     const [created] = await trx("channel_configs")
       .insert({
@@ -63,12 +75,48 @@ export async function ensureTenantChannelConfigs(trx: Knex | Knex.Transaction, t
       })
       .returning(["config_id", "tenant_id", "channel_type", "channel_id", "encrypted_config", "is_active"]);
 
-    byType.set(channelType, created as ChannelConfigRow);
+    singletonByType.set(channelType, created as ChannelConfigRow);
   }
 
-  return SUPPORTED_TENANT_CHANNEL_TYPES
-    .map((channelType) => byType.get(channelType))
-    .filter((row): row is ChannelConfigRow => Boolean(row));
+  // 多实例渠道：whatsapp 全部返回
+  const whatsappRows = rows.filter((r) => r.channel_type === "whatsapp");
+
+  return [
+    singletonByType.get("web"),
+    ...whatsappRows,
+    singletonByType.get("webhook")
+  ].filter((row): row is ChannelConfigRow => Boolean(row));
+}
+
+export async function createWhatsAppChannelConfig(
+  trx: Knex | Knex.Transaction,
+  tenantId: string,
+  options?: { label?: string; usageScene?: string; isPrimary?: boolean }
+) {
+  const instanceId = generateShortId();
+  const channelId = `whatsapp-${tenantId}-${instanceId}`;
+  const config: Record<string, unknown> = {
+    onboardingStatus: "unbound"
+  };
+  if (options?.label) config.label = options.label;
+  if (options?.usageScene) config.usageScene = options.usageScene;
+  if (options?.isPrimary !== undefined) config.isPrimary = options.isPrimary;
+
+  const [created] = await trx("channel_configs")
+    .insert({
+      tenant_id: tenantId,
+      channel_type: "whatsapp",
+      channel_id: channelId,
+      encrypted_config: JSON.stringify(config),
+      is_active: false
+    })
+    .returning(["config_id", "tenant_id", "channel_type", "channel_id", "encrypted_config", "is_active"]);
+
+  return created as ChannelConfigRow;
+}
+
+function generateShortId(): string {
+  return Math.random().toString(36).slice(2, 8);
 }
 
 export function serializeTenantChannelConfig(row: ChannelConfigRow): TenantChannelConfigView {
@@ -97,7 +145,11 @@ export function serializeTenantChannelConfig(row: ChannelConfigRow): TenantChann
     inbound_webhook_url: channelType === "webhook" ? `${resolveApiBase()}/webhook/${encodeURIComponent(row.channel_id)}` : null,
     outbound_webhook_url: typeof config.outboundWebhookUrl === "string" ? config.outboundWebhookUrl : null,
     webhook_secret: typeof config.webhookSecret === "string" ? config.webhookSecret : null,
-    is_active: row.is_active
+    is_active: row.is_active,
+    label: typeof config.label === "string" ? config.label : null,
+    usage_scene: typeof config.usageScene === "string" ? config.usageScene : null,
+    is_primary: typeof config.isPrimary === "boolean" ? config.isPrimary : null,
+    onboarding_status: typeof config.onboardingStatus === "string" ? config.onboardingStatus : null
   };
 }
 
@@ -124,6 +176,9 @@ export function buildChannelConfigPayload(
     displayPhoneNumber?: string;
     outboundWebhookUrl?: string;
     webhookSecret?: string;
+    label?: string;
+    usageScene?: string;
+    isPrimary?: boolean;
   }
 ) {
   const next = { ...currentConfig };
@@ -141,6 +196,9 @@ export function buildChannelConfigPayload(
     if (body.wabaId !== undefined) next.wabaId = normalizeNonEmptyString(body.wabaId);
     if (body.businessAccountName !== undefined) next.businessAccountName = normalizeNonEmptyString(body.businessAccountName);
     if (body.displayPhoneNumber !== undefined) next.displayPhoneNumber = normalizeNonEmptyString(body.displayPhoneNumber);
+    if (body.label !== undefined) next.label = normalizeNonEmptyString(body.label);
+    if (body.usageScene !== undefined) next.usageScene = normalizeNonEmptyString(body.usageScene);
+    if (body.isPrimary !== undefined) next.isPrimary = body.isPrimary;
   }
 
   if (channelType === "webhook") {

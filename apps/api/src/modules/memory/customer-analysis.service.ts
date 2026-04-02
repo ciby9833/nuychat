@@ -151,7 +151,7 @@ function buildCustomerAnalysisPrompt(input: CustomerAnalysisInput) {
     `Latest conversation insight: ${input.latestInsight?.summary?.trim() || "n/a"}`,
     `Latest intent: ${input.latestInsight?.lastIntent || "n/a"}`,
     `Latest sentiment: ${input.latestInsight?.lastSentiment || "n/a"}`,
-    `Order clues: ${input.orderClues.join(", ") || "n/a"}`,
+    `Reference clues: ${input.orderClues.join(", ") || "n/a"}`,
     "",
     "Top long-term memories:",
     memoryLines.length > 0 ? memoryLines.join("\n") : "- none",
@@ -178,24 +178,24 @@ function buildFallbackAnalysis(input: CustomerAnalysisInput): CustomerAnalysisRe
     .slice(0, 2);
 
   const summaryParts = [
-    input.profileSummary?.trim() ? `画像：${input.profileSummary.trim().slice(0, 180)}` : null,
-    input.latestInsight?.summary?.trim() ? `当前会话：${input.latestInsight.summary.trim().slice(0, 160)}` : null,
-    salientMemories.length > 0 ? `长期记忆：${salientMemories.join("；")}` : null,
-    activeStates.length > 0 ? `活跃状态：${activeStates.join("、")}` : null,
-    recentHistory.length > 0 ? `近期历史：${recentHistory.join("；")}` : null
+    input.profileSummary?.trim() ? `Profile: ${input.profileSummary.trim().slice(0, 180)}` : null,
+    input.latestInsight?.summary?.trim() ? `Current conversation: ${input.latestInsight.summary.trim().slice(0, 160)}` : null,
+    salientMemories.length > 0 ? `Long-term memory: ${salientMemories.join("; ")}` : null,
+    activeStates.length > 0 ? `Active states: ${activeStates.join(", ")}` : null,
+    recentHistory.length > 0 ? `Recent history: ${recentHistory.join("; ")}` : null
   ].filter(Boolean);
 
   const suggestions = [
-    input.orderClues.length > 0 ? `优先核对订单线索：${input.orderClues.slice(0, 2).join("、")}` : null,
-    salientMemories.length > 0 ? "回复前先参考客户长期记忆与偏好" : null,
-    activeStates.length > 0 ? "留意当前状态对回复语气和承诺范围的影响" : null
+    input.orderClues.length > 0 ? `Check reference clues first: ${input.orderClues.slice(0, 2).join(", ")}` : null,
+    salientMemories.length > 0 ? "Review customer long-term memory and preferences before replying" : null,
+    activeStates.length > 0 ? "Consider current active states when choosing tone and commitments" : null
   ].filter((item): item is string => Boolean(item));
 
   return {
-    summary: summaryParts.join("\n") || "暂无客户级 AI 分析",
+    summary: summaryParts.join("\n") || "No customer-level analysis available yet.",
     intent: input.latestInsight?.lastIntent ?? input.history.find((item) => item.intent)?.intent ?? "general_inquiry",
     sentiment: normalizeSentiment(input.latestInsight?.lastSentiment ?? input.history.find((item) => item.sentiment)?.sentiment),
-    suggestions: suggestions.length > 0 ? suggestions : ["先结合画像、长期记忆和当前会话再做判断"]
+    suggestions: suggestions.length > 0 ? suggestions : ["Review profile, long-term memory, and current conversation before responding"]
   };
 }
 

@@ -11,6 +11,9 @@ export type ChannelConfigMutationBody = {
   displayPhoneNumber?: string;
   outboundWebhookUrl?: string;
   webhookSecret?: string;
+  label?: string;
+  usageScene?: string;
+  isPrimary?: boolean;
 };
 
 export function parseStoredChannelConfig(value: unknown): Record<string, unknown> {

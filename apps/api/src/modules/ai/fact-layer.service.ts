@@ -35,12 +35,23 @@ export interface VerifiedFact {
   keyFacts: KeyFacts | null;
 }
 
+/** Key business fields extracted from skill results (industry-agnostic) */
 export interface KeyFacts {
-  trackingNumber: string | null;
+  /** Primary reference identifier (order ID, ticket number, tracking number, booking ref, etc.) */
+  referenceId: string | null;
+  /** Current status of the referenced entity */
   status: string | null;
+  /** Most recent timestamp associated with the entity */
   time: string | null;
+  /** Relevant location or context (address, branch, department, etc.) */
   location: string | null;
+  /** Human-readable description or summary */
   description: string | null;
+  /**
+   * @deprecated Use referenceId instead. Kept for backward compatibility
+   * with existing skill scripts that extract tracking numbers.
+   */
+  trackingNumber: string | null;
 }
 
 /** 从 case_tasks 提取的任务事实 */
@@ -459,51 +470,56 @@ export function summarizeSkillResult(result: Record<string, unknown>): string {
     .join("; ");
 }
 
-/** 从 skill result 中提取关键业务字段 */
+/**
+ * 从 skill result 中提取关键业务字段（行业无关）。
+ * 通过通用字段名模式匹配，不假设特定行业的数据结构。
+ */
 export function extractKeyFacts(
   result: Record<string, unknown>,
   args: Record<string, unknown>,
 ): KeyFacts | null {
   const latestObject = extractLatestBusinessObject(result);
+
+  // Extract the primary reference identifier from args or result
+  const referenceId = firstNonEmptyString(
+    // Common arg patterns for reference IDs
+    args.id, args.orderId, args.order_id,
+    args.ticketId, args.ticket_id,
+    args.bookingId, args.booking_id,
+    args.billCodes, args.trackingNumber, args.tracking_number,
+    args.waybillNumber, args.waybill_number,
+    args.referenceId, args.reference_id, args.ref,
+    // Common result patterns
+    result.id, result.reference_id, result.referenceId,
+    result.tracking_no, result.trackingNumber, result.tracking_number,
+    result.order_id, result.orderId,
+  );
+
   return {
-    trackingNumber: firstNonEmptyString(
-      args.billCodes,
-      args.trackingNumber,
-      args.tracking_number,
-      args.waybillNumber,
-      args.waybill_number,
-      result.tracking_no,
-      result.trackingNumber,
-      result.tracking_number,
-    ),
+    referenceId,
+    trackingNumber: referenceId, // backward compat alias
     status: firstNonEmptyString(
       result.latest_status,
       result.status,
-      latestObject ? findRecordValue(latestObject, [/^status$/i, /状态/, /scan\s*type/i]) : null
+      latestObject ? findRecordValue(latestObject, [/^status$/i, /状态/]) : null
     ),
     time: firstNonEmptyString(
       result.latest_time,
-      result.time,
-      latestObject ? findRecordValue(latestObject, [/^time$/i, /时间/, /date/i]) : null
+      result.time, result.updated_at, result.updatedAt,
+      latestObject ? findRecordValue(latestObject, [/^time$/i, /时间/, /date/i, /updated/i]) : null
     ),
     location: firstNonEmptyString(
       latestObject ? findRecordValue(latestObject, [
-        /^latest_location$/i,
-        /outlet/i,
-        /网点/,
-        /branch/i,
-        /location/i,
+        /location/i, /address/i, /branch/i, /outlet/i,
+        /department/i, /地[址点]/, /网点/,
       ]) : null,
       result.latest_location,
-      result.location
+      result.location, result.address
     ),
     description: firstNonEmptyString(
       result.latest_description,
       latestObject ? findRecordValue(latestObject, [
-        /description/i,
-        /说明/,
-        /remark/i,
-        /detail/i,
+        /description/i, /说明/, /remark/i, /detail/i, /note/i, /summary/i,
       ]) : null
     ),
   };
