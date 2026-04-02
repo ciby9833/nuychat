@@ -54,7 +54,9 @@ export function createRoutingWorker() {
     routingQueue.name,
     async (job) => {
       const { tenantId, planId, conversationId, customerId, channelType } = job.data;
-      const plan = await routingPlanRepository.getById(db, tenantId, planId);
+      const plan = await withTenantTransaction(tenantId, async (trx) =>
+        routingPlanRepository.getById(trx, tenantId, planId)
+      );
       if (!plan) {
         throw new Error(`Routing plan not found: ${planId}`);
       }
@@ -72,19 +74,21 @@ export function createRoutingWorker() {
         return { skipped: true, reason: "selected_owner_human" };
       }
 
-      const conversation = await db("conversations")
-        .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .select(
-          "channel_id",
-          "status",
-          "customer_id",
-          "current_case_id",
-          "assigned_agent_id",
-          "current_handler_type",
-          "current_handler_id",
-          "current_segment_id"
-        )
-        .first();
+      const conversation = await withTenantTransaction(tenantId, async (trx) =>
+        trx("conversations")
+          .where({ tenant_id: tenantId, conversation_id: conversationId })
+          .select(
+            "channel_id",
+            "status",
+            "customer_id",
+            "current_case_id",
+            "assigned_agent_id",
+            "current_handler_type",
+            "current_handler_id",
+            "current_segment_id"
+          )
+          .first()
+      );
 
       if (!conversation) {
         throw new Error(`Conversation not found: ${conversationId}`);
@@ -119,10 +123,12 @@ export function createRoutingWorker() {
         });
       });
 
-      const preferences = await db("conversation_skill_preferences")
-        .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .select("preferred_skills")
-        .first<{ preferred_skills: unknown }>();
+      const preferences = await withTenantTransaction(tenantId, async (trx) =>
+        trx("conversation_skill_preferences")
+          .where({ tenant_id: tenantId, conversation_id: conversationId })
+          .select("preferred_skills")
+          .first<{ preferred_skills: unknown }>()
+      );
 
       const selectedExecutionId = await withTenantTransaction(tenantId, async (trx) => {
         return dispatchAuditService.recordExecution(trx, {
@@ -204,18 +210,20 @@ export function createRoutingWorker() {
       let result;
       let orchestratorError: string | null = null;
       try {
-        result = await orchestrator.run(db, {
-          tenantId,
-          conversationId,
-          customerId,
-          channelType,
-          caseId: conversation.current_case_id as string | null,
-          moduleId: plan.target.moduleId,
-          skillGroupId: plan.target.skillGroupId,
-          actorType: "ai",
-          preferredSkillNames: parsePreferredSkills(preferences?.preferred_skills),
-          aiAgentId: plan.target.aiAgentId
-        });
+        result = await withTenantTransaction(tenantId, async (trx) =>
+          orchestrator.run(trx, {
+            tenantId,
+            conversationId,
+            customerId,
+            channelType,
+            caseId: conversation.current_case_id as string | null,
+            moduleId: plan.target.moduleId,
+            skillGroupId: plan.target.skillGroupId,
+            actorType: "ai",
+            preferredSkillNames: parsePreferredSkills(preferences?.preferred_skills),
+            aiAgentId: plan.target.aiAgentId
+          })
+        );
       } catch (err) {
         orchestratorError = (err as Error).message ?? "unknown_error";
         result = {
@@ -234,23 +242,25 @@ export function createRoutingWorker() {
       const orchestratorDurationMs = Date.now() - orchestratorStart;
 
       // ── 4. Save AI trace ─────────────────────────────────────────────────────
-      await db("ai_traces").insert({
-        tenant_id: tenantId,
-        conversation_id: conversationId,
-        supervisor: "orchestrator",
-        steps: JSON.stringify([
-          { step: "intent",             output: result.intent },
-          { step: "sentiment",          output: result.sentiment },
-          { step: "response_generated", output: result.response !== null },
-          { step: "skills_called",      output: result.skillsInvoked },
-          { step: "skills_blocked",     output: result.skillsBlocked ?? [] },
-          { step: "ai_agent",           output: plan.target.aiAgentName }
-        ]),
-        skills_called: JSON.stringify(result.skillsInvoked),
-        token_usage: JSON.stringify({ prompt: 0, completion: 0, total: result.tokensUsed }),
-        total_duration_ms: orchestratorDurationMs,
-        handoff_reason: fitAiTraceReason(result.handoffReason),
-        error: orchestratorError
+      await withTenantTransaction(tenantId, async (trx) => {
+        await trx("ai_traces").insert({
+          tenant_id: tenantId,
+          conversation_id: conversationId,
+          supervisor: "orchestrator",
+          steps: JSON.stringify([
+            { step: "intent",             output: result.intent },
+            { step: "sentiment",          output: result.sentiment },
+            { step: "response_generated", output: result.response !== null },
+            { step: "skills_called",      output: result.skillsInvoked },
+            { step: "skills_blocked",     output: result.skillsBlocked ?? [] },
+            { step: "ai_agent",           output: plan.target.aiAgentName }
+          ]),
+          skills_called: JSON.stringify(result.skillsInvoked),
+          token_usage: JSON.stringify({ prompt: 0, completion: 0, total: result.tokensUsed }),
+          total_duration_ms: orchestratorDurationMs,
+          handoff_reason: fitAiTraceReason(result.handoffReason),
+          error: orchestratorError
+        });
       });
 
       // ── 5. Act on result ─────────────────────────────────────────────────────

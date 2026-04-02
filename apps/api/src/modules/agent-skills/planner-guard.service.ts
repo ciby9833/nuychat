@@ -70,45 +70,24 @@ export async function validateCapabilitySuggestions(
   };
 }
 
-export async function validateToolExecutionAgainstCandidates(
-  db: Knex | Knex.Transaction,
-  input: {
-    tenantId: string;
-    conversationId: string;
-    candidateSkills: TenantSkillDefinition[];
-    toolName: string;
-    args: Record<string, unknown>;
-  }
-): Promise<GuardResult> {
-  const ownerSkill = input.candidateSkills.find((skill) =>
-    skill.scripts.some((script) => script.enabled && script.scriptKey === input.toolName)
+/**
+ * Thin assertion: check if the tool name belongs to a candidate skill.
+ *
+ * No DB queries — buildRuntimeTools already constrains exposed tools,
+ * so this only catches hallucinated tool names from the LLM.
+ * Duplicate call detection is handled by the orchestrator's seenToolCalls set.
+ */
+export function assertToolInCandidateScope(
+  candidateSkills: TenantSkillDefinition[],
+  toolName: string
+): { allowed: true; reason?: undefined } | { allowed: false; reason: string } {
+  const found = candidateSkills.some((skill) =>
+    skill.scripts.some((script) => script.enabled && script.scriptKey === toolName)
   );
-  if (!ownerSkill) {
-    return { allowed: false, reason: "tool_not_in_candidate_scope", fallbackAction: "handoff" };
+  if (!found) {
+    return { allowed: false, reason: "tool_not_in_candidate_scope" };
   }
-
-  const recent = await db("skill_execution_traces as t")
-    .join("skill_runs as r", "r.run_id", "t.run_id")
-    .where("r.tenant_id", input.tenantId)
-    .andWhere("r.conversation_id", input.conversationId)
-    .andWhere("r.capability_id", ownerSkill.capabilityId)
-    .andWhere("t.phase", "executor")
-    .andWhere("t.created_at", ">=", db.raw("now() - interval '2 minutes'"))
-    .select("t.payload")
-    .orderBy("t.created_at", "desc")
-    .limit(5);
-
-  const rawArgs = stringifyArgs(input.args);
-  const duplicated = recent.some((row) => {
-    const payload = row.payload && typeof row.payload === "object" ? row.payload as Record<string, unknown> : {};
-    return stringifyArgs(payload.args as Record<string, unknown>) === rawArgs
-      && String(payload.skillName ?? "") === input.toolName;
-  });
-  if (duplicated) {
-    return { allowed: false, reason: "duplicate_execution_guard", fallbackAction: "defer" };
-  }
-
-  return { allowed: true, skill: ownerSkill, scriptKey: input.toolName };
+  return { allowed: true };
 }
 
 export async function recordSkillRun(

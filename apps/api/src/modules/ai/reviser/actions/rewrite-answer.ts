@@ -23,7 +23,10 @@ CRITICAL RULES:
 
 /**
  * Re-run the final LLM turn with a correction prompt.
- * Returns new content or falls through to pass.
+ *
+ * Cost-aware: only rewrites when at least one finding has "critical" severity.
+ * Lower-severity findings are logged but don't justify the extra LLM call —
+ * the original answer is "good enough" and the human agent can refine if needed.
  */
 export async function executePointBRewrite(ctx: ReviserPointBContext): Promise<ReviserOutcome> {
   if (ctx.verdict.action !== "rewrite_answer") {
@@ -37,6 +40,20 @@ export async function executePointBRewrite(ctx: ReviserPointBContext): Promise<R
   }
 
   const triggeredFindings = ctx.verdict.findings.filter((f) => f.triggered);
+
+  // Cost guard: only spend an extra LLM call if at least one finding is critical.
+  // Warning-level findings (e.g. weak keyword matches) don't justify the token cost.
+  const hasCritical = triggeredFindings.some((f) => f.severity === "critical");
+  if (!hasCritical) {
+    return {
+      action: "pass",
+      modified: false,
+      summary: `Point B: rewrite skipped — no critical findings (${triggeredFindings.length} non-critical findings logged).`,
+      extraInputTokens: 0,
+      extraOutputTokens: 0
+    };
+  }
+
   const evaluatorFeedback = triggeredFindings
     .map((f) => `- [${f.ruleId}] ${f.reason}`)
     .join("\n");

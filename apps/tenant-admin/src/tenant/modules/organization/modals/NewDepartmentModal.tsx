@@ -9,35 +9,69 @@
 
 import { Form, Input, Modal, Select } from "antd";
 import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { createDepartment } from "../../../api";
-import type { DepartmentItem, NewDepartmentFormValues } from "../types";
+import { createDepartment, patchDepartment } from "../../../api";
+import type { DepartmentFormValues, DepartmentItem } from "../types";
 
 type NewDepartmentModalProps = {
   open: boolean;
+  mode?: "create" | "edit";
   departments: DepartmentItem[];
+  department?: DepartmentItem | null;
   onClose: () => void;
-  onCreated: () => void;
+  onSubmitted: () => void;
 };
 
 export function NewDepartmentModal({
   open,
+  mode = "create",
   departments,
+  department,
   onClose,
-  onCreated
+  onSubmitted
 }: NewDepartmentModalProps) {
   const { t } = useTranslation();
-  const [form] = Form.useForm<NewDepartmentFormValues>();
+  const [form] = Form.useForm<DepartmentFormValues>();
   const [saving, setSaving] = useState(false);
+  const isEdit = mode === "edit";
+
+  const parentOptions = useMemo(
+    () => departments
+      .filter((item) => item.departmentId !== department?.departmentId)
+      .map((item) => ({ value: item.departmentId, label: `${item.name} (${item.code})` })),
+    [departments, department?.departmentId]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    if (isEdit && department) {
+      form.setFieldsValue({
+        code: department.code,
+        name: department.name,
+        parentDepartmentId: department.parentDepartmentId ?? undefined
+      });
+      return;
+    }
+
+    form.resetFields();
+  }, [open, isEdit, department, form]);
 
   const handleOk = async () => {
     const values = await form.validateFields();
     setSaving(true);
     try {
-      await createDepartment(values);
+      if (isEdit && department) {
+        await patchDepartment(department.departmentId, {
+          code: values.code,
+          name: values.name,
+          parentDepartmentId: values.parentDepartmentId ?? null
+        });
+      } else {
+        await createDepartment(values);
+      }
       form.resetFields();
-      onCreated();
+      onSubmitted();
       onClose();
     } finally {
       setSaving(false);
@@ -46,11 +80,11 @@ export function NewDepartmentModal({
 
   return (
     <Modal
-      title={t("organizationModule.deptModal.title")}
+      title={isEdit ? t("organizationModule.deptModal.editTitle") : t("organizationModule.deptModal.title")}
       open={open}
       onCancel={() => { form.resetFields(); onClose(); }}
       onOk={() => { void handleOk(); }}
-      okText={t("organizationModule.deptModal.create")}
+      okText={isEdit ? t("organizationModule.deptModal.save") : t("organizationModule.deptModal.create")}
       cancelText={t("common.cancel")}
       confirmLoading={saving}
       destroyOnHidden
@@ -66,7 +100,7 @@ export function NewDepartmentModal({
           <Select
             allowClear
             placeholder={t("organizationModule.deptModal.parentPlaceholder")}
-            options={departments.map((department) => ({ value: department.departmentId, label: `${department.name} (${department.code})` }))}
+            options={parentOptions}
           />
         </Form.Item>
       </Form>

@@ -3,6 +3,15 @@ import type { AIMessage, AIProvider } from "../../../../../packages/ai-sdk/src/i
 import type { CapabilitySuggestionResult, TenantSkillDefinition } from "./contracts.js";
 import { buildSkillPlannerCatalog } from "./skill-definition.service.js";
 
+// ─── Smart Planner Threshold ────────────────────────────────────────────────
+// When available skills ≤ this number, skip LLM planner and use all as candidates.
+// The main LLM (with tool definitions + skill markdown) is smart enough to pick
+// the right tool from a small set — adding a planner call is pure token waste.
+//
+// Reference: OpenAI function calling best practices recommend ≤ 20 tools for
+// reliable selection; Claude handles 5-10 tools natively without routing.
+const SMART_PLANNER_THRESHOLD = 5;
+
 const CAPABILITY_SUGGESTER_CONTRACT = `Return valid JSON only.
 
 JSON shape:
@@ -45,6 +54,148 @@ function clampConfidence(value: unknown) {
   if (!Number.isFinite(confidence)) return 0;
   return Math.max(0, Math.min(1, confidence));
 }
+
+// ─── Smart Planning: 3-tier strategy ────────────────────────────────────────
+//
+//   Tier 1 (≤ 5 skills): Use ALL as candidates. No LLM planner call.
+//           The main agentic LLM sees tool definitions + skill markdown and
+//           picks the right one. This is how Claude/GPT-4o work natively.
+//
+//   Tier 2 (> 5, rule-filtered ≤ 5): Rule-based pre-filter using customer
+//           message keywords + skill triggerHints/name/description. If the
+//           filtered set is ≤ 5, use them directly.
+//
+//   Tier 3 (rule-filtered > 5): Call LLM planner to select from the full
+//           catalog — only when the rule filter can't narrow it down.
+//
+// This saves ~3000 tokens per request for most real-world tenants (which
+// typically have 1-5 active skills).
+
+export async function smartPlanCapabilities(input: {
+  provider: AIProvider;
+  model: string;
+  messages: AIMessage[];
+  temperature: number;
+  maxTokens: number;
+  skills: TenantSkillDefinition[];
+}): Promise<CapabilitySuggestionResult & { plannerStrategy: "direct" | "rule_filter" | "llm_planner" }> {
+  if (input.skills.length === 0) {
+    return {
+      candidates: [],
+      requiresClarification: false,
+      clarificationQuestion: null,
+      plannerStrategy: "direct"
+    };
+  }
+
+  // Tier 1: Small skill set — use all directly
+  if (input.skills.length <= SMART_PLANNER_THRESHOLD) {
+    return {
+      candidates: input.skills.map((skill) => ({
+        skillSlug: skill.slug,
+        reason: "direct_candidate",
+        confidence: 0.8
+      })),
+      requiresClarification: false,
+      clarificationQuestion: null,
+      plannerStrategy: "direct"
+    };
+  }
+
+  // Tier 2: Rule-based pre-filter by keyword relevance
+  const customerText = extractCustomerText(input.messages);
+  const scored = input.skills.map((skill) => ({
+    skill,
+    score: computeKeywordRelevance(skill, customerText)
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  const filtered = scored.filter((item) => item.score > 0).slice(0, SMART_PLANNER_THRESHOLD);
+
+  if (filtered.length > 0 && filtered.length <= SMART_PLANNER_THRESHOLD) {
+    return {
+      candidates: filtered.map((item) => ({
+        skillSlug: item.skill.slug,
+        reason: "keyword_match",
+        confidence: Math.min(0.85, 0.5 + item.score * 0.1)
+      })),
+      requiresClarification: false,
+      clarificationQuestion: null,
+      plannerStrategy: "rule_filter"
+    };
+  }
+
+  // Tier 3: Too many candidates — call LLM planner
+  const llmResult = await suggestCapabilities(input);
+  return {
+    ...llmResult,
+    plannerStrategy: "llm_planner"
+  };
+}
+
+/**
+ * Compute keyword relevance score for a skill against customer text.
+ * Uses skill name, description, slug, and triggerHints to match.
+ */
+function computeKeywordRelevance(skill: TenantSkillDefinition, customerText: string): number {
+  if (!customerText) return 0;
+
+  const text = customerText.toLowerCase();
+  let score = 0;
+
+  // Match against skill name (strongest signal)
+  const nameWords = (skill.name ?? "").toLowerCase().split(/\s+/).filter((w) => w.length >= 2);
+  for (const word of nameWords) {
+    if (text.includes(word)) score += 2;
+  }
+
+  // Match against skill description
+  const descWords = (skill.description ?? "").toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+  for (const word of descWords) {
+    if (text.includes(word)) score += 1;
+  }
+
+  // Match against skill slug (e.g., "order-lookup" → "order", "lookup")
+  const slugParts = skill.slug.toLowerCase().split(/[-_]/).filter((w) => w.length >= 3);
+  for (const part of slugParts) {
+    if (text.includes(part)) score += 2;
+  }
+
+  // Match against triggerHints keywords (if configured by tenant)
+  const hints = skill.triggerHints as Record<string, unknown> | null;
+  if (hints) {
+    const keywords = Array.isArray(hints.keywords)
+      ? hints.keywords.filter((k): k is string => typeof k === "string")
+      : [];
+    for (const kw of keywords) {
+      if (text.includes(kw.toLowerCase())) score += 3;
+    }
+    // Also support patterns like { intents: ["order_query", "track_shipment"] }
+    const intents = Array.isArray(hints.intents)
+      ? hints.intents.filter((i): i is string => typeof i === "string")
+      : [];
+    for (const intent of intents) {
+      const intentWords = intent.toLowerCase().split(/[-_]/).filter((w) => w.length >= 3);
+      for (const word of intentWords) {
+        if (text.includes(word)) score += 2;
+      }
+    }
+  }
+
+  return score;
+}
+
+/**
+ * Extract the last 2 customer messages as a single text for keyword matching.
+ */
+function extractCustomerText(messages: AIMessage[]): string {
+  return messages
+    .filter((m) => m.role === "user")
+    .slice(-2)
+    .map((m) => (typeof m.content === "string" ? m.content : ""))
+    .join(" ");
+}
+
+// ─── LLM Planner (Tier 3 only) ─────────────────────────────────────────────
 
 export async function suggestCapabilities(input: {
   provider: AIProvider;

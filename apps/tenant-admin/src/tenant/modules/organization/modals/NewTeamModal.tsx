@@ -11,43 +11,70 @@ import { Form, Input, Modal, Select } from "antd";
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 
-import { createTeam } from "../../../api";
-import type { AgentProfile, DepartmentItem, NewTeamFormValues } from "../types";
+import { createTeam, patchTeam } from "../../../api";
+import type { AgentProfile, DepartmentItem, TeamFormValues, TeamItem } from "../types";
 
 type NewTeamModalProps = {
   open: boolean;
+  mode?: "create" | "edit";
   departments: DepartmentItem[];
   agents: AgentProfile[];
+  team?: TeamItem | null;
   defaultDepartmentId: string | null;
   onClose: () => void;
-  onCreated: () => void;
+  onSubmitted: () => void;
 };
 
 export function NewTeamModal({
   open,
+  mode = "create",
   departments,
   agents,
+  team,
   defaultDepartmentId,
   onClose,
-  onCreated
+  onSubmitted
 }: NewTeamModalProps) {
   const { t } = useTranslation();
-  const [form] = Form.useForm<NewTeamFormValues>();
+  const [form] = Form.useForm<TeamFormValues>();
   const [saving, setSaving] = useState(false);
+  const isEdit = mode === "edit";
 
   useEffect(() => {
-    if (open && defaultDepartmentId) {
+    if (!open) return;
+
+    if (isEdit && team) {
+      form.setFieldsValue({
+        departmentId: team.departmentId,
+        code: team.code,
+        name: team.name,
+        supervisorAgentId: team.supervisorAgentId ?? undefined
+      });
+      return;
+    }
+
+    form.resetFields();
+    if (defaultDepartmentId) {
       form.setFieldValue("departmentId", defaultDepartmentId);
     }
-  }, [open, defaultDepartmentId, form]);
+  }, [open, isEdit, team, defaultDepartmentId, form]);
 
   const handleOk = async () => {
     const values = await form.validateFields();
     setSaving(true);
     try {
-      await createTeam(values);
+      if (isEdit && team) {
+        await patchTeam(team.teamId, {
+          departmentId: values.departmentId,
+          code: values.code,
+          name: values.name,
+          supervisorAgentId: values.supervisorAgentId ?? null
+        });
+      } else {
+        await createTeam(values);
+      }
       form.resetFields();
-      onCreated();
+      onSubmitted();
       onClose();
     } finally {
       setSaving(false);
@@ -56,11 +83,11 @@ export function NewTeamModal({
 
   return (
     <Modal
-      title={t("organizationModule.teamModal.title")}
+      title={isEdit ? t("organizationModule.teamModal.editTitle") : t("organizationModule.teamModal.title")}
       open={open}
       onCancel={() => { form.resetFields(); onClose(); }}
       onOk={() => { void handleOk(); }}
-      okText={t("organizationModule.teamModal.create")}
+      okText={isEdit ? t("organizationModule.teamModal.save") : t("organizationModule.teamModal.create")}
       cancelText={t("common.cancel")}
       confirmLoading={saving}
       destroyOnHidden

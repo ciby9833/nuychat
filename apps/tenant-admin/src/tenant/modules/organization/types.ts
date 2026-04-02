@@ -14,13 +14,13 @@ import type { AgentProfile, DepartmentItem, TeamItem } from "../../types";
 
 export type { AgentProfile, DepartmentItem, TeamItem };
 
-export type NewDepartmentFormValues = {
+export type DepartmentFormValues = {
   code: string;
   name: string;
   parentDepartmentId?: string;
 };
 
-export type NewTeamFormValues = {
+export type TeamFormValues = {
   departmentId: string;
   code: string;
   name: string;

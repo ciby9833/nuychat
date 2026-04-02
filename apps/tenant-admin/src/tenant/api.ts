@@ -718,6 +718,24 @@ export function createDepartment(input: {
   });
 }
 
+export function patchDepartment(departmentId: string, input: Partial<{
+  code: string;
+  name: string;
+  parentDepartmentId: string | null;
+  isActive: boolean;
+}>) {
+  return api<{ updated: boolean; departmentId: string }>(`/api/admin/departments/${departmentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteDepartment(departmentId: string) {
+  return api<{ deleted: boolean; departmentId: string }>(`/api/admin/departments/${departmentId}`, {
+    method: "DELETE"
+  });
+}
+
 export function listTeams(departmentId?: string) {
   const params = new URLSearchParams();
   if (departmentId) params.set("departmentId", departmentId);
@@ -735,6 +753,25 @@ export function createTeam(input: {
   return api<TeamItem>("/api/admin/teams", {
     method: "POST",
     body: JSON.stringify(input)
+  });
+}
+
+export function patchTeam(teamId: string, input: Partial<{
+  departmentId: string;
+  code: string;
+  name: string;
+  supervisorAgentId: string | null;
+  isActive: boolean;
+}>) {
+  return api<{ updated: boolean; teamId: string }>(`/api/admin/teams/${teamId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteTeam(teamId: string) {
+  return api<{ deleted: boolean; teamId: string }>(`/api/admin/teams/${teamId}`, {
+    method: "DELETE"
   });
 }
 

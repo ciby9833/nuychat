@@ -113,7 +113,7 @@ export class RoutingDecisionService {
         conversationStatus: selectedOwnerType === "human" ? "queued" : "open",
         queueStatus: selectedOwnerType === "human"
           ? humanDecision.status
-          : "resolved",
+          : "pending",
         handoffRequired: false,
         selectedOwnerType
       },

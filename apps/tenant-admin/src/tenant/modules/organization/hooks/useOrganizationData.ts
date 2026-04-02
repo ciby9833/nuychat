@@ -12,7 +12,15 @@ import { message } from "antd";
 import i18next from "i18next";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { addTeamMember, listAgents, listDepartments, listTeams, removeTeamMember } from "../../../api";
+import {
+  addTeamMember,
+  deleteDepartment,
+  deleteTeam,
+  listAgents,
+  listDepartments,
+  listTeams,
+  removeTeamMember
+} from "../../../api";
 import type { AgentProfile, DepartmentItem, TeamItem } from "../types";
 
 export function useOrganizationData() {
@@ -23,6 +31,8 @@ export function useOrganizationData() {
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
+  const [editingDepartment, setEditingDepartment] = useState<DepartmentItem | null>(null);
+  const [editingTeam, setEditingTeam] = useState<TeamItem | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -72,6 +82,29 @@ export function useOrganizationData() {
     }
   }, [reload]);
 
+  const handleDeleteDepartment = useCallback(async (department: DepartmentItem) => {
+    try {
+      await deleteDepartment(department.departmentId);
+      if (selectedDeptId === department.departmentId) {
+        setSelectedDeptId(null);
+      }
+      void message.success(i18next.t("organizationModule.messages.departmentDeleted"));
+      await reload();
+    } catch (err) {
+      void message.error((err as Error).message);
+    }
+  }, [reload, selectedDeptId]);
+
+  const handleDeleteTeam = useCallback(async (team: TeamItem) => {
+    try {
+      await deleteTeam(team.teamId);
+      void message.success(i18next.t("organizationModule.messages.teamDeleted"));
+      await reload();
+    } catch (err) {
+      void message.error((err as Error).message);
+    }
+  }, [reload]);
+
   return {
     departments,
     teams,
@@ -80,13 +113,19 @@ export function useOrganizationData() {
     selectedDeptId,
     showDeptModal,
     showTeamModal,
+    editingDepartment,
+    editingTeam,
     visibleTeams,
     selectedDept,
     setSelectedDeptId,
     setShowDeptModal,
     setShowTeamModal,
+    setEditingDepartment,
+    setEditingTeam,
     reload,
     handleRemoveMember,
-    handleAddMember
+    handleAddMember,
+    handleDeleteDepartment,
+    handleDeleteTeam
   };
 }

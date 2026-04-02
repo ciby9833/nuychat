@@ -12,12 +12,11 @@ import {
 import {
   listTenantSkillsForPlanning,
 } from "../agent-skills/skill-definition.service.js";
-import { suggestCapabilities } from "../agent-skills/skill-planner.service.js";
+import { smartPlanCapabilities } from "../agent-skills/skill-planner.service.js";
 import {
-  recordSkillExecutionTrace,
   recordSkillRun,
   validateCapabilitySuggestions,
-  validateToolExecutionAgainstCandidates
+  assertToolInCandidateScope
 } from "../agent-skills/planner-guard.service.js";
 import {
   clearConversationCapabilityState,
@@ -26,7 +25,6 @@ import {
 } from "../agent-skills/capability-state.service.js";
 import { resolveTenantAISettingsForScene } from "../ai/provider-config.service.js";
 import {
-  buildCustomerIntelligenceContext,
   appendWorkingMemory,
   upsertConversationInsight
 } from "../memory/customer-intelligence.service.js";
@@ -46,24 +44,20 @@ import {
 } from "../ai/pre-reply-policy.service.js";
 import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
 import {
-  buildFactSnapshot,
   buildVerifiedFactFromToolResult,
-  formatFactSnapshotForPrompt,
   summarizeSkillResult,
-  type FactSnapshot,
   type VerifiedFact
 } from "../ai/fact-layer.service.js";
 import { recordSkillExecutionAsTask } from "../tasks/ai-task-bridge.service.js";
+import type { VerifierVerdict } from "../ai/verifier/index.js";
+import type { ReviserOutcome } from "../ai/reviser/index.js";
+// ── Harness Engineering ──────────────────────────────────────────────────────
 import {
-  evaluatePointA,
-  evaluatePointB,
-  type VerifierVerdict
-} from "../ai/verifier/index.js";
-import {
-  revisePointA,
-  revisePointB,
-  type ReviserOutcome
-} from "../ai/reviser/index.js";
+  assembleSystemPrompt,
+  buildPromptLayers,
+  runContextPipeline,
+  SandboxState
+} from "../ai/harness/index.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -215,19 +209,25 @@ export class OrchestratorService {
       chatHistory
     });
 
+    // ── Smart Skill Planning ─────────────────────────────────────────────────
+    // Tier 1 (≤ 5 skills): skip LLM planner, use all as candidates.
+    // Tier 2 (> 5, keyword-filtered ≤ 5): rule-based pre-filter.
+    // Tier 3 (> 5, keyword can't narrow): call LLM planner.
     const capabilitySuggestions = continuationSkill
       ? {
           candidates: [{ skillSlug: continuationSkill.slug, reason: "continue_capability_state", confidence: 1 }],
           requiresClarification: false,
-          clarificationQuestion: null
+          clarificationQuestion: null,
+          plannerStrategy: "direct" as const
         }
       : hasRecentSkillContext
         ? {
             candidates: [],
             requiresClarification: false,
-            clarificationQuestion: null
+            clarificationQuestion: null,
+            plannerStrategy: "direct" as const
           }
-        : await suggestCapabilities({
+        : await smartPlanCapabilities({
             provider: aiSettings.provider,
             model,
             messages: chatHistory,
@@ -264,38 +264,26 @@ export class OrchestratorService {
         : validatedSuggestions.candidates[0]?.reason ?? "no_capability_selected",
       confidence: validatedSuggestions.candidates[0]?.confidence ?? 0,
       plannerTrace: {
-        capabilitySuggestions,
+        plannerStrategy: capabilitySuggestions.plannerStrategy,
+        capabilitySuggestions: {
+          candidates: capabilitySuggestions.candidates,
+          requiresClarification: capabilitySuggestions.requiresClarification
+        },
         candidateSkills: validatedSuggestions.candidates.map((item) => ({
           slug: item.skill.slug,
           reason: item.reason,
           confidence: item.confidence
         })),
-        selectedScriptKey
-      }
-    });
-    await recordSkillExecutionTrace(db, {
-      runId: skillRunId,
-      phase: "planner",
-      payload: {
-        capabilitySuggestions,
-        candidateSkillSlugs: candidateSkills.map((skill) => skill.slug),
-        availableSkillSlugs: plannerSkills.map((skill) => skill.slug),
+        availableSkillCount: plannerSkills.length,
         selectedSkillSlug: selectedSkill?.slug ?? null,
         selectedScriptKey
       }
     });
+    // Note: phase-level traces (formerly in skill_execution_traces) are now
+    // folded into plannerTrace above and verifier/reviserSteps below.
     if (candidateSkills.length === 0) {
-      await recordSkillExecutionTrace(db, {
-        runId: skillRunId,
-        phase: "guard",
-        payload: {
-          stage: "capability_suggestion",
-          reason: "no_candidate_capability",
-          fallbackAction: validatedSuggestions.requiresClarification ? "clarify" : "defer"
-        }
-      });
       if (validatedSuggestions.requiresClarification) {
-        const clarificationReply = validatedSuggestions.clarificationQuestion?.trim() || "请补充继续处理所需的信息。";
+        const clarificationReply = validatedSuggestions.clarificationQuestion?.trim() || "Could you please provide more details so I can assist you?";
         if (clarificationReply) {
           await db("skill_runs")
             .where({ run_id: skillRunId })
@@ -363,37 +351,32 @@ export class OrchestratorService {
     const skillsInvoked: string[] = [];
     const skillsBlocked: Array<{ name: string; reason: string }> = [];
 
-    // ── Build system prompt context ────────────────────────────────────────────
-    // Load long-term memory + Fact Layer snapshot in parallel; both feed
-    // into the system prompt so the LLM has: identity → history → fresh data → tasks.
-    const [memoryContext, factSnapshot] = await Promise.all([
-      buildCustomerIntelligenceContext(
-        db,
-        input.tenantId,
-        input.conversationId,
-        input.customerId,
-        {
-          excludeMemoryTypes: selectedSkill || continuationSkill ? ["unresolved_issue"] : []
-        }
-      ),
-      buildFactSnapshot(db, {
-        tenantId: input.tenantId,
-        conversationId: input.conversationId,
-        customerId: input.customerId
-      })
-    ]);
+    // ── Harness: Context Pipeline ──────────────────────────────────────────────
+    // Load customer intelligence + fact snapshot + conversation state in parallel.
+    // harness = prompt + context + experience + skills + sandbox
+    const harnessContext = await runContextPipeline(db, {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      customerId: input.customerId,
+      activeSkillSlug: (selectedSkill || continuationSkill)?.slug ?? null
+    });
+    const factSnapshot = harnessContext.factSnapshot;
+
     // Track in-flight verified facts accumulated during this orchestration run
     const runVerifiedFacts: VerifiedFact[] = [...factSnapshot.verifiedFacts];
 
-    const factLayerContext = formatFactSnapshotForPrompt(factSnapshot);
-    const systemPrompt = buildSystemPrompt({
-      basePrompt: SYSTEM_PROMPT_BASE,
-      memoryContext,
-      recentSkillContext: factLayerContext,
-      aiAgent,
-      candidateSkills
+    // ── Harness: Prompt Assembly ────────────────────────────────────────────────
+    const promptLayers = buildPromptLayers({ aiAgent });
+    const runtimePrompt = assembleSystemPrompt({
+      layers: promptLayers,
+      customerIntelligence: harnessContext.customerIntelligence,
+      factContext: harnessContext.factContext,
+      candidateSkills,
+      responseContract: ORCHESTRATOR_RESPONSE_CONTRACT
     });
-    const runtimePrompt = `${systemPrompt}\n\n${ORCHESTRATOR_RESPONSE_CONTRACT}`;
+
+    // ── Harness: Sandbox ────────────────────────────────────────────────────────
+    const sandbox = new SandboxState();
 
     try {
       const budgetGate = await assertTenantAIBudgetAllowsUsage(db, input.tenantId);
@@ -411,8 +394,6 @@ export class OrchestratorService {
         ...llmMessages
       ];
       const seenToolCalls = new Set<string>();
-      const verifierSteps: Array<{ point: string; loop?: number; verdict: VerifierVerdict }> = [];
-      const reviserSteps: Array<{ point: string; loop?: number; outcome: ReviserOutcome }> = [];
       const MAX_AGENT_LOOPS = 3;
 
       for (let loopIndex = 0; loopIndex < MAX_AGENT_LOOPS; loopIndex += 1) {
@@ -481,25 +462,14 @@ export class OrchestratorService {
               skillName: toolCall.function.name,
               args
             });
-            const plannerToolGuard = await validateToolExecutionAgainstCandidates(db, {
-              tenantId: input.tenantId,
-              conversationId: input.conversationId,
-              candidateSkills,
-              toolName: toolCall.function.name,
-              args
-            });
+            // Thin assertion: ensure the tool name is in candidate scope.
+            // buildRuntimeTools already limits exposed tools, but this catches
+            // any hallucinated tool names from the LLM.
+            const plannerToolGuard = assertToolInCandidateScope(candidateSkills, toolCall.function.name);
 
             if (gate.action === "allow" && plannerToolGuard.allowed) {
               const startedAt = Date.now();
               skillsInvoked.push(toolCall.function.name);
-              await recordSkillExecutionTrace(db, {
-                runId: skillRunId,
-                phase: "executor",
-                payload: {
-                  skillName: toolCall.function.name,
-                  args
-                }
-              });
               // Execute the capability script synchronously so the LLM receives
               // the actual structured result in Turn 2 and can synthesize a
               // natural-language reply in the customer's language.
@@ -562,7 +532,7 @@ export class OrchestratorService {
                 customerId: input.customerId,
                 skillName: toolCall.function.name,
                 args,
-                resultSummary: summarizeSkillResult(result) || "执行完成",
+                resultSummary: summarizeSkillResult(result) || "Execution completed",
                 creatorType: "ai",
                 creatorId: input.aiAgentId ?? null
               }).catch(() => null);
@@ -586,15 +556,7 @@ export class OrchestratorService {
                 },
                 policyMap: runtimePolicy
               });
-              await recordSkillExecutionTrace(db, {
-                runId: skillRunId,
-                phase: "guard",
-                payload: {
-                  skillName: toolCall.function.name,
-                  reason,
-                  args
-                }
-              });
+              // Guard block details are captured in skill_invocations.denyReason
               toolResult = JSON.stringify({
                 error: reason,
                 message: gate.action === "allow"
@@ -623,22 +585,8 @@ export class OrchestratorService {
           });
         }
 
-        // ── Verifier Point A: mid-loop evaluation ────────────────────────────
-        const pointAVerdict = evaluatePointA({
-          runVerifiedFacts,
-          factSnapshot,
-          loopIndex,
-          maxLoops: MAX_AGENT_LOOPS,
-          skillsInvoked,
-          skillsBlocked,
-          loopMessages,
-          chatHistory: llmMessages
-        });
-        verifierSteps.push({ point: "A", loop: loopIndex, verdict: pointAVerdict });
-
-        // ── Reviser Point A: inject hint if continue_tools ───────────────────
-        const pointARevision = revisePointA({
-          verdict: pointAVerdict,
+        // ── Harness Sandbox: Point A (mid-loop) ─────────────────────────────
+        const pointARevision = sandbox.runPointA({
           runVerifiedFacts,
           factSnapshot,
           loopIndex,
@@ -654,7 +602,6 @@ export class OrchestratorService {
             content: pointARevision.revisedContent
           });
         }
-        reviserSteps.push({ point: "A", loop: loopIndex, outcome: pointARevision });
       }
 
       if (lastToolCalls.length > 0 && !finalContent.trim()) {
@@ -699,21 +646,8 @@ export class OrchestratorService {
         defaultAction: "reply"
       });
 
-      // ── Verifier Point B: post-answer evaluation ───────────────────────────
-      const pointBVerdict = evaluatePointB({
-        finalContent,
-        proposedAction: aiDecision.action,
-        runVerifiedFacts,
-        factSnapshot,
-        skillsInvoked,
-        loopMessages,
-        chatHistory: llmMessages
-      });
-      verifierSteps.push({ point: "B", verdict: pointBVerdict });
-
-      // ── Reviser Point B: execute corrective action ─────────────────────────
-      const pointBRevision = await revisePointB({
-        verdict: pointBVerdict,
+      // ── Harness Sandbox: Point B (post-answer) ────────────────────────────
+      const pointBRevision = await sandbox.runPointB({
         finalContent,
         proposedAction: aiDecision.action,
         runVerifiedFacts,
@@ -728,9 +662,9 @@ export class OrchestratorService {
           maxTokens: aiSettings.maxTokens
         }
       });
-      reviserSteps.push({ point: "B", outcome: pointBRevision });
-      inputTokens += pointBRevision.extraInputTokens;
-      outputTokens += pointBRevision.extraOutputTokens;
+      const sandboxTokens = sandbox.snapshot.sandboxTokens;
+      inputTokens += sandboxTokens.input;
+      outputTokens += sandboxTokens.output;
 
       if (pointBRevision.modified) {
         if (pointBRevision.action === "handoff") {
@@ -1140,9 +1074,9 @@ function buildClarificationReply(input: {
     ? input.selectedSkill.inputSchema.required.map((item) => String(item)).filter(Boolean)
     : [];
   if (required.length > 0) {
-    return `请补充继续处理“${input.selectedSkill.name}”所需的信息：${required.join("、")}。`;
+    return `To proceed with "${input.selectedSkill.name}", please provide: ${required.join(", ")}.`;
   }
-  return `请补充继续处理“${input.selectedSkill.name}”所需的信息。`;
+  return `To proceed with "${input.selectedSkill.name}", please provide the required information.`;
 }
 
 function toToolParameters(inputSchema: Record<string, unknown> | undefined) {
@@ -1164,19 +1098,11 @@ function toToolParameters(inputSchema: Record<string, unknown> | undefined) {
     properties: {
       identifier: {
         type: "string" as const,
-        description: "Customer-provided identifier such as order number, waybill, tracking number, or bill code."
+        description: "Customer-provided reference identifier (e.g. order number, ticket ID, account number, booking code)."
       },
       query: {
         type: "string" as const,
         description: "The raw customer query or key lookup value."
-      },
-      trackingNumber: {
-        type: "string" as const,
-        description: "Tracking or waybill number if the customer provided one."
-      },
-      billCodes: {
-        type: "string" as const,
-        description: "Carrier bill code(s), comma-separated when multiple."
       },
       image_url: {
         type: "string" as const,

@@ -628,6 +628,106 @@ export async function orgAdminRoutes(app: FastifyInstance) {
     });
   });
 
+  app.patch("/api/admin/departments/:departmentId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { departmentId } = req.params as { departmentId: string };
+    const body = req.body as {
+      code?: string;
+      name?: string;
+      parentDepartmentId?: string | null;
+      isActive?: boolean;
+    };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const current = await trx("departments").where({ tenant_id: tenantId, department_id: departmentId }).first();
+      if (!current) throw app.httpErrors.notFound("Department not found");
+
+      const updates: Record<string, unknown> = {};
+      if (typeof body.code === "string") {
+        const code = body.code.trim().toLowerCase();
+        if (!code) throw app.httpErrors.badRequest("code cannot be empty");
+        updates.code = code;
+      }
+      if (typeof body.name === "string") {
+        const name = body.name.trim();
+        if (!name) throw app.httpErrors.badRequest("name cannot be empty");
+        updates.name = name;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "isActive")) {
+        updates.is_active = Boolean(body.isActive);
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "parentDepartmentId")) {
+        const parentDepartmentId = body.parentDepartmentId?.trim() || null;
+        if (parentDepartmentId === departmentId) {
+          throw app.httpErrors.badRequest("Department cannot be its own parent");
+        }
+        if (parentDepartmentId) {
+          const parent = await trx("departments").where({ tenant_id: tenantId, department_id: parentDepartmentId }).first();
+          if (!parent) throw app.httpErrors.notFound("Parent department not found");
+
+          const descendants = await trx
+            .withRecursive("department_tree", ["department_id"], (qb) => {
+              qb.select("department_id").from("departments").where({ tenant_id: tenantId, parent_department_id: departmentId })
+                .unionAll((recursive) => {
+                  recursive
+                    .select("d.department_id")
+                    .from("departments as d")
+                    .join("department_tree as dt", "d.parent_department_id", "dt.department_id")
+                    .where("d.tenant_id", tenantId);
+                });
+            })
+            .from("department_tree")
+            .select("department_id");
+
+          if (descendants.some((row) => row.department_id === parentDepartmentId)) {
+            throw app.httpErrors.badRequest("Department cannot be moved under its descendant");
+          }
+        }
+
+        updates.parent_department_id = parentDepartmentId;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return { updated: true, departmentId };
+      }
+
+      try {
+        await trx("departments")
+          .where({ tenant_id: tenantId, department_id: departmentId })
+          .update({ ...updates, updated_at: trx.fn.now() });
+      } catch (err) {
+        if (isUniqueViolation(err)) throw app.httpErrors.conflict("Department code already exists");
+        throw err;
+      }
+
+      return { updated: true, departmentId };
+    });
+  });
+
+  app.delete("/api/admin/departments/:departmentId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { departmentId } = req.params as { departmentId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const department = await trx("departments").where({ tenant_id: tenantId, department_id: departmentId }).first();
+      if (!department) throw app.httpErrors.notFound("Department not found");
+
+      const teamCountRow = await trx("teams")
+        .where({ tenant_id: tenantId, department_id: departmentId })
+        .count<{ count: string }>("team_id as count")
+        .first();
+
+      if (Number(teamCountRow?.count ?? 0) > 0) {
+        throw app.httpErrors.conflict("Department still has teams");
+      }
+
+      await trx("departments").where({ tenant_id: tenantId, department_id: departmentId }).del();
+      return { deleted: true, departmentId };
+    });
+  });
+
   app.post("/api/admin/teams", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
@@ -742,6 +842,83 @@ export async function orgAdminRoutes(app: FastifyInstance) {
         createdAt: team.created_at,
         updatedAt: team.updated_at
       }));
+    });
+  });
+
+  app.patch("/api/admin/teams/:teamId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { teamId } = req.params as { teamId: string };
+    const body = req.body as {
+      departmentId?: string;
+      code?: string;
+      name?: string;
+      supervisorAgentId?: string | null;
+      isActive?: boolean;
+    };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const current = await trx("teams").where({ tenant_id: tenantId, team_id: teamId }).first();
+      if (!current) throw app.httpErrors.notFound("Team not found");
+
+      const updates: Record<string, unknown> = {};
+      if (typeof body.departmentId === "string") {
+        const departmentId = body.departmentId.trim();
+        if (!departmentId) throw app.httpErrors.badRequest("departmentId cannot be empty");
+        const department = await trx("departments").where({ tenant_id: tenantId, department_id: departmentId }).first();
+        if (!department) throw app.httpErrors.notFound("Department not found");
+        updates.department_id = departmentId;
+      }
+      if (typeof body.code === "string") {
+        const code = body.code.trim().toLowerCase();
+        if (!code) throw app.httpErrors.badRequest("code cannot be empty");
+        updates.code = code;
+      }
+      if (typeof body.name === "string") {
+        const name = body.name.trim();
+        if (!name) throw app.httpErrors.badRequest("name cannot be empty");
+        updates.name = name;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "supervisorAgentId")) {
+        const supervisorAgentId = body.supervisorAgentId?.trim() || null;
+        if (supervisorAgentId) {
+          const supervisor = await trx("agent_profiles").where({ tenant_id: tenantId, agent_id: supervisorAgentId }).first();
+          if (!supervisor) throw app.httpErrors.notFound("Supervisor agent not found");
+        }
+        updates.supervisor_agent_id = supervisorAgentId;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "isActive")) {
+        updates.is_active = Boolean(body.isActive);
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return { updated: true, teamId };
+      }
+
+      try {
+        await trx("teams")
+          .where({ tenant_id: tenantId, team_id: teamId })
+          .update({ ...updates, updated_at: trx.fn.now() });
+      } catch (err) {
+        if (isUniqueViolation(err)) throw app.httpErrors.conflict("Team code already exists");
+        throw err;
+      }
+
+      return { updated: true, teamId };
+    });
+  });
+
+  app.delete("/api/admin/teams/:teamId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { teamId } = req.params as { teamId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const team = await trx("teams").where({ tenant_id: tenantId, team_id: teamId }).first();
+      if (!team) throw app.httpErrors.notFound("Team not found");
+
+      await trx("teams").where({ tenant_id: tenantId, team_id: teamId }).del();
+      return { deleted: true, teamId };
     });
   });
 

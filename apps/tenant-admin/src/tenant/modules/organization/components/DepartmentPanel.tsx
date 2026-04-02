@@ -7,8 +7,8 @@
  * - ../modals/NewDepartmentModal.tsx
  */
 
-import { PlusOutlined } from "@ant-design/icons";
-import { Button, Tag, Typography } from "antd";
+import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
+import { Button, Popconfirm, Space, Tag, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 
 import type { DepartmentItem, TeamItem } from "../types";
@@ -20,6 +20,8 @@ type DepartmentPanelProps = {
   selectedDeptId: string | null;
   onSelect: (departmentId: string | null) => void;
   onOpenCreate: () => void;
+  onEdit: (department: DepartmentItem) => void;
+  onDelete: (department: DepartmentItem) => void;
 };
 
 export function DepartmentPanel({
@@ -28,7 +30,9 @@ export function DepartmentPanel({
   teams,
   selectedDeptId,
   onSelect,
-  onOpenCreate
+  onOpenCreate,
+  onEdit,
+  onDelete
 }: DepartmentPanelProps) {
   const { t } = useTranslation();
   return (
@@ -70,7 +74,39 @@ export function DepartmentPanel({
                 </Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>{department.code}</Typography.Text>
               </div>
-              <Tag>{t("organizationModule.department.teamsCount", { count: deptTeams.length })}</Tag>
+              <Space size={8}>
+                <Tag>{t("organizationModule.department.teamsCount", { count: deptTeams.length })}</Tag>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  aria-label={t("organizationModule.department.edit")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onEdit(department);
+                  }}
+                />
+                <Popconfirm
+                  title={t("organizationModule.department.deleteConfirmTitle")}
+                  description={deptTeams.length > 0
+                    ? t("organizationModule.department.deleteBlockedHint", { count: deptTeams.length })
+                    : t("organizationModule.department.deleteConfirmDescription", { name: department.name })}
+                  okText={t("common.confirm")}
+                  cancelText={t("common.cancel")}
+                  okButtonProps={{ danger: true, disabled: deptTeams.length > 0 }}
+                  onConfirm={() => { onDelete(department); }}
+                  onPopupClick={(event) => { event.stopPropagation(); }}
+                >
+                  <Button
+                    danger
+                    type="text"
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    aria-label={t("organizationModule.department.delete")}
+                    onClick={(event) => { event.stopPropagation(); }}
+                  />
+                </Popconfirm>
+              </Space>
             </div>
           );
         })

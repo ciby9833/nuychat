@@ -32,7 +32,15 @@ export function OrganizationTab() {
             teams={data.teams}
             selectedDeptId={data.selectedDeptId}
             onSelect={data.setSelectedDeptId}
-            onOpenCreate={() => data.setShowDeptModal(true)}
+            onOpenCreate={() => {
+              data.setEditingDepartment(null);
+              data.setShowDeptModal(true);
+            }}
+            onEdit={(department) => {
+              data.setEditingDepartment(department);
+              data.setShowDeptModal(true);
+            }}
+            onDelete={(department) => { void data.handleDeleteDepartment(department); }}
           />
         </Col>
 
@@ -43,27 +51,45 @@ export function OrganizationTab() {
             selectedDeptId={data.selectedDeptId}
             selectedDept={data.selectedDept}
             agents={data.agents}
-            onOpenCreate={() => data.setShowTeamModal(true)}
+            onOpenCreate={() => {
+              data.setEditingTeam(null);
+              data.setShowTeamModal(true);
+            }}
             onAddMember={(teamId, agentId) => { void data.handleAddMember(teamId, agentId); }}
             onRemoveMember={(teamId, agentId) => { void data.handleRemoveMember(teamId, agentId); }}
+            onEdit={(team) => {
+              data.setEditingTeam(team);
+              data.setShowTeamModal(true);
+            }}
+            onDelete={(team) => { void data.handleDeleteTeam(team); }}
           />
         </Col>
       </Row>
 
       <NewDepartmentModal
         open={data.showDeptModal}
+        mode={data.editingDepartment ? "edit" : "create"}
         departments={data.departments}
-        onClose={() => data.setShowDeptModal(false)}
-        onCreated={() => { void data.reload(); }}
+        department={data.editingDepartment}
+        onClose={() => {
+          data.setShowDeptModal(false);
+          data.setEditingDepartment(null);
+        }}
+        onSubmitted={() => { void data.reload(); }}
       />
 
       <NewTeamModal
         open={data.showTeamModal}
+        mode={data.editingTeam ? "edit" : "create"}
         departments={data.departments}
         agents={data.agents}
+        team={data.editingTeam}
         defaultDepartmentId={data.selectedDeptId}
-        onClose={() => data.setShowTeamModal(false)}
-        onCreated={() => { void data.reload(); }}
+        onClose={() => {
+          data.setShowTeamModal(false);
+          data.setEditingTeam(null);
+        }}
+        onSubmitted={() => { void data.reload(); }}
       />
     </>
   );

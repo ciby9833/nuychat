@@ -3,6 +3,11 @@ export default {
     department: {
       listTitle: "Daftar departemen",
       create: "Departemen baru",
+      edit: "Edit departemen",
+      delete: "Hapus departemen",
+      deleteConfirmTitle: "Hapus departemen?",
+      deleteConfirmDescription: "Departemen \"{{name}}\" akan dihapus. Tindakan ini tidak bisa dibatalkan.",
+      deleteBlockedHint: "Departemen ini masih punya {{count}} tim. Hapus atau pindahkan timnya terlebih dulu.",
       all: "Semua departemen",
       teamsCount: "{{count}} tim",
       loading: "Memuat...",
@@ -12,6 +17,11 @@ export default {
       titleWithDept: "Tim {{name}}",
       titleAll: "Semua tim",
       create: "Tim baru",
+      edit: "Edit tim",
+      delete: "Hapus tim",
+      deleteConfirmTitle: "Hapus tim?",
+      deleteConfirmDescription: "Tim \"{{name}}\" akan dihapus dan relasi anggota juga akan dilepas.",
+      actions: "Aksi",
       emptyWithDept: "Belum ada tim di departemen ini. Buat tim baru.",
       empty: "Belum ada tim",
       team: "Tim",
@@ -24,7 +34,9 @@ export default {
     },
     deptModal: {
       title: "Departemen baru",
+      editTitle: "Edit departemen",
       create: "Buat",
+      save: "Simpan",
       code: "Kode departemen",
       codeRequired: "Masukkan kode departemen",
       codeExtra: "Huruf kecil dan tanda hubung, misalnya: after-sales",
@@ -35,7 +47,9 @@ export default {
     },
     teamModal: {
       title: "Tim baru",
+      editTitle: "Edit tim",
       create: "Buat",
+      save: "Simpan",
       department: "Departemen",
       departmentRequired: "Pilih departemen",
       code: "Kode tim",
@@ -48,7 +62,9 @@ export default {
     },
     messages: {
       memberRemoved: "Anggota dihapus",
-      memberAdded: "Anggota ditambahkan"
+      memberAdded: "Anggota ditambahkan",
+      departmentDeleted: "Departemen dihapus",
+      teamDeleted: "Tim dihapus"
     }
   }
 };

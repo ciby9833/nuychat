@@ -3,6 +3,11 @@ export default {
     department: {
       listTitle: "Departments",
       create: "New Department",
+      edit: "Edit Department",
+      delete: "Delete Department",
+      deleteConfirmTitle: "Delete department?",
+      deleteConfirmDescription: "Department \"{{name}}\" will be deleted. This action cannot be undone.",
+      deleteBlockedHint: "This department still has {{count}} teams. Delete or move them first.",
       all: "All Departments",
       teamsCount: "{{count}} teams",
       loading: "Loading...",
@@ -12,6 +17,11 @@ export default {
       titleWithDept: "{{name}} Teams",
       titleAll: "All Teams",
       create: "New Team",
+      edit: "Edit Team",
+      delete: "Delete Team",
+      deleteConfirmTitle: "Delete team?",
+      deleteConfirmDescription: "Team \"{{name}}\" will be deleted and member assignments will be removed.",
+      actions: "Actions",
       emptyWithDept: "No teams in this department yet. Create one.",
       empty: "No teams yet",
       team: "Team",
@@ -24,7 +34,9 @@ export default {
     },
     deptModal: {
       title: "New Department",
+      editTitle: "Edit Department",
       create: "Create",
+      save: "Save",
       code: "Department Code",
       codeRequired: "Please enter the department code",
       codeExtra: "Lowercase letters and hyphens, for example: after-sales",
@@ -35,7 +47,9 @@ export default {
     },
     teamModal: {
       title: "New Team",
+      editTitle: "Edit Team",
       create: "Create",
+      save: "Save",
       department: "Department",
       departmentRequired: "Please select a department",
       code: "Team Code",
@@ -48,7 +62,9 @@ export default {
     },
     messages: {
       memberRemoved: "Member removed",
-      memberAdded: "Member added"
+      memberAdded: "Member added",
+      departmentDeleted: "Department deleted",
+      teamDeleted: "Team deleted"
     }
   }
 };

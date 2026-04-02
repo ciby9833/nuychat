@@ -3,6 +3,11 @@ export default {
     department: {
       listTitle: "部门列表",
       create: "新建部门",
+      edit: "编辑部门",
+      delete: "删除部门",
+      deleteConfirmTitle: "删除部门？",
+      deleteConfirmDescription: "部门“{{name}}”将被删除，此操作不可恢复。",
+      deleteBlockedHint: "该部门下还有 {{count}} 个团队，请先删除或迁移团队。",
       all: "全部部门",
       teamsCount: "{{count}} 团队",
       loading: "加载中…",
@@ -12,6 +17,11 @@ export default {
       titleWithDept: "{{name}} 的团队",
       titleAll: "所有团队",
       create: "新建团队",
+      edit: "编辑团队",
+      delete: "删除团队",
+      deleteConfirmTitle: "删除团队？",
+      deleteConfirmDescription: "团队“{{name}}”将被删除，成员关联也会一并移除。",
+      actions: "操作",
       emptyWithDept: "该部门暂无团队，点击新建团队",
       empty: "暂无团队",
       team: "团队",
@@ -24,7 +34,9 @@ export default {
     },
     deptModal: {
       title: "新建部门",
+      editTitle: "编辑部门",
       create: "创建",
+      save: "保存",
       code: "部门编码",
       codeRequired: "请输入部门编码",
       codeExtra: "小写字母 + 连字符，如 after-sales",
@@ -35,7 +47,9 @@ export default {
     },
     teamModal: {
       title: "新建团队",
+      editTitle: "编辑团队",
       create: "创建",
+      save: "保存",
       department: "所属部门",
       departmentRequired: "请选择部门",
       code: "团队编码",
@@ -48,7 +62,9 @@ export default {
     },
     messages: {
       memberRemoved: "成员已移除",
-      memberAdded: "成员已加入"
+      memberAdded: "成员已加入",
+      departmentDeleted: "部门已删除",
+      teamDeleted: "团队已删除"
     }
   }
 };

@@ -40,7 +40,7 @@ export async function recordSkillExecutionAsTask(
   // No case → no task (tasks must belong to a case)
   if (!input.caseId) return null;
 
-  const title = `[${input.creatorType === "ai" ? "AI" : "座席"}] ${input.skillName}: ${input.resultSummary}`.slice(0, 200);
+  const title = `[${input.creatorType === "ai" ? "AI" : "Agent"}] ${input.skillName}: ${input.resultSummary}`.slice(0, 200);
 
   const [created] = await trx("case_tasks")
     .insert({
@@ -51,7 +51,7 @@ export async function recordSkillExecutionAsTask(
       task_type: "skill_execution",
       title,
       description: Object.keys(input.args).length > 0
-        ? `参数: ${JSON.stringify(input.args)}`.slice(0, 500)
+        ? `Args: ${JSON.stringify(input.args)}`.slice(0, 500)
         : null,
       status: "done",
       priority: "normal",

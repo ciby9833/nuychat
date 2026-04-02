@@ -7,8 +7,8 @@
  * - ../modals/NewTeamModal.tsx
  */
 
-import { PlusOutlined, TeamOutlined, UserDeleteOutlined } from "@ant-design/icons";
-import { Select, Space, Table, Tag, Tooltip, Typography, Button } from "antd";
+import { DeleteOutlined, EditOutlined, PlusOutlined, TeamOutlined, UserDeleteOutlined } from "@ant-design/icons";
+import { Button, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 
 import type { AgentProfile, DepartmentItem, TeamItem } from "../types";
@@ -22,6 +22,8 @@ type TeamsPanelProps = {
   onOpenCreate: () => void;
   onAddMember: (teamId: string, agentId: string) => void;
   onRemoveMember: (teamId: string, agentId: string) => void;
+  onEdit: (team: TeamItem) => void;
+  onDelete: (team: TeamItem) => void;
 };
 
 export function TeamsPanel({
@@ -32,7 +34,9 @@ export function TeamsPanel({
   agents,
   onOpenCreate,
   onAddMember,
-  onRemoveMember
+  onRemoveMember,
+  onEdit,
+  onDelete
 }: TeamsPanelProps) {
   const { t } = useTranslation();
   return (
@@ -123,6 +127,38 @@ export function TeamsPanel({
                 </Space>
               );
             }
+          },
+          {
+            title: t("organizationModule.teams.actions"),
+            key: "actions",
+            width: 120,
+            render: (_, row) => (
+              <Space size={4}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => { onEdit(row); }}
+                  aria-label={t("organizationModule.teams.edit")}
+                />
+                <Popconfirm
+                  title={t("organizationModule.teams.deleteConfirmTitle")}
+                  description={t("organizationModule.teams.deleteConfirmDescription", { name: row.name })}
+                  okText={t("common.confirm")}
+                  cancelText={t("common.cancel")}
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => { onDelete(row); }}
+                >
+                  <Button
+                    danger
+                    type="text"
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    aria-label={t("organizationModule.teams.delete")}
+                  />
+                </Popconfirm>
+              </Space>
+            )
           }
         ]}
       />
