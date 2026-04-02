@@ -11,11 +11,9 @@ import {
   normalizeStructuredMessage
 } from "../../shared/messaging/structured-message.js";
 import { findActiveWebChannelByPublicKey } from "../channel/channel.repository.js";
-import { ConversationService } from "../conversation/conversation.service.js";
 import { CustomerService } from "../customer/customer.service.js";
 
 const customerService = new CustomerService();
-const conversationService = new ConversationService();
 
 export async function webchatRoutes(app: FastifyInstance) {
   app.get("/webchat.js", async (_req, reply) => {
@@ -43,22 +41,9 @@ export async function webchatRoutes(app: FastifyInstance) {
         displayName: displayName ?? undefined
       });
 
-      const conversation = await conversationService.getOrCreateActiveConversation(trx, {
-        tenantId: channel.tenantId,
-        customerId: customer.customerId,
-        channelId: channel.channelId,
-        channelType: "web",
-        chatType: "direct",
-        chatExternalRef: customerRef,
-        chatName: displayName ?? undefined,
-        lastMessageAt: new Date(),
-        lastMessagePreview: undefined
-      });
-
       await patchWebClientMetadata(trx, {
         tenantId: channel.tenantId,
         customerId: customer.customerId,
-        conversationId: conversation.conversationId,
         client
       });
 
@@ -70,7 +55,7 @@ export async function webchatRoutes(app: FastifyInstance) {
         publicChannelKey: publicKey,
         customerRef,
         displayName,
-        conversationId: conversation.conversationId,
+        conversationId: null,
         client
       };
     });
@@ -567,7 +552,6 @@ async function patchWebClientMetadata(
   input: {
     tenantId: string;
     customerId: string;
-    conversationId: string;
     client: ReturnType<typeof readClientContext>;
   }
 ) {
@@ -580,13 +564,6 @@ async function patchWebClientMetadata(
     .where({ tenant_id: input.tenantId, customer_id: input.customerId })
     .update({
       metadata: trx.raw("COALESCE(metadata, '{}'::jsonb) || ?::jsonb", [patch]),
-      updated_at: trx.fn.now()
-    });
-
-  await trx("conversations")
-    .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
-    .update({
-      metadata: trx.raw("COALESCE(metadata, '{}'::jsonb) || ?::jsonb", [JSON.stringify({ webClient: input.client })]),
       updated_at: trx.fn.now()
     });
 }

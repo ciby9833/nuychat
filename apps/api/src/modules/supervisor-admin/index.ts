@@ -325,6 +325,12 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
           this.on("reserved_ai.ai_agent_id", "=", "qa.assigned_ai_agent_id").andOn("reserved_ai.tenant_id", "=", "qa.tenant_id");
         })
         .where({ "c.tenant_id": tenantId, "c.conversation_id": conversationId })
+        .whereExists(function ensureConversationHasMessages() {
+          this.select(trx.raw("1"))
+            .from("messages as m")
+            .whereRaw("m.tenant_id = c.tenant_id")
+            .andWhereRaw("m.conversation_id = c.conversation_id");
+        })
         .select(
           "c.conversation_id",
           "c.status",

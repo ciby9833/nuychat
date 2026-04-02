@@ -751,6 +751,12 @@ export async function buildSupervisorConversationWorkbenchRows(
       this.on("sw.conversation_id", "=", "c.conversation_id").andOn("sw.tenant_id", "=", "c.tenant_id");
     })
     .where("c.tenant_id", tenantId)
+    .whereExists(function ensureConversationHasMessages() {
+      this.select(trx.raw("1"))
+        .from("messages as m")
+        .whereRaw("m.tenant_id = c.tenant_id")
+        .andWhereRaw("m.conversation_id = c.conversation_id");
+    })
     .modify((qb) => {
       if (filters.departmentId) qb.andWhere("qa.department_id", filters.departmentId);
       if (filters.teamId) qb.andWhere("qa.team_id", filters.teamId);

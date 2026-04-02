@@ -31,7 +31,7 @@ export type WebchatSession = {
   publicChannelKey: string;
   customerRef: string;
   displayName: string | null;
-  conversationId: string;
+  conversationId: string | null;
   client: WebchatClientContext;
 };
 
