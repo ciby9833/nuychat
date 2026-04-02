@@ -7,8 +7,12 @@ import { CUSTOMER_MESSAGE_SENDER_TYPE } from "./message.constants.js";
  * Returns messages for a conversation, enriched with sender agent info
  * (display_name + employee_no) for outbound agent messages.
  */
-export async function getRecentMessages(tenantId: string, conversationId: string) {
-  return db("messages as m")
+export async function getRecentMessages(
+  tenantId: string,
+  conversationId: string,
+  executor?: Knex | Knex.Transaction
+) {
+  return resolveExecutor(executor)("messages as m")
     .leftJoin("agent_profiles as ap", "ap.agent_id", "m.sender_id")
     .leftJoin("tenant_memberships as tm", "tm.membership_id", "ap.membership_id")
     .leftJoin("messages as rm", "rm.message_id", "m.reply_to_message_id")
@@ -104,8 +108,12 @@ export async function updateMessageStatusByExternalId(
     : null;
 }
 
-export async function getConversationSummary(tenantId: string, conversationId: string) {
-  return db("conversations")
+export async function getConversationSummary(
+  tenantId: string,
+  conversationId: string,
+  executor?: Knex | Knex.Transaction
+) {
+  return resolveExecutor(executor)("conversations")
     .select("conversation_id", "channel_id", "channel_type", "chat_type", "chat_external_ref", "chat_name", "status", "assigned_agent_id")
     .where({
       tenant_id: tenantId,

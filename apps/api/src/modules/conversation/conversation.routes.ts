@@ -255,7 +255,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         app
       });
 
-      return getRecentMessages(tenantId, conversationId);
+      return getRecentMessages(tenantId, conversationId, trx);
     });
   });
 
@@ -1076,8 +1076,8 @@ export async function conversationRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Reply text, reaction, or attachments are required");
     }
 
-    const summary = await withTenantTransaction(tenantId, async () => {
-      return getConversationSummary(tenantId, conversationId);
+    const summary = await withTenantTransaction(tenantId, async (trx) => {
+      return getConversationSummary(tenantId, conversationId, trx);
     });
 
     if (!summary) throw app.httpErrors.notFound("Conversation not found");
