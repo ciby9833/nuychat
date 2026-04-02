@@ -6,6 +6,7 @@ import { getTenantContextById, type TenantContext } from "./tenant.repository.js
 import {
   assertActiveAccessPayload,
   getAgentIdByMembership,
+  roleUsesAgentProfile,
   type AccessPayload
 } from "../auth/auth-session.service.js";
 
@@ -67,7 +68,7 @@ async function resolveAuth(app: FastifyInstance, req: FastifyRequest) {
 
     const accessPayload = payload as AccessPayload;
     await assertActiveAccessPayload(accessPayload);
-    if (accessPayload.membershipId) {
+    if (roleUsesAgentProfile(accessPayload.role) && accessPayload.membershipId) {
       const liveAgentId = await getAgentIdByMembership(accessPayload.tenantId, accessPayload.membershipId);
       accessPayload.agentId = liveAgentId;
     }

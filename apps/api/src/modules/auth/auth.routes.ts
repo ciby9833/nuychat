@@ -14,6 +14,7 @@ import {
   listIdentitySessions,
   newJti,
   readRequestMeta,
+  roleUsesAgentProfile,
   refreshExpiryDate,
   revokeAllIdentitySessions,
   revokeIdentitySessionById,
@@ -129,7 +130,9 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
     const nextExpires = refreshExpiryDate(1); // 24-hour sessions
     await rotateRefreshToken(payload.sessionId, nextRefreshJti, nextExpires);
 
-    const agentId = await getAgentIdByMembership(membership.tenant_id, membership.membership_id);
+    const agentId = roleUsesAgentProfile(membership.role)
+      ? await getAgentIdByMembership(membership.tenant_id, membership.membership_id)
+      : null;
 
     const accessToken = await reply.jwtSign(
       {
@@ -222,7 +225,9 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
       const memberships = await getIdentityMemberships(payload.sub);
       await Promise.allSettled(
         memberships.map(async (m) => {
-          const aid = await getAgentIdByMembership(m.tenant_id, m.membership_id);
+          const aid = roleUsesAgentProfile(m.role)
+            ? await getAgentIdByMembership(m.tenant_id, m.membership_id)
+            : null;
           if (!aid) return;
           await withTenantTransaction(m.tenant_id, async (trx) => {
             await trx("agent_profiles")
@@ -280,7 +285,9 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
     const membershipAgentPairs = await Promise.all(
       memberships.map(async (m) => ({
         membershipId: m.membership_id,
-        agentId: await getAgentIdByMembership(m.tenant_id, m.membership_id)
+      agentId: roleUsesAgentProfile(m.role)
+        ? await getAgentIdByMembership(m.tenant_id, m.membership_id)
+        : null
       }))
     );
     const agentIdByMembership = new Map(membershipAgentPairs.map((item) => [item.membershipId, item.agentId]));
@@ -366,11 +373,15 @@ async function issueTokensForMembership(
     userAgent
   });
 
-  const agentId = await getAgentIdByMembership(activeMembership.tenant_id, activeMembership.membership_id);
+  const agentId = roleUsesAgentProfile(activeMembership.role)
+    ? await getAgentIdByMembership(activeMembership.tenant_id, activeMembership.membership_id)
+    : null;
   const membershipAgentPairs = await Promise.all(
     memberships.map(async (row) => ({
       membershipId: row.membership_id,
-      agentId: await getAgentIdByMembership(row.tenant_id, row.membership_id)
+      agentId: roleUsesAgentProfile(row.role)
+        ? await getAgentIdByMembership(row.tenant_id, row.membership_id)
+        : null
     }))
   );
   const agentIdByMembership = new Map(membershipAgentPairs.map((item) => [item.membershipId, item.agentId]));
