@@ -329,10 +329,11 @@ async function assignWithinScope(
   });
   const scopedCandidates = scopedEvaluations.filter((candidate) => candidate.eligible);
   const filteredCandidates = scopedCandidates.filter((candidate) => !input.excludeAgentIds.includes(candidate.agentId));
-  const chosenTeamId = input.teamId ?? chooseBestTeam(filteredCandidates);
+  const effectiveCandidates = filteredCandidates.length > 0 ? filteredCandidates : scopedCandidates;
+  const chosenTeamId = input.teamId ?? chooseBestTeam(effectiveCandidates);
   const teamAuditCandidates = buildTeamAuditCandidates(scopedEvaluations, chosenTeamId);
 
-  if (filteredCandidates.length === 0) {
+  if (effectiveCandidates.length === 0) {
     return {
       departmentId: input.departmentId,
       teamId: input.teamId,
@@ -350,13 +351,14 @@ async function assignWithinScope(
     };
   }
 
-  const teamCandidates = filteredCandidates.filter((candidate) => candidate.teamId === chosenTeamId);
+  const effectiveTeamId = chosenTeamId;
+  const teamCandidates = effectiveCandidates.filter((candidate) => candidate.teamId === effectiveTeamId);
   const selected = await chooseAgent(db, input.tenantId, input.strategy, teamCandidates);
   const teamScope = teamCandidates.find((candidate) => candidate.agentId === selected?.agentId) ?? teamCandidates[0];
 
   return {
     departmentId: teamScope?.departmentId ?? input.departmentId,
-    teamId: teamScope?.teamId ?? chosenTeamId ?? input.teamId,
+    teamId: teamScope?.teamId ?? effectiveTeamId ?? input.teamId,
     assignedAgentId: selected?.agentId ?? null,
     strategy: input.strategy,
     priority: input.priority,
@@ -372,15 +374,15 @@ async function assignWithinScope(
           candidateType: "agent" as const,
           candidateId: candidate.agentId,
           candidateLabel: `${candidate.teamName} / ${candidate.agentLabel}`,
-          stage: candidate.teamId === chosenTeamId ? "team_scope" : "eligible",
+          stage: candidate.teamId === effectiveTeamId ? "team_scope" : "eligible",
           accepted: candidate.agentId === selected?.agentId,
           rejectReason: candidate.agentId === selected?.agentId
             ? null
-            : input.excludeAgentIds.includes(candidate.agentId)
+            : input.excludeAgentIds.includes(candidate.agentId) && filteredCandidates.length > 0
               ? "excluded_for_reroute"
               : !candidate.eligible
                 ? candidate.rejectReason
-            : candidate.teamId !== chosenTeamId
+            : candidate.teamId !== effectiveTeamId
               ? "team_not_selected"
               : "not_selected_by_strategy",
           details: {
@@ -541,7 +543,6 @@ function isCandidateEligible(candidate: AgentCandidateRow, now: Date): boolean {
   if (candidate.activeBreak) return false;
   if (candidate.shiftStatus !== "scheduled") return false;
   if (candidate.maxConcurrency <= 0) return false;
-  if (candidate.activeAssignments >= candidate.maxConcurrency) return false;
   return isWithinShift(now, candidate.timezone, candidate.shiftDate, candidate.shiftStartTime, candidate.shiftEndTime);
 }
 
@@ -552,7 +553,6 @@ function explainCandidateIneligibleReason(candidate: AgentCandidateRow, now: Dat
     return "outside_shift_window";
   }
   if (candidate.maxConcurrency <= 0) return "agent_concurrency_disabled";
-  if (candidate.activeAssignments >= candidate.maxConcurrency) return "agent_concurrency_full";
   return null;
 }
 

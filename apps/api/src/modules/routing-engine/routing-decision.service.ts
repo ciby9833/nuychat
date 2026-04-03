@@ -55,7 +55,8 @@ export class RoutingDecisionService {
       target: policy.humanTarget,
       priority: matchedRule?.priority ?? 100,
       reason: selectedOwnerType === "human" ? "policy_selected_human" : "reserved_human_fallback",
-      auditSource: buildAuditSource(matchedRule)
+      auditSource: buildAuditSource(matchedRule),
+      excludeAgentIds: context.excludedAgentIds ?? []
     });
 
     const aiSelection = selectedOwnerType === "ai"
@@ -159,7 +160,8 @@ export class RoutingDecisionService {
         target: policy.humanTarget,
         priority: matchedRule?.priority ?? 100,
         reason: "agent_handoff_human_fallback",
-        auditSource: buildAuditSource(matchedRule)
+        auditSource: buildAuditSource(matchedRule),
+        excludeAgentIds: context.excludedAgentIds ?? []
       }),
       aiDispatchService.selectForTarget(db, {
         tenantId: context.tenantId,
@@ -257,7 +259,8 @@ export class RoutingDecisionService {
       target: policy.humanTarget,
       priority: matchedRule?.priority ?? 100,
       reason: "ai_handoff_human_dispatch",
-      auditSource: buildAuditSource(matchedRule)
+      auditSource: buildAuditSource(matchedRule),
+      excludeAgentIds: context.excludedAgentIds ?? []
     });
 
     if (!humanDecision.assignedAgentId) {
@@ -268,7 +271,8 @@ export class RoutingDecisionService {
         strategy: policy.humanTarget.assignmentStrategy ?? "balanced_new_case",
         priority: matchedRule?.priority ?? 100,
         reason: "ai_handoff_human_dispatch_any_available",
-        auditSource: buildAuditSource(matchedRule)
+        auditSource: buildAuditSource(matchedRule),
+        excludeAgentIds: context.excludedAgentIds ?? []
       });
       if (fallbackHumanDecision) {
         humanDecision = fallbackHumanDecision;
@@ -493,7 +497,8 @@ async function buildFallbackDecision(
     target: humanTarget,
     priority: matchedRule?.priority ?? 100,
     reason: "fallback_human_target",
-    auditSource: buildAuditSource(matchedRule)
+    auditSource: buildAuditSource(matchedRule),
+    excludeAgentIds: context.excludedAgentIds ?? []
   });
 
   return {

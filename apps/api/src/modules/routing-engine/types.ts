@@ -17,7 +17,16 @@ export type RoutingPlan = {
   caseId: string | null;
   segmentId: string | null;
   parentPlanId?: string | null;
-  triggerType: "inbound_message" | "reopen" | "ai_handoff" | "agent_handoff" | "manual_assign" | "manual_transfer" | "supervisor_transfer";
+  triggerType:
+    | "inbound_message"
+    | "reopen"
+    | "ai_handoff"
+    | "agent_handoff"
+    | "manual_assign"
+    | "manual_transfer"
+    | "supervisor_transfer"
+    | "assignment_accept_timeout"
+    | "subsequent_response_timeout";
   mode: RoutingPlanMode;
   action: RoutingPlanAction;
   currentOwner: {
@@ -131,6 +140,7 @@ export type RoutingContext = {
   currentHandlerId: string | null;
   assignedAgentId: string | null;
   preserveHumanOwner: boolean;
+  excludedAgentIds?: string[];
   existingAssignment: {
     departmentId: string | null;
     teamId: string | null;

@@ -11,6 +11,7 @@ export class RoutingContextService {
       customerId: string;
       channelType: string;
       channelId: string;
+      excludedAgentIds?: string[];
     }
   ): Promise<RoutingContext> {
     const [tenant, customer, conversation, assignment, intelligence] = await Promise.all([
@@ -105,6 +106,7 @@ export class RoutingContextService {
       currentHandlerId: currentCase.current_owner_id ?? conversation.current_handler_id ?? null,
       assignedAgentId: conversation.assigned_agent_id ?? null,
       preserveHumanOwner: currentCase.current_owner_type === "agent" && conversation.status === "human_active" && Boolean(conversation.assigned_agent_id),
+      excludedAgentIds: input.excludedAgentIds ?? [],
       existingAssignment: assignment
         ? {
             departmentId: assignment.department_id ?? null,
