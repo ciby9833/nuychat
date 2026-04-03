@@ -2,7 +2,7 @@ export default {
   slaModule: {
     config: {
       title: "Default SLA Configuration",
-      description: "Maintain one tenant-wide SLA baseline. The platform uses it for first response, assignment reassign, follow-up closure, and resolution timeout handling.",
+      description: "Maintain one tenant-wide SLA baseline. The platform uses it for first response, unaccepted assignment re-dispatch, subsequent response re-dispatch, and follow-up closure.",
       edit: "Edit",
       editTitle: "Edit Default SLA",
       save: "Save Configuration",
@@ -59,8 +59,7 @@ export default {
         firstResponse: "First response timeout",
         assignmentAccept: "Assignment accept timeout",
         subsequentResponse: "Subsequent response timeout",
-        followUp: "Follow-up timeout",
-        resolution: "Resolution timeout"
+        followUp: "Follow-up timeout"
       }
     },
     definitions: {

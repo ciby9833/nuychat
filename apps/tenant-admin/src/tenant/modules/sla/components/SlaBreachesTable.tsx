@@ -36,8 +36,6 @@ export function SlaBreachesTable({
         return t("slaModule.filter.metric.subsequentResponse");
       case "follow_up":
         return t("slaModule.filter.metric.followUp");
-      case "resolution":
-        return t("slaModule.filter.metric.resolution");
       default:
         return value;
     }

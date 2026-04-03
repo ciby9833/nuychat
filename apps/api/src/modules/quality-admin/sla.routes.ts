@@ -21,12 +21,10 @@ export async function registerSLAAdminRoutes(app: FastifyInstance) {
       subsequentResponseTargetSec?: number | null;
       subsequentResponseReassignWhen?: "always" | "owner_unavailable";
       followUpTargetSec?: number | null;
-      resolutionTargetSec?: number;
       firstResponseAction?: "alert" | "escalate";
       assignmentAcceptAction?: "alert" | "escalate" | "reassign";
       followUpAction?: "alert" | "escalate" | "reassign" | "close_case";
       followUpCloseMode?: "semantic" | "waiting_customer" | null;
-      resolutionAction?: "alert" | "escalate";
     };
 
     const firstResponseTargetSec = Number(body.firstResponseTargetSec ?? DEFAULT_SLA_CONFIG.firstResponseTargetSec);
@@ -42,11 +40,9 @@ export async function registerSLAAdminRoutes(app: FastifyInstance) {
       body.followUpTargetSec === null || body.followUpTargetSec === undefined
         ? null
         : Number(body.followUpTargetSec);
-    const resolutionTargetSec = Number(body.resolutionTargetSec ?? DEFAULT_SLA_CONFIG.resolutionTargetSec);
 
     if (
       firstResponseTargetSec <= 0 ||
-      resolutionTargetSec <= 0 ||
       (assignmentAcceptTargetSec !== null && assignmentAcceptTargetSec <= 0) ||
       (subsequentResponseTargetSec !== null && subsequentResponseTargetSec <= 0) ||
       (followUpTargetSec !== null && followUpTargetSec <= 0)
@@ -58,7 +54,6 @@ export async function registerSLAAdminRoutes(app: FastifyInstance) {
     const assignmentAcceptAction = body.assignmentAcceptAction ?? DEFAULT_SLA_CONFIG.assignmentAcceptAction;
     const subsequentResponseReassignWhen = body.subsequentResponseReassignWhen ?? DEFAULT_SLA_CONFIG.subsequentResponseReassignWhen;
     const followUpAction = body.followUpAction ?? DEFAULT_SLA_CONFIG.followUpAction;
-    const resolutionAction = body.resolutionAction ?? DEFAULT_SLA_CONFIG.resolutionAction;
     const followUpCloseMode =
       followUpAction === "close_case"
         ? (body.followUpCloseMode ?? DEFAULT_SLA_CONFIG.followUpCloseMode)
@@ -76,9 +71,6 @@ export async function registerSLAAdminRoutes(app: FastifyInstance) {
     if (!["alert", "escalate", "reassign", "close_case"].includes(followUpAction)) {
       throw app.httpErrors.badRequest("Invalid followUpAction");
     }
-    if (!["alert", "escalate"].includes(resolutionAction)) {
-      throw app.httpErrors.badRequest("Invalid resolutionAction");
-    }
     if (followUpCloseMode !== null && !["semantic", "waiting_customer"].includes(followUpCloseMode)) {
       throw app.httpErrors.badRequest("Invalid followUpCloseMode");
     }
@@ -90,12 +82,10 @@ export async function registerSLAAdminRoutes(app: FastifyInstance) {
         subsequentResponseTargetSec: subsequentResponseTargetSec === null ? null : Math.floor(subsequentResponseTargetSec),
         subsequentResponseReassignWhen,
         followUpTargetSec: followUpTargetSec === null ? null : Math.floor(followUpTargetSec),
-        resolutionTargetSec: Math.floor(resolutionTargetSec),
         firstResponseAction,
         assignmentAcceptAction,
         followUpAction,
-        followUpCloseMode,
-        resolutionAction
+        followUpCloseMode
       })
     );
   });

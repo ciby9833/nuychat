@@ -2,7 +2,7 @@ export default {
   slaModule: {
     config: {
       title: "Konfigurasi SLA Default",
-      description: "Kelola satu SLA default tingkat tenant. Platform akan memakai konfigurasi ini untuk respons pertama, reassign assignment, penutupan follow-up, dan timeout resolusi.",
+      description: "Kelola satu SLA default tingkat tenant. Platform akan memakai konfigurasi ini untuk respons pertama, re-dispatch assignment yang belum diambil, re-dispatch respons lanjutan, dan penutupan follow-up.",
       edit: "Edit",
       editTitle: "Edit SLA Default",
       save: "Simpan Konfigurasi",
@@ -59,8 +59,7 @@ export default {
         firstResponse: "Terlambat respons pertama",
         assignmentAccept: "Terlambat menerima assignment",
         subsequentResponse: "Terlambat respons lanjutan",
-        followUp: "Terlambat follow-up",
-        resolution: "Terlambat penyelesaian"
+        followUp: "Terlambat follow-up"
       }
     },
     definitions: {

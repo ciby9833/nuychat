@@ -165,9 +165,13 @@ function normalizeTriggerActions(raw: unknown, metric: SlaBreachMetric): SlaTrig
     const mode = typeof (item as { mode?: unknown }).mode === "string"
       ? ((item as { mode: string }).mode as FollowUpMonitorMode)
       : undefined;
+    const condition = typeof (item as { condition?: unknown }).condition === "string"
+      ? ((item as { condition: string }).condition as "always" | "owner_unavailable")
+      : undefined;
     actions.push({
       type,
-      ...(type === "close_case" && mode ? { mode } : {})
+      ...(type === "close_case" && mode ? { mode } : {}),
+      ...(type === "reassign" && condition ? { condition } : {})
     });
   }
   return actions;

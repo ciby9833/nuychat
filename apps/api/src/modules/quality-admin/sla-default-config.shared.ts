@@ -12,12 +12,10 @@ export type SlaDefaultConfigPayload = {
   subsequentResponseTargetSec: number | null;
   subsequentResponseReassignWhen: "always" | "owner_unavailable";
   followUpTargetSec: number | null;
-  resolutionTargetSec: number;
   firstResponseAction: "alert" | "escalate";
   assignmentAcceptAction: "alert" | "escalate" | "reassign";
   followUpAction: "alert" | "escalate" | "reassign" | "close_case";
   followUpCloseMode: "semantic" | "waiting_customer" | null;
-  resolutionAction: "alert" | "escalate";
 };
 
 export type SlaDefaultConfigRecord = SlaDefaultConfigPayload & {
@@ -32,12 +30,10 @@ export const DEFAULT_SLA_CONFIG: SlaDefaultConfigPayload = {
   subsequentResponseTargetSec: 300,
   subsequentResponseReassignWhen: "owner_unavailable",
   followUpTargetSec: 1800,
-  resolutionTargetSec: 7200,
   firstResponseAction: "alert",
   assignmentAcceptAction: "reassign",
   followUpAction: "close_case",
-  followUpCloseMode: "waiting_customer",
-  resolutionAction: "escalate"
+  followUpCloseMode: "waiting_customer"
 };
 
 export async function readSlaDefaultConfig(trx: Knex.Transaction, tenantId: string): Promise<SlaDefaultConfigRecord> {
@@ -63,7 +59,6 @@ export async function readSlaDefaultConfig(trx: Knex.Transaction, tenantId: stri
           definitionRow.follow_up_target_sec === null || definitionRow.follow_up_target_sec === undefined
             ? null
             : Number(definitionRow.follow_up_target_sec),
-        resolutionTargetSec: Number(definitionRow.resolution_target_sec ?? config.resolutionTargetSec),
         updatedAt: toIsoString(definitionRow.updated_at)
       }
     : {
@@ -72,7 +67,6 @@ export async function readSlaDefaultConfig(trx: Knex.Transaction, tenantId: stri
         assignmentAcceptTargetSec: config.assignmentAcceptTargetSec,
         subsequentResponseTargetSec: config.subsequentResponseTargetSec,
         followUpTargetSec: config.followUpTargetSec,
-        resolutionTargetSec: config.resolutionTargetSec,
         updatedAt: null
       };
 
@@ -84,7 +78,6 @@ export async function readSlaDefaultConfig(trx: Knex.Transaction, tenantId: stri
         subsequentResponseReassignWhen: firstReassignCondition(triggerRow.subsequent_response_actions, config.subsequentResponseReassignWhen),
         followUpAction: firstActionType(triggerRow.follow_up_actions, "follow_up", config.followUpAction) as SlaDefaultConfigPayload["followUpAction"],
         followUpCloseMode: firstCloseCaseMode(triggerRow.follow_up_actions, config.followUpCloseMode),
-        resolutionAction: firstActionType(triggerRow.resolution_actions, "resolution", config.resolutionAction) as SlaDefaultConfigPayload["resolutionAction"],
         updatedAt: toIsoString(triggerRow.updated_at)
       }
     : {
@@ -94,7 +87,6 @@ export async function readSlaDefaultConfig(trx: Knex.Transaction, tenantId: stri
         subsequentResponseReassignWhen: config.subsequentResponseReassignWhen,
         followUpAction: config.followUpAction,
         followUpCloseMode: config.followUpCloseMode,
-        resolutionAction: config.resolutionAction,
         updatedAt: null
       };
 
@@ -106,12 +98,10 @@ export async function readSlaDefaultConfig(trx: Knex.Transaction, tenantId: stri
     subsequentResponseTargetSec: definition.subsequentResponseTargetSec,
     subsequentResponseReassignWhen: triggerActions.subsequentResponseReassignWhen,
     followUpTargetSec: definition.followUpTargetSec,
-    resolutionTargetSec: definition.resolutionTargetSec,
     firstResponseAction: triggerActions.firstResponseAction,
-    assignmentAcceptAction: triggerActions.assignmentAcceptAction,
+    assignmentAcceptAction: definition.assignmentAcceptTargetSec ? "reassign" : triggerActions.assignmentAcceptAction,
     followUpAction: triggerActions.followUpAction,
     followUpCloseMode: triggerActions.followUpCloseMode,
-    resolutionAction: triggerActions.resolutionAction,
     updatedAt: definition.updatedAt && triggerActions.updatedAt
       ? (definition.updatedAt > triggerActions.updatedAt ? definition.updatedAt : triggerActions.updatedAt)
       : (definition.updatedAt ?? triggerActions.updatedAt)
@@ -123,6 +113,10 @@ export async function upsertSlaDefaultConfig(
   tenantId: string,
   input: SlaDefaultConfigPayload
 ): Promise<SlaDefaultConfigRecord> {
+  const assignmentAcceptAction =
+    input.assignmentAcceptTargetSec === null || input.assignmentAcceptTargetSec === undefined
+      ? "alert"
+      : "reassign";
   const definition = {
     tenant_id: tenantId,
     name: DEFAULT_DEFINITION_NAME,
@@ -140,7 +134,6 @@ export async function upsertSlaDefaultConfig(
       input.followUpTargetSec === null || input.followUpTargetSec === undefined
         ? null
         : Math.max(1, Math.floor(input.followUpTargetSec)),
-    resolution_target_sec: Math.max(1, Math.floor(input.resolutionTargetSec)),
     conditions: {},
     is_active: true,
     updated_at: trx.fn.now()
@@ -151,14 +144,13 @@ export async function upsertSlaDefaultConfig(
     name: DEFAULT_TRIGGER_POLICY_NAME,
     priority: "standard",
     first_response_actions: JSON.stringify([{ type: input.firstResponseAction }]),
-    assignment_accept_actions: JSON.stringify([{ type: input.assignmentAcceptAction }]),
+    assignment_accept_actions: JSON.stringify([{ type: assignmentAcceptAction }]),
     subsequent_response_actions: JSON.stringify([{ type: "reassign", condition: input.subsequentResponseReassignWhen }]),
     follow_up_actions: JSON.stringify(
       input.followUpAction === "close_case"
         ? [{ type: "close_case", mode: input.followUpCloseMode ?? "waiting_customer" }]
         : [{ type: input.followUpAction }]
     ),
-    resolution_actions: JSON.stringify([{ type: input.resolutionAction }]),
     conditions: JSON.stringify({}),
     is_active: true,
     updated_at: trx.fn.now()
@@ -250,7 +242,7 @@ async function resolveDefaultTriggerPolicyRow(trx: Knex.Transaction, tenantId: s
 function firstActionType(
   raw: unknown,
   metric: Parameters<typeof normalizeTriggerActionsBody>[1],
-  fallback: SlaDefaultConfigPayload["firstResponseAction" | "assignmentAcceptAction" | "followUpAction" | "resolutionAction"]
+  fallback: SlaDefaultConfigPayload["firstResponseAction" | "assignmentAcceptAction" | "followUpAction"]
 ) {
   return normalizeTriggerActionsBody(raw, metric)[0]?.type ?? fallback;
 }

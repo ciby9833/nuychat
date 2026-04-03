@@ -912,12 +912,10 @@ export function updateSlaDefaultConfig(input: {
   subsequentResponseTargetSec?: number | null;
   subsequentResponseReassignWhen?: "always" | "owner_unavailable";
   followUpTargetSec?: number | null;
-  resolutionTargetSec: number;
   firstResponseAction: "alert" | "escalate";
   assignmentAcceptAction: "alert" | "escalate" | "reassign";
   followUpAction: "alert" | "escalate" | "reassign" | "close_case";
   followUpCloseMode?: "semantic" | "waiting_customer" | null;
-  resolutionAction: "alert" | "escalate";
 }) {
   return api<SlaDefaultConfig>("/api/admin/sla/default-config", {
     method: "PUT",

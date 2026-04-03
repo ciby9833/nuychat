@@ -66,12 +66,10 @@ export function useSlaData() {
         subsequentResponseTargetSec: values.subsequentResponseTargetSec,
         subsequentResponseReassignWhen: values.subsequentResponseReassignWhen,
         followUpTargetSec: values.followUpTargetSec,
-        resolutionTargetSec: defaultConfig.resolutionTargetSec,
         firstResponseAction: defaultConfig.firstResponseAction,
-        assignmentAcceptAction: defaultConfig.assignmentAcceptAction,
+        assignmentAcceptAction: values.assignmentAcceptTargetSec ? "reassign" : "alert",
         followUpAction: defaultConfig.followUpAction,
-        followUpCloseMode: values.followUpCloseMode,
-        resolutionAction: defaultConfig.resolutionAction
+        followUpCloseMode: values.followUpCloseMode
       });
       setDefaultConfig(saved);
       syncForm(saved);

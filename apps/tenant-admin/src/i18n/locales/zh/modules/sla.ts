@@ -2,7 +2,7 @@ export default {
   slaModule: {
     config: {
       title: "默认 SLA 配置",
-      description: "租户只维护一套默认时效与异常动作。系统会用这套配置驱动首响、未接手重分配、跟进关闭与解决超时。",
+      description: "租户只维护一套默认时效与异常动作。系统会用这套配置驱动首响、未接手重分配、后续回复重分配与跟进关闭。",
       edit: "编辑",
       editTitle: "编辑默认 SLA",
       save: "保存配置",
@@ -59,8 +59,7 @@ export default {
         firstResponse: "首响超时",
         assignmentAccept: "未接手超时",
         subsequentResponse: "后续回复超时",
-        followUp: "跟进超时",
-        resolution: "解决超时"
+        followUp: "跟进超时"
       }
     },
     definitions: {
