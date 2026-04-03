@@ -39,7 +39,6 @@ export function AgentsTab() {
               <AgentsPane
                 agents={data.agents}
                 members={data.members}
-                groups={data.groups}
                 loading={data.loading}
                 onReload={() => { void data.load(); }}
                 onEnable={() => setShowEnableAgentModal(true)}

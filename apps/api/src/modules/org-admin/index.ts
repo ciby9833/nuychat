@@ -418,20 +418,6 @@ export async function orgAdminRoutes(app: FastifyInstance) {
 
       if (agents.length === 0) return [];
 
-      const agentIds = agents.map((a) => a.agent_id as string);
-      const skills = await trx("agent_skills as ags")
-        .join("skill_groups as sg", "sg.skill_group_id", "ags.skill_group_id")
-        .whereIn("ags.agent_id", agentIds)
-        .where({ "ags.is_active": true })
-        .select("ags.agent_id", "sg.skill_group_id", "sg.code", "sg.name", "ags.proficiency_level", "ags.can_handle_vip");
-
-      const skillsByAgent = skills.reduce<Record<string, typeof skills>>((acc, skill) => {
-        const id = skill.agent_id as string;
-        if (!acc[id]) acc[id] = [];
-        acc[id]!.push(skill);
-        return acc;
-      }, {});
-
       return agents.map((a) => ({
         email: a.email,
         role: a.role,
@@ -442,8 +428,7 @@ export async function orgAdminRoutes(app: FastifyInstance) {
         allowAiAssist: a.allow_ai_assist as boolean,
         employeeNo: (a.employee_no as string | null) ?? null,
         status: (a.presence_state as string | null) ?? "offline",
-        lastSeenAt: (a.last_heartbeat_at as string | null) ?? null,
-        skillGroups: skillsByAgent[a.agent_id as string] ?? []
+        lastSeenAt: (a.last_heartbeat_at as string | null) ?? null
       }));
     });
   });
@@ -512,49 +497,6 @@ export async function orgAdminRoutes(app: FastifyInstance) {
 
       await trx("agent_profiles").where({ tenant_id: tenantId, agent_id: agentId }).del();
       return { removed: true, agentId };
-    });
-  });
-
-  app.post("/api/admin/agents/:agentId/skills", async (req) => {
-    const tenantId = req.tenant?.tenantId;
-    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-    const { agentId } = req.params as { agentId: string };
-    const body = req.body as { skillGroupId?: string; proficiencyLevel?: number; canHandleVip?: boolean };
-    if (!body.skillGroupId) throw app.httpErrors.badRequest("skillGroupId is required");
-
-    return withTenantTransaction(tenantId, async (trx) => {
-      const skillGroup = await trx("skill_groups").where({ tenant_id: tenantId, skill_group_id: body.skillGroupId }).first();
-      if (!skillGroup) throw app.httpErrors.notFound("Skill group not found");
-
-      await trx("agent_skills")
-        .insert({
-          tenant_id: tenantId,
-          agent_id: agentId,
-          skill_group_id: body.skillGroupId,
-          proficiency_level: body.proficiencyLevel ?? 1,
-          can_handle_vip: body.canHandleVip ?? false,
-          is_active: true
-        })
-        .onConflict(["agent_id", "skill_group_id"])
-        .merge({
-          is_active: true,
-          proficiency_level: body.proficiencyLevel ?? 1,
-          can_handle_vip: body.canHandleVip ?? false,
-          updated_at: trx.fn.now()
-        });
-
-      return { assigned: true };
-    });
-  });
-
-  app.delete("/api/admin/agents/:agentId/skills/:skillGroupId", async (req) => {
-    const tenantId = req.tenant?.tenantId;
-    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-    const { agentId, skillGroupId } = req.params as { agentId: string; skillGroupId: string };
-
-    return withTenantTransaction(tenantId, async (trx) => {
-      await trx("agent_skills").where({ tenant_id: tenantId, agent_id: agentId, skill_group_id: skillGroupId }).update({ is_active: false, updated_at: trx.fn.now() });
-      return { removed: true };
     });
   });
 

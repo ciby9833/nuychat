@@ -28,9 +28,6 @@ export async function up(knex: Knex): Promise<void> {
         ...(coalesceString(serviceTarget.teamCode, humanTarget.teamCode, actions.targetTeamCode)
           ? { teamCode: coalesceString(serviceTarget.teamCode, humanTarget.teamCode, actions.targetTeamCode) }
           : {}),
-        ...(coalesceString(serviceTarget.skillGroupCode, humanTarget.skillGroupCode, actions.targetSkillGroupCode)
-          ? { skillGroupCode: coalesceString(serviceTarget.skillGroupCode, humanTarget.skillGroupCode, actions.targetSkillGroupCode) }
-          : {})
       },
       ...(coalesceHumanStrategy(actions.humanStrategy, humanTarget.assignmentStrategy, actions.assignmentStrategy)
         ? { humanStrategy: coalesceHumanStrategy(actions.humanStrategy, humanTarget.assignmentStrategy, actions.assignmentStrategy) }

@@ -116,9 +116,7 @@ export function createRoutingWorker() {
           status: "started",
           payload: {
             aiAgentId: plan.target.aiAgentId,
-            aiAgentName: plan.target.aiAgentName,
-            moduleId: plan.target.moduleId,
-            skillGroupId: plan.target.skillGroupId
+            aiAgentName: plan.target.aiAgentName
           }
         });
       });
@@ -165,8 +163,6 @@ export function createRoutingWorker() {
             tenantId,
             plannedTarget: {
               assignedAgentId: plan.fallback?.agentId ?? null,
-              moduleId: plan.fallback?.moduleId ?? plan.target.moduleId,
-              skillGroupId: plan.fallback?.skillGroupId ?? plan.target.skillGroupId,
               departmentId: plan.fallback?.departmentId ?? plan.target.departmentId,
               teamId: plan.fallback?.teamId ?? plan.target.teamId,
               strategy: (plan.fallback?.strategy ?? plan.target.strategy) as ("round_robin" | "least_busy" | "sticky"),
@@ -217,8 +213,8 @@ export function createRoutingWorker() {
             customerId,
             channelType,
             caseId: conversation.current_case_id as string | null,
-            moduleId: plan.target.moduleId,
-            skillGroupId: plan.target.skillGroupId,
+            moduleId: null,
+            skillGroupId: null,
             actorType: "ai",
             preferredSkillNames: parsePreferredSkills(preferences?.preferred_skills),
             aiAgentId: plan.target.aiAgentId
@@ -366,8 +362,6 @@ export function createRoutingWorker() {
             tenantId,
             plannedTarget: {
               assignedAgentId: plan.fallback?.agentId ?? null,
-              moduleId: plan.fallback?.moduleId ?? plan.target.moduleId,
-              skillGroupId: plan.fallback?.skillGroupId ?? plan.target.skillGroupId,
               departmentId: plan.fallback?.departmentId ?? plan.target.departmentId,
               teamId: plan.fallback?.teamId ?? plan.target.teamId,
               strategy: (plan.fallback?.strategy ?? plan.target.strategy) as ("round_robin" | "least_busy" | "sticky"),
@@ -446,8 +440,6 @@ function parsePreferredSkills(value: unknown): string[] {
 }
 
 type ReservedHumanTarget = {
-  moduleId: string | null;
-  skillGroupId: string | null;
   departmentId: string | null;
   teamId: string | null;
   assignedAgentId: string | null;
@@ -506,8 +498,6 @@ async function releaseConversationToHumanQueue(input: {
           }
         });
         return {
-          moduleId: handoffPlan.target.moduleId,
-          skillGroupId: handoffPlan.target.skillGroupId,
           departmentId: handoffPlan.target.departmentId,
           teamId: handoffPlan.target.teamId,
           assignedAgentId: handoffPlan.target.agentId,
@@ -577,8 +567,6 @@ async function releaseConversationToHumanQueue(input: {
     await trx("queue_assignments")
       .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
       .update({
-        module_id: resolvedHandoffTarget.moduleId,
-        skill_group_id: resolvedHandoffTarget.skillGroupId,
         department_id: resolvedHandoffTarget.departmentId,
         team_id: resolvedHandoffTarget.teamId,
         assigned_agent_id: resolvedHandoffTarget.assignedAgentId,
@@ -617,8 +605,6 @@ async function resolveReservedHumanTarget(
     tenantId: string;
     plannedTarget: {
       assignedAgentId: string | null;
-      moduleId: string | null;
-      skillGroupId: string | null;
       departmentId: string | null;
       teamId: string | null;
       strategy: "round_robin" | "least_busy" | "sticky";
@@ -628,8 +614,6 @@ async function resolveReservedHumanTarget(
 ): Promise<ReservedHumanTarget> {
   if (input.plannedTarget.assignedAgentId) {
     return {
-      moduleId: input.plannedTarget.moduleId,
-      skillGroupId: input.plannedTarget.skillGroupId,
       departmentId: input.plannedTarget.departmentId,
       teamId: input.plannedTarget.teamId,
       assignedAgentId: input.plannedTarget.assignedAgentId,
@@ -640,8 +624,6 @@ async function resolveReservedHumanTarget(
     };
   }
   return {
-    moduleId: input.plannedTarget.moduleId,
-    skillGroupId: input.plannedTarget.skillGroupId,
     departmentId: input.plannedTarget.departmentId,
     teamId: input.plannedTarget.teamId,
     assignedAgentId: null,

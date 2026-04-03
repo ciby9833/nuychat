@@ -224,8 +224,6 @@ export function createInboundWorker() {
             mode: routingPlan.mode,
             action: routingPlan.action,
             selectedOwnerType: routingPlan.statusPlan.selectedOwnerType,
-            moduleId: routingPlan.target.moduleId,
-            skillGroupId: routingPlan.target.skillGroupId,
             departmentId: routingPlan.target.departmentId,
             teamId: routingPlan.target.teamId,
             assignedAgentId: routingPlan.target.agentId,

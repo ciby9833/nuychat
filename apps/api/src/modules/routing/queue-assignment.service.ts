@@ -6,8 +6,6 @@ export class QueueAssignmentService {
     input: {
       tenantId: string;
       conversationId: string;
-      moduleId: string | null;
-      skillGroupId: string | null;
       departmentId: string | null;
       teamId: string | null;
       assignedAgentId: string | null;
@@ -22,8 +20,6 @@ export class QueueAssignmentService {
       .insert({
         tenant_id: input.tenantId,
         conversation_id: input.conversationId,
-        module_id: input.moduleId,
-        skill_group_id: input.skillGroupId,
         department_id: input.departmentId,
         team_id: input.teamId,
         assigned_agent_id: input.assignedAgentId,
@@ -35,8 +31,6 @@ export class QueueAssignmentService {
       })
       .onConflict(["conversation_id"])
       .merge({
-        module_id: input.moduleId,
-        skill_group_id: input.skillGroupId,
         department_id: input.departmentId,
         team_id: input.teamId,
         assigned_agent_id: input.assignedAgentId,
@@ -55,8 +49,6 @@ export class QueueAssignmentService {
       event_type: "queue.assignment",
       actor_type: "system",
       payload: {
-        moduleId: input.moduleId,
-        skillGroupId: input.skillGroupId,
         departmentId: input.departmentId,
         teamId: input.teamId,
         assignedAgentId: input.assignedAgentId,

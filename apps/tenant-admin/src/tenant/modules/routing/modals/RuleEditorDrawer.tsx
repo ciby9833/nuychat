@@ -7,7 +7,7 @@ import { Button, Col, Divider, Drawer, Form, Input, InputNumber, Row, Select, Sw
 import { useTranslation } from "react-i18next";
 import { useEffect, useMemo } from "react";
 
-import type { ChannelConfig, DepartmentItem, RoutingRule, SkillGroup, TeamItem } from "../../../types";
+import type { ChannelConfig, DepartmentItem, RoutingRule, TeamItem } from "../../../types";
 import { readAiStrategy, readExecutionMode, readHumanStrategy, readServiceTarget } from "../helpers";
 import type { RuleFormValues } from "../types";
 import { AI_STRATEGY_OPTIONS, CHANNEL_OPTIONS, EXECUTION_MODE_OPTIONS, LANGUAGE_OPTIONS, STRATEGY_OPTIONS, TIER_OPTIONS } from "../types";
@@ -19,7 +19,6 @@ export function RuleEditorDrawer({
   channels,
   departments,
   teams,
-  groups,
   onClose,
   onSubmit
 }: {
@@ -29,7 +28,6 @@ export function RuleEditorDrawer({
   channels: ChannelConfig[];
   departments: DepartmentItem[];
   teams: TeamItem[];
-  groups: SkillGroup[];
   onClose: () => void;
   onSubmit: (values: RuleFormValues) => Promise<void>;
 }) {
@@ -51,7 +49,6 @@ export function RuleEditorDrawer({
       executionMode: rule ? readExecutionMode(rule) : "hybrid",
       targetDepartmentId: serviceTarget?.targetDepartmentId,
       targetTeamId: serviceTarget?.targetTeamId,
-      targetSkillGroupCode: serviceTarget?.targetSkillGroupCode,
       assignmentStrategy: rule ? readHumanStrategy(rule) : "balanced_new_case",
       aiAssignmentStrategy: rule ? readAiStrategy(rule) : "least_busy",
       isActive: rule?.is_active ?? true
@@ -67,11 +64,6 @@ export function RuleEditorDrawer({
     if (!selectedDepartmentId) return teams;
     return teams.filter((team) => team.departmentId === selectedDepartmentId);
   }, [teams, selectedDepartmentId]);
-
-  const activeGroups = useMemo(
-    () => groups.filter((group) => group.is_active).map((group) => ({ value: group.code, label: `${group.name} (${group.code})` })),
-    [groups]
-  );
 
   const channelInstanceOptions = useMemo(() => {
     const filtered = selectedChannelType
@@ -236,23 +228,10 @@ export function RuleEditorDrawer({
         </Row>
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item label="技能组" name="targetSkillGroupCode">
-              <Select
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                options={activeGroups}
-                placeholder="不指定则由系统自动选择最合适技能组"
-              />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
             <Form.Item label="人工分配策略" name="assignmentStrategy" rules={[{ required: true }]}>
               <Select options={STRATEGY_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))} />
             </Form.Item>
           </Col>
-        </Row>
-        <Row gutter={16}>
           <Col span={12}>
             <Form.Item label="AI 分配策略" name="aiAssignmentStrategy" rules={[{ required: true }]}>
               <Select options={AI_STRATEGY_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))} />

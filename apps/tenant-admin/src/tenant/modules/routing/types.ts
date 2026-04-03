@@ -3,28 +3,9 @@
  * 文件职责: 维护路由模块表单类型与选项常量。
  * 主要交互文件:
  * - ./helpers.ts
- * - ./components/ModuleTable.tsx
  * - ./components/RuleTable.tsx
  * - ./modals/RuleEditorDrawer.tsx
- * - ./modals/ModuleEditorModal.tsx
- * - ./modals/SkillGroupEditorModal.tsx
  */
-
-export type ModuleFormValues = {
-  code: string;
-  name: string;
-  description?: string;
-  operatingMode: "human_first" | "ai_first" | "ai_autonomous" | "workflow_first";
-  isActive: boolean;
-};
-
-export type SkillGroupFormValues = {
-  moduleId: string;
-  code: string;
-  name: string;
-  priority: number;
-  isActive: boolean;
-};
 
 export type RuleFormValues = {
   name: string;
@@ -36,7 +17,6 @@ export type RuleFormValues = {
   executionMode: "ai_first" | "human_first" | "hybrid";
   targetDepartmentId?: string;
   targetTeamId?: string;
-  targetSkillGroupCode?: string;
   assignmentStrategy: "round_robin" | "least_busy" | "balanced_new_case" | "sticky";
   aiAssignmentStrategy: "round_robin" | "least_busy" | "sticky";
   isActive: boolean;
@@ -72,13 +52,6 @@ export const TIER_OPTIONS = [
   { value: "premium", label: "Premium" },
   { value: "standard", label: "Standard" }
 ];
-
-export const MODULE_MODE_OPTIONS = [
-  { value: "ai_first", labelKey: "routing.options.moduleMode.ai_first" },
-  { value: "human_first", labelKey: "routing.options.moduleMode.human_first" },
-  { value: "ai_autonomous", labelKey: "routing.options.moduleMode.ai_autonomous" },
-  { value: "workflow_first", labelKey: "routing.options.moduleMode.workflow_first" }
-] as const;
 
 export const EXECUTION_MODE_OPTIONS = [
   { value: "hybrid", labelKey: "routing.options.executionMode.hybrid" },

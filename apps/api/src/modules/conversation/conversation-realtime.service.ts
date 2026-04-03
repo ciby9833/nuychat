@@ -18,8 +18,7 @@ export async function buildConversationUpdatedSnapshot(
       "c.assigned_agent_id",
       "c.last_message_preview",
       "c.unread_count",
-      "qa.status as queue_status",
-      "qa.skill_group_id"
+      "qa.status as queue_status"
     )
     .where({
       "c.tenant_id": tenantId,
@@ -31,7 +30,6 @@ export async function buildConversationUpdatedSnapshot(
       last_message_preview: string | null;
       unread_count: number | string | null;
       queue_status: string | null;
-      skill_group_id: string | null;
     }>();
 
   return {
@@ -39,8 +37,7 @@ export async function buildConversationUpdatedSnapshot(
     queueStatus: row?.queue_status ?? undefined,
     assignedAgentId: row?.assigned_agent_id ?? null,
     lastMessagePreview: row?.last_message_preview ?? null,
-    unreadCount: Number(row?.unread_count ?? 0),
-    skillGroupId: row?.skill_group_id ?? null
+    unreadCount: Number(row?.unread_count ?? 0)
   };
 }
 

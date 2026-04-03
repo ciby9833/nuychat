@@ -116,7 +116,6 @@ export async function conversationRoutes(app: FastifyInstance) {
           "c.assigned_agent_id",
           "cc.current_owner_type",
           "cc.current_owner_id",
-          "qa.skill_group_id",
           "asm.display_name as assigned_agent_name",
           "asm.employee_no as assigned_agent_employee_no"
         )
@@ -214,8 +213,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           "cu.tags as customer_tags",
           "cu.metadata as customer_metadata",
           "qa.status as queue_status",
-          "c.assigned_agent_id",
-          "qa.skill_group_id"
+          "c.assigned_agent_id"
         )
         .select(trx.raw("coalesce(uc.unread_count, 0)::int as unread_count"))
         .where({
@@ -385,8 +383,8 @@ export async function conversationRoutes(app: FastifyInstance) {
 
       const assignment = await trx("queue_assignments")
         .where({ tenant_id: tenantId, conversation_id: conversationId })
-        .select("module_id", "skill_group_id")
-        .first<{ module_id: string | null; skill_group_id: string | null }>();
+        .select("conversation_id")
+        .first<{ conversation_id: string }>();
 
       const pref = await trx("conversation_skill_preferences")
         .where({ tenant_id: tenantId, conversation_id: conversationId })
@@ -397,7 +395,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         tenantId,
         conversationId,
         actorType,
-        moduleId: assignment?.module_id ?? null,
+        moduleId: null,
         preferredSkills: parseJsonStringArray(pref?.preferred_skills)
       });
 
@@ -1196,8 +1194,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           selectedOwnerType: routingPlan.statusPlan.selectedOwnerType,
           aiAgentId: routingPlan.target.aiAgentId,
           aiAgentName: routingPlan.target.aiAgentName,
-          fallbackAgentId: routingPlan.fallback?.agentId ?? null,
-          fallbackSkillGroupId: routingPlan.fallback?.skillGroupId ?? null
+          fallbackAgentId: routingPlan.fallback?.agentId ?? null
         },
         decisionReason: routingPlan.trace.decision.reason,
         candidates: [
@@ -1226,8 +1223,6 @@ export async function conversationRoutes(app: FastifyInstance) {
         await trx("queue_assignments")
           .where({ tenant_id: tenantId, conversation_id: conversationId })
           .update({
-            module_id: routingPlan.target.moduleId,
-            skill_group_id: routingPlan.target.skillGroupId,
             department_id: routingPlan.target.departmentId,
             team_id: routingPlan.target.teamId,
             assigned_agent_id: null,
@@ -1269,8 +1264,6 @@ export async function conversationRoutes(app: FastifyInstance) {
         await trx("queue_assignments")
           .where({ tenant_id: tenantId, conversation_id: conversationId })
           .update({
-            module_id: routingPlan.target.moduleId,
-            skill_group_id: routingPlan.target.skillGroupId,
             department_id: routingPlan.target.departmentId,
             team_id: routingPlan.target.teamId,
             assigned_agent_id: routingPlan.target.agentId ?? null,

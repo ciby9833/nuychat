@@ -3,11 +3,6 @@ import type { Knex } from "knex";
 import { PresenceService } from "../agent/presence.service.js";
 import type { HumanRoutingAssignmentStrategy } from "./types.js";
 
-type SkillGroupRow = {
-  skill_group_id: string;
-  module_id: string | null;
-};
-
 type AgentCandidateRow = {
   agentId: string;
   agentLabel: string;
@@ -39,8 +34,6 @@ type AgentCandidateEvaluation = AgentCandidateRow & {
 };
 
 export type HumanDispatchDecision = {
-  moduleId: string | null;
-  skillGroupId: string | null;
   departmentId: string | null;
   teamId: string | null;
   assignedAgentId: string | null;
@@ -65,8 +58,6 @@ export type HumanDispatchDecision = {
 };
 
 export type HumanCapacitySnapshot = {
-  moduleId: string | null;
-  skillGroupId: string | null;
   departmentId: string | null;
   teamId: string | null;
   strategy: HumanRoutingAssignmentStrategy;
@@ -93,7 +84,6 @@ export type HumanDispatchTarget = {
   departmentCode: string | null;
   teamId: string | null;
   teamCode: string | null;
-  skillGroupCode: string | null;
   assignmentStrategy: HumanRoutingAssignmentStrategy | null;
 };
 
@@ -108,27 +98,9 @@ export class HumanDispatchService {
       priority?: number;
     }
   ): Promise<HumanCapacitySnapshot> {
-    const skillGroup = await resolveSkillGroup(db, input.tenantId, input.target);
     const scope = await resolveScope(db, input.tenantId, input.target);
     const strategy = input.target.assignmentStrategy ?? "least_busy";
-
-    if (!skillGroup) {
-      return {
-        moduleId: null,
-        skillGroupId: null,
-        departmentId: scope.departmentId,
-        teamId: scope.teamId,
-        strategy,
-        eligibleAgents: 0,
-        totalAgents: 0,
-        totalActiveAssignments: 0,
-        totalMaxConcurrency: 0,
-        loadPct: null,
-        candidates: []
-      };
-    }
-
-    const evaluations = await loadCandidateEvaluations(db, input.tenantId, skillGroup.skill_group_id);
+    const evaluations = await loadCandidateEvaluations(db, input.tenantId);
     const scopedCandidates = evaluations.filter((candidate) => {
       if (scope.teamId && candidate.teamId !== scope.teamId) return false;
       if (scope.departmentId && candidate.departmentId !== scope.departmentId) return false;
@@ -139,8 +111,6 @@ export class HumanDispatchService {
     const totalMaxConcurrency = scopedCandidates.reduce((sum, candidate) => sum + Math.max(candidate.maxConcurrency, 0), 0);
 
     return {
-      moduleId: skillGroup.module_id,
-      skillGroupId: skillGroup.skill_group_id,
       departmentId: scope.departmentId,
       teamId: scope.teamId,
       strategy,
@@ -168,34 +138,11 @@ export class HumanDispatchService {
       excludeAgentIds?: string[];
     }
   ): Promise<HumanDispatchDecision> {
-    const skillGroup = await resolveSkillGroup(db, input.tenantId, input.target);
-    if (!skillGroup) {
-      return {
-        moduleId: null,
-        skillGroupId: null,
-        departmentId: null,
-        teamId: null,
-        assignedAgentId: null,
-        strategy: input.target.assignmentStrategy ?? "least_busy",
-        priority: input.priority ?? 100,
-        status: "pending",
-        reason: "no-skill-group",
-        audit: {
-          routingRuleId: input.auditSource?.ruleId ?? null,
-          routingRuleName: input.auditSource?.ruleName ?? null,
-          matchedConditions: input.auditSource?.matchedConditions ?? {},
-          candidates: []
-        }
-      };
-    }
-
     const scope = await resolveScope(db, input.tenantId, input.target);
     const strategy = input.target.assignmentStrategy ?? "least_busy";
 
     return assignWithinScope(db, {
       tenantId: input.tenantId,
-      moduleId: skillGroup.module_id,
-      skillGroupId: skillGroup.skill_group_id,
       departmentId: scope.departmentId,
       teamId: scope.teamId,
       strategy,
@@ -224,53 +171,37 @@ export class HumanDispatchService {
         ruleName: string | null;
         matchedConditions: Record<string, unknown>;
       };
-      excludeSkillGroupCodes?: string[];
       excludeAgentIds?: string[];
     }
   ): Promise<HumanDispatchDecision | null> {
-    const excludedCodes = new Set((input.excludeSkillGroupCodes ?? []).filter(Boolean));
-    const groups = await db("skill_groups")
-      .where({ tenant_id: input.tenantId, is_active: true })
-      .select("skill_group_id", "module_id", "code")
-      .orderBy("priority", "asc")
-      .orderBy("created_at", "asc") as Array<{ skill_group_id: string; module_id: string | null; code: string }>;
+    const capacity = await this.inspectTarget(db, {
+      tenantId: input.tenantId,
+      target: {
+        departmentId: input.departmentId ?? null,
+        departmentCode: null,
+        teamId: input.teamId ?? null,
+        teamCode: null,
+        assignmentStrategy: input.strategy ?? "least_busy"
+      },
+      priority: input.priority
+    });
 
-    for (const group of groups) {
-      if (excludedCodes.has(group.code)) continue;
-      const capacity = await this.inspectTarget(db, {
-        tenantId: input.tenantId,
-        target: {
-          departmentId: input.departmentId ?? null,
-          departmentCode: null,
-          teamId: input.teamId ?? null,
-          teamCode: null,
-          skillGroupCode: group.code,
-          assignmentStrategy: input.strategy ?? "least_busy"
-        },
-        priority: input.priority
-      });
+    if (capacity.totalAgents === 0 || capacity.eligibleAgents === 0) return null;
 
-      if (capacity.totalAgents === 0 || capacity.eligibleAgents === 0) continue;
-
-      return assignWithinScope(db, {
-        tenantId: input.tenantId,
-        moduleId: capacity.moduleId,
-        skillGroupId: capacity.skillGroupId as string,
-        departmentId: capacity.departmentId,
-        teamId: capacity.teamId,
-        strategy: capacity.strategy,
-        priority: input.priority ?? 100,
-        fallbackReason: input.reason ?? "fallback_any_human_target",
-        auditSource: input.auditSource ?? {
-          ruleId: null,
-          ruleName: "fallback_any_human_target",
-          matchedConditions: {}
-        },
-        excludeAgentIds: input.excludeAgentIds ?? []
-      });
-    }
-
-    return null;
+    return assignWithinScope(db, {
+      tenantId: input.tenantId,
+      departmentId: capacity.departmentId,
+      teamId: capacity.teamId,
+      strategy: capacity.strategy,
+      priority: input.priority ?? 100,
+      fallbackReason: input.reason ?? "fallback_any_human_target",
+      auditSource: input.auditSource ?? {
+        ruleId: null,
+        ruleName: "fallback_any_human_target",
+        matchedConditions: {}
+      },
+      excludeAgentIds: input.excludeAgentIds ?? []
+    });
   }
 }
 
@@ -297,22 +228,6 @@ export async function getPrimaryTeamContext(
     departmentId: row?.department_id ?? null,
     teamId: row?.team_id ?? null
   };
-}
-
-async function resolveSkillGroup(
-  db: Knex | Knex.Transaction,
-  tenantId: string,
-  target: HumanDispatchTarget
-): Promise<SkillGroupRow | null> {
-  const resolvedSkillGroupCode = target.skillGroupCode;
-  if (!resolvedSkillGroupCode) return null;
-
-  const row = await db("skill_groups")
-    .select("skill_group_id", "module_id")
-    .where({ tenant_id: tenantId, code: resolvedSkillGroupCode, is_active: true })
-    .first<SkillGroupRow>();
-
-  return row ?? null;
 }
 
 async function resolveScope(
@@ -382,8 +297,6 @@ async function assignWithinScope(
   db: Knex | Knex.Transaction,
   input: {
     tenantId: string;
-    moduleId: string | null;
-    skillGroupId: string;
     departmentId: string | null;
     teamId: string | null;
     strategy: HumanDispatchDecision["strategy"];
@@ -397,7 +310,7 @@ async function assignWithinScope(
     };
   }
 ): Promise<HumanDispatchDecision> {
-  const evaluations = await loadCandidateEvaluations(db, input.tenantId, input.skillGroupId);
+  const evaluations = await loadCandidateEvaluations(db, input.tenantId);
   const scopedEvaluations = evaluations.filter((candidate) => {
     if (input.teamId && candidate.teamId !== input.teamId) return false;
     if (input.departmentId && candidate.departmentId !== input.departmentId) return false;
@@ -410,8 +323,6 @@ async function assignWithinScope(
 
   if (filteredCandidates.length === 0) {
     return {
-      moduleId: input.moduleId,
-      skillGroupId: input.skillGroupId,
       departmentId: input.departmentId,
       teamId: input.teamId,
       assignedAgentId: null,
@@ -429,12 +340,10 @@ async function assignWithinScope(
   }
 
   const teamCandidates = filteredCandidates.filter((candidate) => candidate.teamId === chosenTeamId);
-  const selected = await chooseAgent(db, input.tenantId, input.skillGroupId, input.strategy, teamCandidates);
+  const selected = await chooseAgent(db, input.tenantId, input.strategy, teamCandidates);
   const teamScope = teamCandidates.find((candidate) => candidate.agentId === selected?.agentId) ?? teamCandidates[0];
 
   return {
-    moduleId: input.moduleId,
-    skillGroupId: input.skillGroupId,
     departmentId: teamScope?.departmentId ?? input.departmentId,
     teamId: teamScope?.teamId ?? chosenTeamId ?? input.teamId,
     assignedAgentId: selected?.agentId ?? null,
@@ -482,17 +391,13 @@ async function assignWithinScope(
 
 async function loadCandidateEvaluations(
   db: Knex | Knex.Transaction,
-  tenantId: string,
-  skillGroupId: string
+  tenantId: string
 ): Promise<AgentCandidateEvaluation[]> {
   const now = new Date();
   if (typeof (db as Knex.Transaction).commit === "function") {
     await presenceService.refreshTenantPresenceStates(db as Knex.Transaction, tenantId);
   }
   const baseRows = await db("agent_profiles as ap")
-    .join("agent_skills as ask", function joinSkills() {
-      this.on("ask.agent_id", "=", "ap.agent_id").andOn("ask.tenant_id", "=", "ap.tenant_id");
-    })
     .join("agent_team_map as atm", function joinTeamMap() {
       this.on("atm.agent_id", "=", "ap.agent_id").andOn("atm.tenant_id", "=", "ap.tenant_id");
     })
@@ -515,8 +420,6 @@ async function loadCandidateEvaluations(
     })
     .where({
       "ap.tenant_id": tenantId,
-      "ask.skill_group_id": skillGroupId,
-      "ask.is_active": true,
       "t.is_active": true,
       "d.is_active": true
     })
@@ -752,7 +655,6 @@ function buildTeamAuditCandidates(
 async function chooseAgent(
   db: Knex | Knex.Transaction,
   tenantId: string,
-  skillGroupId: string,
   strategy: HumanDispatchDecision["strategy"],
   candidates: AgentCandidateRow[]
 ): Promise<AgentCandidateRow | null> {
@@ -760,10 +662,7 @@ async function chooseAgent(
 
   if (strategy === "sticky") {
     const stickyAgent = await db("queue_assignments")
-      .where({
-        tenant_id: tenantId,
-        skill_group_id: skillGroupId
-      })
+      .where({ tenant_id: tenantId })
       .whereIn("assigned_agent_id", candidates.map((candidate) => candidate.agentId))
       .whereNotNull("assigned_agent_id")
       .orderBy("updated_at", "desc")

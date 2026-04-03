@@ -25,8 +25,6 @@ export type RoutingPlan = {
     ownerId: string | null;
   };
   target: {
-    moduleId: string | null;
-    skillGroupId: string | null;
     departmentId: string | null;
     teamId: string | null;
     agentId: string | null;
@@ -36,10 +34,8 @@ export type RoutingPlan = {
     priority: number;
   };
   fallback: {
-    moduleId: string | null;
     departmentId: string | null;
     teamId: string | null;
-    skillGroupId: string | null;
     agentId: string | null;
     strategy: HumanRoutingAssignmentStrategy | null;
     priority: number | null;
@@ -136,8 +132,6 @@ export type RoutingContext = {
   assignedAgentId: string | null;
   preserveHumanOwner: boolean;
   existingAssignment: {
-    moduleId: string | null;
-    skillGroupId: string | null;
     departmentId: string | null;
     teamId: string | null;
     assignedAgentId: string | null;

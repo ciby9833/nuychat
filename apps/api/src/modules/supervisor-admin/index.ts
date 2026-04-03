@@ -77,9 +77,6 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
         .leftJoin("customers as cu", function joinCustomer() {
           this.on("cu.customer_id", "=", "c.customer_id").andOn("cu.tenant_id", "=", "c.tenant_id");
         })
-        .leftJoin("skill_groups as sg", function joinGroup() {
-          this.on("sg.skill_group_id", "=", "qa.skill_group_id").andOn("sg.tenant_id", "=", "qa.tenant_id");
-        })
         .leftJoin("departments as d", function joinDepartment() {
           this.on("d.department_id", "=", "qa.department_id").andOn("d.tenant_id", "=", "qa.tenant_id");
         })
@@ -114,7 +111,6 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
           "c.last_message_at",
           "cu.display_name as customer_name",
           "cu.external_ref as customer_ref",
-          "sg.name as skill_group_name",
           "d.name as department_name",
           "t.name as team_name"
         )
@@ -139,7 +135,6 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
         channelType: row.channel_type,
         customerName: row.customer_name,
         customerRef: row.customer_ref,
-        skillGroupName: row.skill_group_name,
         departmentName: row.department_name,
         teamName: row.team_name,
         lastMessagePreview: row.last_message_preview,

@@ -14,8 +14,6 @@ export class RoutingExecutionService {
     await queueAssignmentService.upsertAssignment(db, {
       tenantId: plan.tenantId,
       conversationId: plan.conversationId,
-      moduleId: plan.target.moduleId,
-      skillGroupId: plan.target.skillGroupId,
       departmentId: plan.target.departmentId,
       teamId: plan.target.teamId,
       assignedAgentId: selectedOwnerType === "human" ? plan.target.agentId : null,

@@ -28,8 +28,7 @@ function formatChannelInstanceLabel(channel: ChannelConfig): string {
 export function readServiceTarget(rule: RoutingRule) {
   return {
     targetDepartmentId: rule.actions.serviceTarget?.departmentId,
-    targetTeamId: rule.actions.serviceTarget?.teamId,
-    targetSkillGroupCode: rule.actions.serviceTarget?.skillGroupCode
+    targetTeamId: rule.actions.serviceTarget?.teamId
   };
 }
 
@@ -73,7 +72,6 @@ export function buildRuleSummary(
     tier: rule.conditions.customerTier ?? i18next.t("routing.summary.any"),
     departmentName: team?.departmentName ?? department?.name ?? i18next.t("routing.summary.anyDepartment"),
     teamName: team?.name ?? i18next.t("routing.summary.autoTeam"),
-    skillGroupCode: serviceTarget.targetSkillGroupCode ?? i18next.t("routing.summary.auto"),
     humanStrategy: i18next.t(`routing.options.strategy.${readHumanStrategy(rule)}`, {
       defaultValue: STRATEGY_OPTIONS.find((item) => item.value === readHumanStrategy(rule))?.labelKey ?? readHumanStrategy(rule)
     }),
@@ -97,8 +95,7 @@ export function buildRulePayload(values: RuleFormValues) {
       executionMode: values.executionMode,
       serviceTarget: {
         ...(values.targetDepartmentId ? { departmentId: values.targetDepartmentId } : {}),
-        ...(values.targetTeamId ? { teamId: values.targetTeamId } : {}),
-        ...(values.targetSkillGroupCode ? { skillGroupCode: values.targetSkillGroupCode } : {})
+        ...(values.targetTeamId ? { teamId: values.targetTeamId } : {})
       },
       humanStrategy: values.assignmentStrategy,
       aiStrategy: values.aiAssignmentStrategy

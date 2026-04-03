@@ -5,26 +5,20 @@
 import { message } from "antd";
 import { useCallback, useEffect, useState } from "react";
 
-import { api, listAgents, listMembers } from "../../../api";
-import type { AgentProfile, MemberListItem, SkillGroup } from "../../../types";
+import { listAgents, listMembers } from "../../../api";
+import type { AgentProfile, MemberListItem } from "../../../types";
 
 export function useAgentsData() {
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [members, setMembers] = useState<MemberListItem[]>([]);
-  const [groups, setGroups] = useState<SkillGroup[]>([]);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [agentRows, memberRows, groupRows] = await Promise.all([
-        listAgents(),
-        listMembers(),
-        api<SkillGroup[]>("/api/admin/skill-groups")
-      ]);
+      const [agentRows, memberRows] = await Promise.all([listAgents(), listMembers()]);
       setAgents(agentRows);
       setMembers(memberRows);
-      setGroups(groupRows);
     } catch (err) {
       message.error((err as Error).message);
     } finally {
@@ -36,5 +30,5 @@ export function useAgentsData() {
     void load();
   }, [load]);
 
-  return { agents, members, groups, loading, load };
+  return { agents, members, loading, load };
 }

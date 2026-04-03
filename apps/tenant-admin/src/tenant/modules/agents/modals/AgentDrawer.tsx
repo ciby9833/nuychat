@@ -1,24 +1,22 @@
-import { PlusOutlined, UserOutlined } from "@ant-design/icons";
+import { UserOutlined } from "@ant-design/icons";
 import {
   Button, Card, Descriptions, Drawer, Form, Input, InputNumber,
-  Popconfirm, Select, Space, Switch, Tag, Tooltip, Typography, message
+  Popconfirm, Select, Space, Switch, Tag, message
 } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { addAgentSkill, patchAgent, removeAgentSkill } from "../../../api";
-import type { AgentProfile, SkillGroup } from "../../../types";
+import { patchAgent } from "../../../api";
+import type { AgentProfile } from "../../../types";
 import { ROLE_COLOR, STATUS_COLOR, roleLabel, seniorityOptions, statusLabel } from "../types";
 
 export function AgentDrawer({
   agent,
-  groups,
   onClose,
   onUpdated,
   onRemoved
 }: {
   agent: AgentProfile | null;
-  groups: SkillGroup[];
   onClose: () => void;
   onUpdated: () => void;
   onRemoved: (agentId: string) => Promise<void>;
@@ -32,8 +30,6 @@ export function AgentDrawer({
     allowAiAssist: boolean;
   }>();
   const [saving, setSaving] = useState(false);
-  const [addingSkill, setAddingSkill] = useState(false);
-  const [skillToAdd, setSkillToAdd] = useState<string>("");
 
   useEffect(() => {
     if (!agent) return;
@@ -44,14 +40,7 @@ export function AgentDrawer({
       maxConcurrency: agent.maxConcurrency,
       allowAiAssist:  agent.allowAiAssist
     });
-    setSkillToAdd("");
   }, [agent, infoForm]);
-
-  const addableGroups = useMemo(() => {
-    if (!agent) return [];
-    const assigned = new Set(agent.skillGroups.map((sg) => sg.skill_group_id));
-    return groups.filter((group) => !assigned.has(group.skill_group_id));
-  }, [groups, agent]);
 
   const handleSaveInfo = async () => {
     if (!agent) return;
@@ -127,66 +116,6 @@ export function AgentDrawer({
                 {t("common.save")}
               </Button>
             </Form>
-          </Card>
-
-          <Card size="small" title={t("agents.skillGroupsTitle")}>
-            <Space direction="vertical" size="small" style={{ width: "100%" }}>
-              {agent.skillGroups.length > 0 ? (
-                <Space wrap>
-                  {agent.skillGroups.map((skill) => (
-                    <Tooltip key={skill.skill_group_id} title={t("agents.removeSkill", { name: skill.name })}>
-                      <Popconfirm
-                        title={t("agents.confirmRemoveSkill", { name: skill.name })}
-                        onConfirm={() => { void removeAgentSkill(agent.agentId, skill.skill_group_id).then(onUpdated); }}
-                        okText={t("common.remove")}
-                        cancelText={t("common.cancel")}
-                      >
-                        <Tag closable color="geekblue" style={{ cursor: "pointer" }} onClose={(e) => e.preventDefault()}>
-                          {skill.code} - {skill.name}
-                        </Tag>
-                      </Popconfirm>
-                    </Tooltip>
-                  ))}
-                </Space>
-              ) : (
-                <Typography.Text type="secondary">{t("agents.noSkillGroups")}</Typography.Text>
-              )}
-              {addableGroups.length > 0 && (
-                <Space style={{ marginTop: 8 }}>
-                  <Select
-                    style={{ width: 240 }}
-                    placeholder={t("agents.addSkillPlaceholder")}
-                    value={skillToAdd || undefined}
-                    onChange={(value) => setSkillToAdd(value as string)}
-                    options={addableGroups.map((group) => ({ value: group.skill_group_id, label: `${group.code} - ${group.name}` }))}
-                  />
-                  <Button
-                    size="small"
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    disabled={!skillToAdd}
-                    loading={addingSkill}
-                    onClick={() => {
-                      void (async () => {
-                        if (!skillToAdd) return;
-                        setAddingSkill(true);
-                        try {
-                          await addAgentSkill(agent.agentId, skillToAdd);
-                          setSkillToAdd("");
-                          onUpdated();
-                        } catch (err) {
-                          void message.error((err as Error).message);
-                        } finally {
-                          setAddingSkill(false);
-                        }
-                      })();
-                    }}
-                  >
-                    {t("common.add")}
-                  </Button>
-                </Space>
-              )}
-            </Space>
           </Card>
         </Space>
       )}

@@ -97,8 +97,6 @@ export class RoutingDecisionService {
         ownerId: null
       },
       target: {
-        moduleId: humanDecision.moduleId,
-        skillGroupId: humanDecision.skillGroupId,
         departmentId: humanDecision.departmentId,
         teamId: humanDecision.teamId,
         agentId: selectedOwnerType === "human" ? humanDecision.assignedAgentId : null,
@@ -198,8 +196,6 @@ export class RoutingDecisionService {
         ownerId: context.currentHandlerId ?? null
       },
       target: {
-        moduleId: humanDecision.moduleId,
-        skillGroupId: humanDecision.skillGroupId,
         departmentId: humanDecision.departmentId,
         teamId: humanDecision.teamId,
         agentId: selectedOwnerType === "human" ? selectedHumanAgentId : null,
@@ -272,8 +268,7 @@ export class RoutingDecisionService {
         strategy: policy.humanTarget.assignmentStrategy ?? "balanced_new_case",
         priority: matchedRule?.priority ?? 100,
         reason: "ai_handoff_human_dispatch_any_available",
-        auditSource: buildAuditSource(matchedRule),
-        excludeSkillGroupCodes: policy.humanTarget.skillGroupCode ? [policy.humanTarget.skillGroupCode] : []
+        auditSource: buildAuditSource(matchedRule)
       });
       if (fallbackHumanDecision) {
         humanDecision = fallbackHumanDecision;
@@ -298,8 +293,6 @@ export class RoutingDecisionService {
         ownerId: context.currentHandlerId ?? null
       },
       target: {
-        moduleId: humanDecision.moduleId,
-        skillGroupId: humanDecision.skillGroupId,
         departmentId: humanDecision.departmentId,
         teamId: humanDecision.teamId,
         agentId: humanDecision.assignedAgentId,
@@ -504,10 +497,8 @@ async function buildFallbackDecision(
   });
 
   return {
-    moduleId: decision.moduleId,
     departmentId: decision.departmentId,
     teamId: decision.teamId,
-    skillGroupId: decision.skillGroupId,
     agentId: decision.assignedAgentId,
     strategy: decision.strategy,
     priority: decision.priority
@@ -550,8 +541,6 @@ function buildPreservedHumanPlan(context: RoutingContext): RoutingPlan {
       ownerId: context.assignedAgentId
     },
     target: {
-      moduleId: context.existingAssignment?.moduleId ?? null,
-      skillGroupId: context.existingAssignment?.skillGroupId ?? null,
       departmentId: context.existingAssignment?.departmentId ?? null,
       teamId: context.existingAssignment?.teamId ?? null,
       agentId: context.assignedAgentId,

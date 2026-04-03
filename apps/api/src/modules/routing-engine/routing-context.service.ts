@@ -33,10 +33,8 @@ export class RoutingContextService {
         } | undefined>(),
       db("queue_assignments")
         .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
-        .select("module_id", "skill_group_id", "department_id", "team_id", "assigned_agent_id", "assignment_strategy", "priority", "status")
+        .select("department_id", "team_id", "assigned_agent_id", "assignment_strategy", "priority", "status")
         .first<{
-          module_id: string | null;
-          skill_group_id: string | null;
           department_id: string | null;
           team_id: string | null;
           assigned_agent_id: string | null;
@@ -109,8 +107,6 @@ export class RoutingContextService {
       preserveHumanOwner: currentCase.current_owner_type === "agent" && conversation.status === "human_active" && Boolean(conversation.assigned_agent_id),
       existingAssignment: assignment
         ? {
-            moduleId: assignment.module_id ?? null,
-            skillGroupId: assignment.skill_group_id ?? null,
             departmentId: assignment.department_id ?? null,
             teamId: assignment.team_id ?? null,
             assignedAgentId: assignment.assigned_agent_id ?? null,

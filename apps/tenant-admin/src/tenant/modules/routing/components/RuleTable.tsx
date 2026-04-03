@@ -98,7 +98,7 @@ export function RuleTable({
             const s = buildRuleSummary(row, departments, teams, channels);
             return (
               <Space direction="vertical" size={0}>
-                <Typography.Text>{s.skillGroupCode}</Typography.Text>
+                <Typography.Text>{s.departmentName} / {s.teamName}</Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   人工: {s.humanStrategy} | AI: {s.aiStrategy}
                 </Typography.Text>

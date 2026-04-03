@@ -503,8 +503,7 @@ export function serializeRoutingRuleActions(value: unknown) {
       ...(normalized.serviceTarget.departmentId ? { departmentId: normalized.serviceTarget.departmentId } : {}),
       ...(normalized.serviceTarget.departmentCode ? { departmentCode: normalized.serviceTarget.departmentCode } : {}),
       ...(normalized.serviceTarget.teamId ? { teamId: normalized.serviceTarget.teamId } : {}),
-      ...(normalized.serviceTarget.teamCode ? { teamCode: normalized.serviceTarget.teamCode } : {}),
-      ...(normalized.serviceTarget.skillGroupCode ? { skillGroupCode: normalized.serviceTarget.skillGroupCode } : {})
+      ...(normalized.serviceTarget.teamCode ? { teamCode: normalized.serviceTarget.teamCode } : {})
     },
     ...(normalized.humanStrategy ? { humanStrategy: normalized.humanStrategy } : {}),
     ...(normalized.aiStrategy ? { aiStrategy: normalized.aiStrategy } : {})

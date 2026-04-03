@@ -18,7 +18,6 @@ import type {
   DailyReport,
   ConversationCaseListResponse,
   MemberListItem,
-  ModuleItem,
   DepartmentItem,
   PreReplyPolicySet,
   LoginResponse,
@@ -55,7 +54,6 @@ import type {
   SlaTriggerPolicyItem,
   ShiftScheduleItem,
   RoutingRule,
-  SkillGroup,
   TeamItem
 } from "./types";
 
@@ -552,42 +550,6 @@ export function listDepartments() {
   return api<DepartmentItem[]>("/api/admin/departments");
 }
 
-export function listModules() {
-  return api<ModuleItem[]>("/api/admin/modules");
-}
-
-export function createModule(input: {
-  code: string;
-  name: string;
-  description?: string | null;
-  operatingMode?: "human_first" | "ai_first" | "ai_autonomous" | "workflow_first";
-  isActive?: boolean;
-}) {
-  return api<ModuleItem>("/api/admin/modules", {
-    method: "POST",
-    body: JSON.stringify(input)
-  });
-}
-
-export function patchModule(moduleId: string, input: Partial<{
-  code: string;
-  name: string;
-  description: string | null;
-  operatingMode: "human_first" | "ai_first" | "ai_autonomous" | "workflow_first";
-  isActive: boolean;
-}>) {
-  return api<{ updated: boolean; moduleId: string }>(`/api/admin/modules/${moduleId}`, {
-    method: "PATCH",
-    body: JSON.stringify(input)
-  });
-}
-
-export function deleteModule(moduleId: string) {
-  return api<{ deleted: boolean; moduleId: string }>(`/api/admin/modules/${moduleId}`, {
-    method: "DELETE"
-  });
-}
-
 export function listRoutingRules() {
   return api<RoutingRule[]>("/api/admin/routing-rules");
 }
@@ -623,42 +585,6 @@ export function patchRoutingRule(
 
 export function deleteRoutingRule(ruleId: string) {
   return api<{ deleted: boolean; ruleId: string }>(`/api/admin/routing-rules/${ruleId}`, {
-    method: "DELETE"
-  });
-}
-
-export function listSkillGroups() {
-  return api<SkillGroup[]>("/api/admin/skill-groups");
-}
-
-export function createSkillGroup(input: {
-  moduleId: string;
-  code: string;
-  name: string;
-  priority?: number;
-  isActive?: boolean;
-}) {
-  return api<SkillGroup>("/api/admin/skill-groups", {
-    method: "POST",
-    body: JSON.stringify(input)
-  });
-}
-
-export function patchSkillGroup(skillGroupId: string, input: Partial<{
-  moduleId: string;
-  code: string;
-  name: string;
-  priority: number;
-  isActive: boolean;
-}>) {
-  return api<{ updated: boolean; skillGroupId: string }>(`/api/admin/skill-groups/${skillGroupId}`, {
-    method: "PATCH",
-    body: JSON.stringify(input)
-  });
-}
-
-export function deleteSkillGroup(skillGroupId: string) {
-  return api<{ deleted: boolean; skillGroupId: string }>(`/api/admin/skill-groups/${skillGroupId}`, {
     method: "DELETE"
   });
 }
@@ -871,19 +797,6 @@ export function patchAgent(agentId: string, input: Partial<{
 
 export function removeAgent(agentId: string) {
   return api<{ removed: boolean; agentId: string }>(`/api/admin/agents/${agentId}`, {
-    method: "DELETE"
-  });
-}
-
-export function addAgentSkill(agentId: string, skillGroupId: string) {
-  return api<{ assigned: boolean }>(`/api/admin/agents/${agentId}/skills`, {
-    method: "POST",
-    body: JSON.stringify({ skillGroupId })
-  });
-}
-
-export function removeAgentSkill(agentId: string, skillGroupId: string) {
-  return api<{ removed: boolean }>(`/api/admin/agents/${agentId}/skills/${skillGroupId}`, {
     method: "DELETE"
   });
 }

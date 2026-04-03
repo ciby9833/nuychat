@@ -7,7 +7,6 @@ export type NormalizedRoutingRuleActions = {
     departmentCode: string | null;
     teamId: string | null;
     teamCode: string | null;
-    skillGroupCode: string | null;
   };
   humanStrategy: HumanRoutingAssignmentStrategy | null;
   aiStrategy: AIRoutingAssignmentStrategy | null;
@@ -23,8 +22,7 @@ export function normalizeRoutingRuleActions(value: unknown): NormalizedRoutingRu
       departmentId: asString(serviceTargetRaw.departmentId),
       departmentCode: asString(serviceTargetRaw.departmentCode),
       teamId: asString(serviceTargetRaw.teamId),
-      teamCode: asString(serviceTargetRaw.teamCode),
-      skillGroupCode: asString(serviceTargetRaw.skillGroupCode)
+      teamCode: asString(serviceTargetRaw.teamCode)
     },
     humanStrategy: parseHumanAssignmentStrategy(actions.humanStrategy),
     aiStrategy: parseAIAssignmentStrategy(actions.aiStrategy)

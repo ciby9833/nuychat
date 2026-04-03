@@ -141,10 +141,9 @@ export function resolveRequiredPermission(method: string, routePath: string): Pe
   if (routePath.startsWith("/api/admin/departments") || routePath.startsWith("/api/admin/teams")) {
     return m === "GET" ? "admin_console.read" : "org.manage";
   }
-  if (routePath.startsWith("/api/admin/modules")) return m === "GET" ? "admin_console.read" : "routing.manage";
   if (routePath.startsWith("/api/admin/members")) return m === "GET" ? "admin_console.read" : "agents.manage";
   if (routePath.startsWith("/api/admin/agents")) return m === "GET" ? "admin_console.read" : "agents.manage";
-  if (routePath.startsWith("/api/admin/routing-rules") || routePath.startsWith("/api/admin/skill-groups")) {
+  if (routePath.startsWith("/api/admin/routing-rules")) {
     return m === "GET" ? "admin_console.read" : "routing.manage";
   }
   if (routePath.startsWith("/api/admin/dispatch-executions")) return "admin_console.read";

@@ -244,25 +244,6 @@ export type WebhookChannelLinkInfo = {
   inboundWebhookUrl: string;
   outboundWebhookUrl: string | null;
 };
-export type ModuleItem = {
-  moduleId: string;
-  code: string;
-  name: string;
-  description: string | null;
-  operatingMode: "human_first" | "ai_first" | "ai_autonomous" | "workflow_first";
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-export type SkillGroup = {
-  skill_group_id: string;
-  module_id: string;
-  module_name: string | null;
-  code: string;
-  name: string;
-  priority: number;
-  is_active: boolean;
-};
 export type RoutingRule = {
   rule_id: string;
   name: string;
@@ -281,7 +262,6 @@ export type RoutingRule = {
       departmentCode?: string;
       teamId?: string;
       teamCode?: string;
-      skillGroupCode?: string;
     };
     humanStrategy?: "round_robin" | "least_busy" | "balanced_new_case" | "sticky";
     aiStrategy?: "round_robin" | "least_busy" | "sticky";
@@ -465,14 +445,6 @@ export type HumanConversationDetail = {
   }>;
 };
 
-export type AgentSkillGroup = {
-  skill_group_id: string;
-  code: string;
-  name: string;
-  proficiency_level: number;
-  can_handle_vip: boolean;
-};
-
 export type MemberListItem = {
   membershipId: string;
   identityId: string;
@@ -503,7 +475,6 @@ export type AgentProfile = {
   allowAiAssist: boolean;
   role: string;
   lastSeenAt: string | null;
-  skillGroups: AgentSkillGroup[];
 };
 
 export type DepartmentItem = {

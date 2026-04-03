@@ -4,21 +4,19 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { removeAgent } from "../../../api";
-import type { AgentProfile, MemberListItem, SkillGroup } from "../../../types";
+import type { AgentProfile, MemberListItem } from "../../../types";
 import { AgentDrawer } from "../modals/AgentDrawer";
 import { ROLE_COLOR, roleLabel, seniorityLabel, statusLabel } from "../types";
 
 export function AgentsPane({
   agents,
   members,
-  groups,
   loading,
   onReload,
   onEnable
 }: {
   agents: AgentProfile[];
   members: MemberListItem[];
-  groups: SkillGroup[];
   loading: boolean;
   onReload: () => void;
   onEnable: () => void;
@@ -89,20 +87,13 @@ export function AgentsPane({
             },
             { title: t("agents.col.role"),        dataIndex: "role",           width: 110, render: (value: string) => <Tag color={ROLE_COLOR[value] ?? "default"}>{roleLabel(value)}</Tag> },
             { title: t("agents.col.seniority"),   dataIndex: "seniorityLevel", width: 80, render: (value: string) => seniorityLabel(value) },
-            { title: t("agents.col.concurrency"), dataIndex: "maxConcurrency", width: 70, align: "center" as const },
-            {
-              title: t("agents.col.skillGroups"),
-              render: (_, row) => row.skillGroups.length > 0
-                ? row.skillGroups.map((skill) => <Tag key={skill.skill_group_id} color="geekblue">{skill.code}</Tag>)
-                : <Typography.Text type="secondary">-</Typography.Text>
-            }
+            { title: t("agents.col.concurrency"), dataIndex: "maxConcurrency", width: 70, align: "center" as const }
           ]}
         />
       </div>
 
       <AgentDrawer
         agent={selected}
-        groups={groups}
         onClose={() => setSelected(null)}
         onUpdated={onReload}
         onRemoved={async (agentId) => {

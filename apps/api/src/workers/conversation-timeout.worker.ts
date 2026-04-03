@@ -275,8 +275,6 @@ export function createConversationTimeoutWorker() {
               "status",
               "assigned_agent_id",
               "assigned_ai_agent_id",
-              "module_id",
-              "skill_group_id",
               "department_id",
               "team_id",
               "assignment_strategy",
@@ -289,8 +287,6 @@ export function createConversationTimeoutWorker() {
               status: string | null;
               assigned_agent_id: string | null;
               assigned_ai_agent_id: string | null;
-              module_id: string | null;
-              skill_group_id: string | null;
               department_id: string | null;
               team_id: string | null;
               assignment_strategy: "round_robin" | "least_busy" | "balanced_new_case" | "sticky" | null;
@@ -416,16 +412,6 @@ export function createConversationTimeoutWorker() {
             decisionReason: "sla_assignment_accept_timeout"
           });
 
-          const skillGroup = assignment.skill_group_id
-            ? await trx("skill_groups")
-              .where({ tenant_id: tenantId, skill_group_id: assignment.skill_group_id })
-              .select("code")
-              .first<{ code: string | null } | undefined>()
-            : null;
-          if (!skillGroup?.code) {
-            return { skipped: true, reason: "assignment_scope_missing_skill_group_code" };
-          }
-
           const decision = await humanDispatchService.decideForTarget(trx, {
             tenantId,
             target: {
@@ -433,7 +419,6 @@ export function createConversationTimeoutWorker() {
               departmentCode: null,
               teamId: assignment.team_id,
               teamCode: null,
-              skillGroupCode: skillGroup.code,
               assignmentStrategy: assignment.assignment_strategy ?? "least_busy"
             },
             priority: assignment.priority ?? 100,
@@ -449,8 +434,6 @@ export function createConversationTimeoutWorker() {
           await trx("queue_assignments")
             .where({ tenant_id: tenantId, conversation_id: conversationId })
             .update({
-              module_id: decision.moduleId,
-              skill_group_id: decision.skillGroupId,
               department_id: decision.departmentId,
               team_id: decision.teamId,
               assigned_agent_id: decision.assignedAgentId,
