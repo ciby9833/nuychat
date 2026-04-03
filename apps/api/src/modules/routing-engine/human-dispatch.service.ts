@@ -1,7 +1,6 @@
 import type { Knex } from "knex";
 
 import { PresenceService } from "../agent/presence.service.js";
-import { normalizeRoutingRuleActions } from "./routing-rule-schema.js";
 import type { HumanRoutingAssignmentStrategy } from "./types.js";
 
 type SkillGroupRow = {
@@ -89,6 +88,15 @@ type TeamContext = {
   teamId: string | null;
 };
 
+export type HumanDispatchTarget = {
+  departmentId: string | null;
+  departmentCode: string | null;
+  teamId: string | null;
+  teamCode: string | null;
+  skillGroupCode: string | null;
+  assignmentStrategy: HumanRoutingAssignmentStrategy | null;
+};
+
 const presenceService = new PresenceService();
 
 export class HumanDispatchService {
@@ -96,12 +104,12 @@ export class HumanDispatchService {
     db: Knex | Knex.Transaction,
     input: {
       tenantId: string;
-      target: ReturnType<typeof normalizeRoutingRuleActions>["humanTarget"];
+      target: HumanDispatchTarget;
       priority?: number;
     }
   ): Promise<HumanCapacitySnapshot> {
-    const skillGroup = await resolveSkillGroup(db, input.tenantId, { humanTarget: input.target } as ReturnType<typeof normalizeRoutingRuleActions>);
-    const scope = await resolveScope(db, input.tenantId, { humanTarget: input.target } as ReturnType<typeof normalizeRoutingRuleActions>);
+    const skillGroup = await resolveSkillGroup(db, input.tenantId, input.target);
+    const scope = await resolveScope(db, input.tenantId, input.target);
     const strategy = input.target.assignmentStrategy ?? "least_busy";
 
     if (!skillGroup) {
@@ -149,7 +157,7 @@ export class HumanDispatchService {
     db: Knex | Knex.Transaction,
     input: {
       tenantId: string;
-      target: ReturnType<typeof normalizeRoutingRuleActions>["humanTarget"];
+      target: HumanDispatchTarget;
       priority?: number;
       reason?: string;
       auditSource?: {
@@ -160,7 +168,7 @@ export class HumanDispatchService {
       excludeAgentIds?: string[];
     }
   ): Promise<HumanDispatchDecision> {
-    const skillGroup = await resolveSkillGroup(db, input.tenantId, { humanTarget: input.target } as ReturnType<typeof normalizeRoutingRuleActions>);
+    const skillGroup = await resolveSkillGroup(db, input.tenantId, input.target);
     if (!skillGroup) {
       return {
         moduleId: null,
@@ -181,7 +189,7 @@ export class HumanDispatchService {
       };
     }
 
-    const scope = await resolveScope(db, input.tenantId, { humanTarget: input.target } as ReturnType<typeof normalizeRoutingRuleActions>);
+    const scope = await resolveScope(db, input.tenantId, input.target);
     const strategy = input.target.assignmentStrategy ?? "least_busy";
 
     return assignWithinScope(db, {
@@ -294,9 +302,9 @@ export async function getPrimaryTeamContext(
 async function resolveSkillGroup(
   db: Knex | Knex.Transaction,
   tenantId: string,
-  normalized: ReturnType<typeof normalizeRoutingRuleActions>
+  target: HumanDispatchTarget
 ): Promise<SkillGroupRow | null> {
-  const resolvedSkillGroupCode = normalized.humanTarget.skillGroupCode;
+  const resolvedSkillGroupCode = target.skillGroupCode;
   if (!resolvedSkillGroupCode) return null;
 
   const row = await db("skill_groups")
@@ -310,12 +318,12 @@ async function resolveSkillGroup(
 async function resolveScope(
   db: Knex | Knex.Transaction,
   tenantId: string,
-  normalized: ReturnType<typeof normalizeRoutingRuleActions>
+  target: HumanDispatchTarget
 ): Promise<ResolvedScope> {
-  const departmentId = normalized.humanTarget.departmentId;
-  const departmentCode = normalized.humanTarget.departmentCode;
-  const teamId = normalized.humanTarget.teamId;
-  const teamCode = normalized.humanTarget.teamCode;
+  const departmentId = target.departmentId;
+  const departmentCode = target.departmentCode;
+  const teamId = target.teamId;
+  const teamCode = target.teamCode;
 
   const resolvedDepartmentId = departmentId
     ? await resolveDepartmentId(db, tenantId, { departmentId })

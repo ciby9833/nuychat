@@ -1,52 +1,16 @@
 /**
  * 菜单路径与名称: 客户中心 -> 路由 -> 路由规则 -> 规则编辑抽屉
- * 文件职责: 维护路由规则的条件、执行模式、人工与 AI 目标、回退策略等配置。
- * 主要交互文件:
- * - ../RoutingTab.tsx
- * - ../helpers.ts
- * - ../types.ts
- * - ../../../types
+ * 文件职责: 维护第一阶段智能调度规则的轻量配置。
  */
 
-import {
-  Button,
-  Col,
-  Divider,
-  Drawer,
-  Form,
-  Input,
-  InputNumber,
-  Row,
-  Select,
-  Switch,
-  Typography
-} from "antd";
+import { Button, Col, Divider, Drawer, Form, Input, InputNumber, Row, Select, Switch, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 import { useEffect, useMemo } from "react";
 
-import type { ChannelConfig, DepartmentItem, RoutingRule, SkillGroup, TeamItem, TenantAIAgent } from "../../../types";
-import {
-  readAiAgentId,
-  readAiAssignmentStrategy,
-  readExecutionMode,
-  readFallbackTarget,
-  readHumanTarget,
-  readHybridStrategy,
-  readOverflowPolicy,
-  readOverrides
-} from "../helpers";
+import type { ChannelConfig, DepartmentItem, RoutingRule, SkillGroup, TeamItem } from "../../../types";
+import { readAiStrategy, readExecutionMode, readHumanStrategy, readServiceTarget } from "../helpers";
 import type { RuleFormValues } from "../types";
-import {
-  AI_STRATEGY_OPTIONS,
-  AI_UNHANDLED_OPTIONS,
-  CHANNEL_OPTIONS,
-  EXECUTION_MODE_OPTIONS,
-  HYBRID_STRATEGY_OPTIONS,
-  LANGUAGE_OPTIONS,
-  OVERRIDE_OPTIONS,
-  STRATEGY_OPTIONS,
-  TIER_OPTIONS
-} from "../types";
+import { AI_STRATEGY_OPTIONS, CHANNEL_OPTIONS, EXECUTION_MODE_OPTIONS, LANGUAGE_OPTIONS, STRATEGY_OPTIONS, TIER_OPTIONS } from "../types";
 
 export function RuleEditorDrawer({
   open,
@@ -55,7 +19,6 @@ export function RuleEditorDrawer({
   channels,
   departments,
   teams,
-  aiAgents,
   groups,
   onClose,
   onSubmit
@@ -66,7 +29,6 @@ export function RuleEditorDrawer({
   channels: ChannelConfig[];
   departments: DepartmentItem[];
   teams: TeamItem[];
-  aiAgents: TenantAIAgent[];
   groups: SkillGroup[];
   onClose: () => void;
   onSubmit: (values: RuleFormValues) => Promise<void>;
@@ -74,16 +36,11 @@ export function RuleEditorDrawer({
   const { t } = useTranslation();
   const [form] = Form.useForm<RuleFormValues>();
   const selectedDepartmentId = Form.useWatch("targetDepartmentId", form);
-  const selectedFallbackDepartmentId = Form.useWatch("fallbackDepartmentId", form);
-  const selectedExecutionMode = Form.useWatch("executionMode", form);
   const selectedChannelType = Form.useWatch("channelType", form);
 
   useEffect(() => {
     if (!open) return;
-    const humanTarget = rule ? readHumanTarget(rule) : null;
-    const fallbackTarget = rule ? readFallbackTarget(rule) : null;
-    const overflowPolicy = rule ? readOverflowPolicy(rule) : null;
-    const overrides = rule ? readOverrides(rule) : null;
+    const serviceTarget = rule ? readServiceTarget(rule) : null;
     form.setFieldsValue({
       name: rule?.name ?? "",
       priority: rule?.priority ?? 100,
@@ -91,51 +48,29 @@ export function RuleEditorDrawer({
       channelId: rule?.conditions.channelId,
       customerLanguage: rule?.conditions.customerLanguage,
       customerTier: rule?.conditions.customerTier,
-      executionMode: rule ? readExecutionMode(rule) : "ai_first",
-      targetDepartmentId: humanTarget?.targetDepartmentId,
-      targetTeamId: humanTarget?.targetTeamId,
-      targetSkillGroupCode: humanTarget?.targetSkillGroupCode ?? "",
-      aiAgentId: rule ? readAiAgentId(rule) : undefined,
-      aiAssignmentStrategy: rule ? readAiAssignmentStrategy(rule) : "least_busy",
-      assignmentStrategy: humanTarget?.assignmentStrategy ?? "least_busy",
-      humanToAiThresholdPct: overflowPolicy?.humanToAiThresholdPct,
-      aiToHumanThresholdPct: overflowPolicy?.aiToHumanThresholdPct,
-      aiSoftConcurrencyLimit: overflowPolicy?.aiSoftConcurrencyLimit,
-      hybridStrategy: rule ? readHybridStrategy(rule) : "load_balanced",
-      customerRequestsHuman: overrides?.customerRequestsHuman ?? "force_human",
-      humanRequestKeywords: overrides?.humanRequestKeywords ?? "",
-      aiUnhandled: overrides?.aiUnhandled ?? "force_human",
-      fallbackDepartmentId: fallbackTarget?.fallbackDepartmentId,
-      fallbackTeamId: fallbackTarget?.fallbackTeamId,
-      fallbackSkillGroupCode: fallbackTarget?.fallbackSkillGroupCode,
-      fallbackAssignmentStrategy: fallbackTarget?.fallbackAssignmentStrategy,
+      executionMode: rule ? readExecutionMode(rule) : "hybrid",
+      targetDepartmentId: serviceTarget?.targetDepartmentId,
+      targetTeamId: serviceTarget?.targetTeamId,
+      targetSkillGroupCode: serviceTarget?.targetSkillGroupCode,
+      assignmentStrategy: rule ? readHumanStrategy(rule) : "balanced_new_case",
+      aiAssignmentStrategy: rule ? readAiStrategy(rule) : "least_busy",
       isActive: rule?.is_active ?? true
     });
   }, [open, rule, form]);
+
+  const departmentOptions = useMemo(
+    () => departments.map((department) => ({ value: department.departmentId, label: department.name })),
+    [departments]
+  );
 
   const teamOptions = useMemo(() => {
     if (!selectedDepartmentId) return teams;
     return teams.filter((team) => team.departmentId === selectedDepartmentId);
   }, [teams, selectedDepartmentId]);
 
-  const fallbackTeamOptions = useMemo(() => {
-    if (!selectedFallbackDepartmentId) return teams;
-    return teams.filter((team) => team.departmentId === selectedFallbackDepartmentId);
-  }, [teams, selectedFallbackDepartmentId]);
-
   const activeGroups = useMemo(
-    () => groups.filter((g) => g.is_active).map((g) => ({ value: g.code, label: `${g.name} (${g.code})` })),
+    () => groups.filter((group) => group.is_active).map((group) => ({ value: group.code, label: `${group.name} (${group.code})` })),
     [groups]
-  );
-
-  const departmentOptions = useMemo(
-    () => departments.map((d) => ({ value: d.departmentId, label: d.name })),
-    [departments]
-  );
-
-  const activeAiAgents = useMemo(
-    () => aiAgents.filter((a) => a.status === "active").map((a) => ({ value: a.aiAgentId, label: a.name })),
-    [aiAgents]
   );
 
   const channelInstanceOptions = useMemo(() => {
@@ -163,8 +98,6 @@ export function RuleEditorDrawer({
     });
   }, [channels, selectedChannelType]);
 
-  const showAiHint = selectedExecutionMode !== "human_only" && selectedExecutionMode !== "human_first";
-
   return (
     <Drawer
       title={rule ? t("routing.form.editRule") : t("routing.form.createRule")}
@@ -173,7 +106,7 @@ export function RuleEditorDrawer({
         form.resetFields();
         onClose();
       }}
-      width={640}
+      width={620}
       destroyOnClose
       extra={
         <Button
@@ -196,16 +129,12 @@ export function RuleEditorDrawer({
         layout="vertical"
         initialValues={{
           priority: 100,
-          executionMode: "ai_first",
+          executionMode: "hybrid",
+          assignmentStrategy: "balanced_new_case",
           aiAssignmentStrategy: "least_busy",
-          assignmentStrategy: "least_busy",
-          hybridStrategy: "load_balanced",
-          customerRequestsHuman: "force_human",
-          aiUnhandled: "force_human",
           isActive: true
         }}
       >
-        {/* ── 基本信息 ── */}
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item label={t("routing.form.ruleName")} name="name" rules={[{ required: true, message: t("routing.form.ruleNameRequired") }]}>
@@ -224,8 +153,9 @@ export function RuleEditorDrawer({
           </Col>
         </Row>
 
-        {/* ── 命中条件 ── */}
-        <Divider style={{ marginTop: 4 }}><Typography.Text type="secondary" style={{ fontSize: 13 }}>{t("routing.form.matchConditions")}</Typography.Text></Divider>
+        <Divider style={{ marginTop: 4 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>{t("routing.form.matchConditions")}</Typography.Text>
+        </Divider>
         <Row gutter={16}>
           <Col span={8}>
             <Form.Item label={t("routing.form.channel")} name="channelType">
@@ -251,7 +181,7 @@ export function RuleEditorDrawer({
           </Col>
           <Col span={8}>
             <Form.Item label={t("routing.form.language")} name="customerLanguage">
-              <Select allowClear options={LANGUAGE_OPTIONS.map((i) => ({ value: i.value, label: t(i.labelKey) }))} placeholder={t("routing.form.anyLanguage")} />
+              <Select allowClear options={LANGUAGE_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))} placeholder={t("routing.form.anyLanguage")} />
             </Form.Item>
           </Col>
           <Col span={8}>
@@ -261,21 +191,28 @@ export function RuleEditorDrawer({
           </Col>
         </Row>
 
-        {/* ── 执行模式 ── */}
-        <Divider style={{ marginTop: 4 }}><Typography.Text type="secondary" style={{ fontSize: 13 }}>{t("routing.form.routingAction")}</Typography.Text></Divider>
+        <Divider style={{ marginTop: 4 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>默认调度策略</Typography.Text>
+        </Divider>
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item label={t("routing.form.executionMode")} name="executionMode" rules={[{ required: true }]}>
-              <Select options={EXECUTION_MODE_OPTIONS.map((i) => ({ value: i.value, label: t(i.labelKey) }))} />
+              <Select
+                options={EXECUTION_MODE_OPTIONS.map((item) => ({
+                  value: item.value,
+                  label: item.value === "hybrid" ? "智能分配" : item.value === "human_first" ? "偏人工" : "偏AI"
+                }))}
+              />
             </Form.Item>
           </Col>
         </Row>
         <Typography.Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
-          {t("routing.form.executionHint")}
+          智能分配会结合在线人工、AI、排班和负载自动选择最合适的处理方。偏人工和偏AI只影响默认倾向，不需要再配置回退规则。
         </Typography.Text>
 
-        {/* ── 人工目标 ── */}
-        <Divider plain><Typography.Text type="secondary" style={{ fontSize: 13 }}>{t("routing.form.humanTarget")}</Typography.Text></Divider>
+        <Divider plain>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>服务目标</Typography.Text>
+        </Divider>
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item label={t("routing.form.targetDepartment")} name="targetDepartmentId">
@@ -292,125 +229,36 @@ export function RuleEditorDrawer({
               <Select
                 allowClear
                 placeholder={t("routing.form.anyTeamInDepartment")}
-                options={teamOptions.map((t) => ({ value: t.teamId, label: `${t.name} / ${t.departmentName}` }))}
+                options={teamOptions.map((team) => ({ value: team.teamId, label: `${team.name} / ${team.departmentName}` }))}
               />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item label={t("routing.form.targetSkillGroup")} name="targetSkillGroupCode" rules={[{ required: true, message: t("routing.form.targetSkillGroupRequired") }]}>
-              <Select showSearch optionFilterProp="label" options={activeGroups} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item label={t("routing.form.assignmentStrategy")} name="assignmentStrategy" rules={[{ required: true }]}>
-              <Select options={STRATEGY_OPTIONS.map((i) => ({ value: i.value, label: t(i.labelKey) }))} />
-            </Form.Item>
-          </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item label={t("routing.form.aiAgent")} name="aiAgentId">
-              <Select allowClear placeholder={t("routing.form.autoSelectAi")} options={activeAiAgents} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item label={t("routing.form.aiAssignmentStrategy")} name="aiAssignmentStrategy" rules={[{ required: true }]}>
-              <Select options={AI_STRATEGY_OPTIONS.map((i) => ({ value: i.value, label: t(i.labelKey) }))} />
-            </Form.Item>
-          </Col>
-        </Row>
-
-        {/* ── 容量与覆盖策略 ── */}
-        <Divider plain><Typography.Text type="secondary" style={{ fontSize: 13 }}>{t("routing.form.capacityAndOverrides")}</Typography.Text></Divider>
-        <Row gutter={16}>
-          <Col span={8}>
-            <Form.Item label={t("routing.form.humanToAiThreshold")} name="humanToAiThresholdPct">
-              <InputNumber min={0} max={100} style={{ width: "100%" }} placeholder={t("routing.form.noOverflow")} />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item label={t("routing.form.aiToHumanThreshold")} name="aiToHumanThresholdPct">
-              <InputNumber min={0} max={100} style={{ width: "100%" }} placeholder={t("routing.form.noOverflow")} />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item label={t("routing.form.aiSoftConcurrencyLimit")} name="aiSoftConcurrencyLimit">
-              <InputNumber min={1} max={500} style={{ width: "100%" }} placeholder={t("routing.form.loadEstimate")} />
-            </Form.Item>
-          </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col span={8}>
-            <Form.Item label={t("routing.form.hybridStrategy")} name="hybridStrategy">
-              <Select options={HYBRID_STRATEGY_OPTIONS.map((i) => ({ value: i.value, label: t(i.labelKey) }))} />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item label={t("routing.form.customerRequestsHuman")} name="customerRequestsHuman" rules={[{ required: true }]}>
-              <Select options={OVERRIDE_OPTIONS.map((i) => ({ value: i.value, label: t(i.labelKey) }))} />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item label={t("routing.form.aiUnhandled")} name="aiUnhandled" rules={[{ required: true }]}>
-              <Select options={AI_UNHANDLED_OPTIONS.map((i) => ({ value: i.value, label: t(i.labelKey) }))} />
-            </Form.Item>
-          </Col>
-        </Row>
-        <Row gutter={16}>
-          <Col span={24}>
-            <Form.Item label={t("routing.form.humanKeywords")} name="humanRequestKeywords">
-              <Input.TextArea rows={2} placeholder={t("routing.form.humanKeywordsPlaceholder")} />
-            </Form.Item>
-          </Col>
-        </Row>
-
-        {/* ── 回退目标 ── */}
-        <Divider plain><Typography.Text type="secondary" style={{ fontSize: 13 }}>{t("routing.form.fallbackTarget")}</Typography.Text></Divider>
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item label={t("routing.form.fallbackDepartment")} name="fallbackDepartmentId">
+            <Form.Item label="技能组" name="targetSkillGroupCode">
               <Select
                 allowClear
-                placeholder={t("routing.form.fallbackReuseHumanTarget")}
-                options={departmentOptions}
-                onChange={() => form.setFieldValue("fallbackTeamId", undefined)}
+                showSearch
+                optionFilterProp="label"
+                options={activeGroups}
+                placeholder="不指定则由系统自动选择最合适技能组"
               />
             </Form.Item>
           </Col>
           <Col span={12}>
-            <Form.Item label={t("routing.form.fallbackTeam")} name="fallbackTeamId">
-              <Select
-                allowClear
-                placeholder={t("routing.form.fallbackReuseHumanTarget")}
-                options={fallbackTeamOptions.map((t) => ({ value: t.teamId, label: `${t.name} / ${t.departmentName}` }))}
-              />
+            <Form.Item label="人工分配策略" name="assignmentStrategy" rules={[{ required: true }]}>
+              <Select options={STRATEGY_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))} />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item label={t("routing.form.fallbackSkillGroup")} name="fallbackSkillGroupCode">
-              <Select allowClear showSearch optionFilterProp="label" placeholder={t("routing.form.fallbackReuseHumanTarget")} options={activeGroups} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item label={t("routing.form.fallbackStrategy")} name="fallbackAssignmentStrategy">
-              <Select
-                allowClear
-                placeholder={t("routing.form.fallbackReuseHumanTarget")}
-                options={STRATEGY_OPTIONS.map((i) => ({ value: i.value, label: t(i.labelKey) }))}
-              />
+            <Form.Item label="AI 分配策略" name="aiAssignmentStrategy" rules={[{ required: true }]}>
+              <Select options={AI_STRATEGY_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))} />
             </Form.Item>
           </Col>
         </Row>
-
-        {showAiHint && (
-          <Typography.Text type="secondary">
-            {t("routing.form.aiHint")}
-          </Typography.Text>
-        )}
       </Form>
     </Drawer>
   );

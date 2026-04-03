@@ -1,17 +1,12 @@
 /**
  * 菜单路径与名称: 客户中心 -> 路由
- * 文件职责: 提供路由规则读写、摘要展示与接口提交 payload 拼装能力。
- * 主要交互文件:
- * - ./components/RuleTable.tsx
- * - ./hooks/useRoutingData.ts
- * - ./modals/RuleEditorDrawer.tsx
- * - ./types.ts
+ * 文件职责: 提供第一阶段智能调度规则的读写与摘要能力。
  */
 
 import type { ChannelConfig, DepartmentItem, RoutingRule, TeamItem } from "../../types";
 import i18next from "i18next";
 import type { RuleFormValues } from "./types";
-import { STRATEGY_OPTIONS } from "./types";
+import { AI_STRATEGY_OPTIONS, EXECUTION_MODE_OPTIONS, STRATEGY_OPTIONS } from "./types";
 
 function formatChannelInstanceLabel(channel: ChannelConfig): string {
   if (channel.channel_type === "whatsapp") {
@@ -27,61 +22,30 @@ function formatChannelInstanceLabel(channel: ChannelConfig): string {
       || channel.channel_id;
   }
 
-  if (channel.channel_type === "webhook") {
-    return channel.channel_id;
-  }
-
   return channel.channel_id;
 }
 
-export function readHumanTarget(rule: RoutingRule) {
+export function readServiceTarget(rule: RoutingRule) {
   return {
-    targetDepartmentId: rule.actions.humanTarget?.departmentId,
-    targetTeamId: rule.actions.humanTarget?.teamId,
-    targetSkillGroupCode: rule.actions.humanTarget?.skillGroupCode ?? "",
-    assignmentStrategy: rule.actions.humanTarget?.assignmentStrategy ?? "least_busy"
-  };
-}
-
-export function readFallbackTarget(rule: RoutingRule) {
-  return {
-    fallbackDepartmentId: rule.actions.fallbackTarget?.departmentId,
-    fallbackTeamId: rule.actions.fallbackTarget?.teamId,
-    fallbackSkillGroupCode: rule.actions.fallbackTarget?.skillGroupCode,
-    fallbackAssignmentStrategy: rule.actions.fallbackTarget?.assignmentStrategy
+    targetDepartmentId: rule.actions.serviceTarget?.departmentId,
+    targetTeamId: rule.actions.serviceTarget?.teamId,
+    targetSkillGroupCode: rule.actions.serviceTarget?.skillGroupCode
   };
 }
 
 export function readExecutionMode(rule: RoutingRule): RuleFormValues["executionMode"] {
-  return rule.actions.executionMode ?? "ai_first";
+  if (rule.actions.executionMode === "human_first" || rule.actions.executionMode === "ai_first" || rule.actions.executionMode === "hybrid") {
+    return rule.actions.executionMode;
+  }
+  return "hybrid";
 }
 
-export function readAiAgentId(rule: RoutingRule) {
-  return rule.actions.aiTarget?.aiAgentId;
+export function readHumanStrategy(rule: RoutingRule): RuleFormValues["assignmentStrategy"] {
+  return rule.actions.humanStrategy ?? "balanced_new_case";
 }
 
-export function readAiAssignmentStrategy(rule: RoutingRule): RuleFormValues["aiAssignmentStrategy"] {
-  return rule.actions.aiTarget?.assignmentStrategy ?? "least_busy";
-}
-
-export function readOverflowPolicy(rule: RoutingRule) {
-  return {
-    humanToAiThresholdPct: rule.actions.overflowPolicy?.humanToAiThresholdPct,
-    aiToHumanThresholdPct: rule.actions.overflowPolicy?.aiToHumanThresholdPct,
-    aiSoftConcurrencyLimit: rule.actions.overflowPolicy?.aiSoftConcurrencyLimit
-  };
-}
-
-export function readHybridStrategy(rule: RoutingRule): RuleFormValues["hybridStrategy"] {
-  return rule.actions.hybridPolicy?.strategy ?? "load_balanced";
-}
-
-export function readOverrides(rule: RoutingRule) {
-  return {
-    customerRequestsHuman: rule.actions.overrides?.customerRequestsHuman ?? "force_human",
-    humanRequestKeywords: (rule.actions.overrides?.humanRequestKeywords ?? []).join("\n"),
-    aiUnhandled: rule.actions.overrides?.aiUnhandled ?? "force_human"
-  };
+export function readAiStrategy(rule: RoutingRule): RuleFormValues["aiAssignmentStrategy"] {
+  return rule.actions.aiStrategy ?? "least_busy";
 }
 
 export function buildRuleSummary(
@@ -90,34 +54,32 @@ export function buildRuleSummary(
   teams: TeamItem[],
   channels: ChannelConfig[] = []
 ) {
-  const humanTarget = readHumanTarget(rule);
-  const department = departments.find((item) => item.departmentId === humanTarget.targetDepartmentId);
-  const team = teams.find((item) => item.teamId === humanTarget.targetTeamId);
-  const fallback = readFallbackTarget(rule);
+  const serviceTarget = readServiceTarget(rule);
+  const department = departments.find((item) => item.departmentId === serviceTarget.targetDepartmentId);
+  const team = teams.find((item) => item.teamId === serviceTarget.targetTeamId);
   const matchedChannel = rule.conditions.channelId
     ? channels.find((item) => item.channel_id === rule.conditions.channelId)
     : undefined;
   const channelTypeLabel = matchedChannel?.channel_type ?? rule.conditions.channelType ?? i18next.t("routing.summary.any");
-  const channelInstanceLabel = matchedChannel
-    ? formatChannelInstanceLabel(matchedChannel)
-    : (rule.conditions.channelId ?? null);
+  const channelInstanceLabel = matchedChannel ? formatChannelInstanceLabel(matchedChannel) : (rule.conditions.channelId ?? null);
 
   return {
     executionMode: readExecutionMode(rule),
     channel: channelTypeLabel,
     channelInstance: channelInstanceLabel,
-    language: rule.conditions.customerLanguage ? i18next.t(`routing.options.language.${rule.conditions.customerLanguage}`, { defaultValue: rule.conditions.customerLanguage }) : i18next.t("routing.summary.any"),
+    language: rule.conditions.customerLanguage
+      ? i18next.t(`routing.options.language.${rule.conditions.customerLanguage}`, { defaultValue: rule.conditions.customerLanguage })
+      : i18next.t("routing.summary.any"),
     tier: rule.conditions.customerTier ?? i18next.t("routing.summary.any"),
     departmentName: team?.departmentName ?? department?.name ?? i18next.t("routing.summary.anyDepartment"),
     teamName: team?.name ?? i18next.t("routing.summary.autoTeam"),
-    skillGroupCode: humanTarget.targetSkillGroupCode ?? "-",
-    aiAgentId: readAiAgentId(rule) ?? null,
-    aiStrategy: i18next.t(`routing.options.strategy.${readAiAssignmentStrategy(rule)}`, { defaultValue: STRATEGY_OPTIONS.find((item) => item.value === readAiAssignmentStrategy(rule))?.labelKey ?? readAiAssignmentStrategy(rule) }),
-    strategy: i18next.t(`routing.options.strategy.${humanTarget.assignmentStrategy}`, { defaultValue: STRATEGY_OPTIONS.find((item) => item.value === humanTarget.assignmentStrategy)?.labelKey ?? humanTarget.assignmentStrategy }),
-    fallbackSkillGroupCode: fallback.fallbackSkillGroupCode ?? i18next.t("routing.summary.reuseHumanTarget"),
-    humanToAiThresholdPct: rule.actions.overflowPolicy?.humanToAiThresholdPct ?? null,
-    aiToHumanThresholdPct: rule.actions.overflowPolicy?.aiToHumanThresholdPct ?? null,
-    hybridStrategy: rule.actions.hybridPolicy?.strategy ?? null
+    skillGroupCode: serviceTarget.targetSkillGroupCode ?? i18next.t("routing.summary.auto"),
+    humanStrategy: i18next.t(`routing.options.strategy.${readHumanStrategy(rule)}`, {
+      defaultValue: STRATEGY_OPTIONS.find((item) => item.value === readHumanStrategy(rule))?.labelKey ?? readHumanStrategy(rule)
+    }),
+    aiStrategy: i18next.t(`routing.options.strategy.${readAiStrategy(rule)}`, {
+      defaultValue: AI_STRATEGY_OPTIONS.find((item) => item.value === readAiStrategy(rule))?.labelKey ?? readAiStrategy(rule)
+    })
   };
 }
 
@@ -133,59 +95,23 @@ export function buildRulePayload(values: RuleFormValues) {
     },
     actions: {
       executionMode: values.executionMode,
-      humanTarget: {
+      serviceTarget: {
         ...(values.targetDepartmentId ? { departmentId: values.targetDepartmentId } : {}),
         ...(values.targetTeamId ? { teamId: values.targetTeamId } : {}),
-        skillGroupCode: values.targetSkillGroupCode,
-        assignmentStrategy: values.assignmentStrategy
+        ...(values.targetSkillGroupCode ? { skillGroupCode: values.targetSkillGroupCode } : {})
       },
-      aiTarget: {
-        ...(values.aiAgentId ? { aiAgentId: values.aiAgentId } : {}),
-        assignmentStrategy: values.aiAssignmentStrategy
-      },
-      ...((values.humanToAiThresholdPct !== undefined && values.humanToAiThresholdPct !== null) ||
-      (values.aiToHumanThresholdPct !== undefined && values.aiToHumanThresholdPct !== null) ||
-      (values.aiSoftConcurrencyLimit !== undefined && values.aiSoftConcurrencyLimit !== null)
-        ? {
-            overflowPolicy: {
-              ...(values.humanToAiThresholdPct !== undefined && values.humanToAiThresholdPct !== null
-                ? { humanToAiThresholdPct: values.humanToAiThresholdPct }
-                : {}),
-              ...(values.aiToHumanThresholdPct !== undefined && values.aiToHumanThresholdPct !== null
-                ? { aiToHumanThresholdPct: values.aiToHumanThresholdPct }
-                : {}),
-              ...(values.aiSoftConcurrencyLimit !== undefined && values.aiSoftConcurrencyLimit !== null
-                ? { aiSoftConcurrencyLimit: values.aiSoftConcurrencyLimit }
-                : {})
-            }
-          }
-        : {}),
-      ...(values.hybridStrategy
-        ? { hybridPolicy: { strategy: values.hybridStrategy } }
-        : {}),
-      overrides: {
-        customerRequestsHuman: values.customerRequestsHuman,
-        ...(values.humanRequestKeywords?.trim()
-          ? {
-              humanRequestKeywords: values.humanRequestKeywords
-                .split(/\r?\n|,/)
-                .map((item) => item.trim())
-                .filter(Boolean)
-            }
-          : {}),
-        aiUnhandled: values.aiUnhandled
-      },
-      ...(values.fallbackDepartmentId || values.fallbackTeamId || values.fallbackSkillGroupCode || values.fallbackAssignmentStrategy
-        ? {
-            fallbackTarget: {
-              ...(values.fallbackDepartmentId ? { departmentId: values.fallbackDepartmentId } : {}),
-              ...(values.fallbackTeamId ? { teamId: values.fallbackTeamId } : {}),
-              ...(values.fallbackSkillGroupCode ? { skillGroupCode: values.fallbackSkillGroupCode } : {}),
-              ...(values.fallbackAssignmentStrategy ? { assignmentStrategy: values.fallbackAssignmentStrategy } : {})
-            }
-          }
-        : {})
+      humanStrategy: values.assignmentStrategy,
+      aiStrategy: values.aiAssignmentStrategy
     },
     isActive: values.isActive
   };
+}
+
+export function getExecutionModeLabel(mode: RuleFormValues["executionMode"]) {
+  const option = EXECUTION_MODE_OPTIONS.find((item) => item.value === mode);
+  if (!option) return mode;
+  if (mode === "hybrid") return "智能分配";
+  if (mode === "human_first") return "偏人工";
+  if (mode === "ai_first") return "偏AI";
+  return option.labelKey;
 }

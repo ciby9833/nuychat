@@ -499,69 +499,15 @@ export function serializeRoutingRuleActions(value: unknown) {
   const normalized = normalizeRoutingRuleActions(value);
   return {
     executionMode: normalized.executionMode,
-    humanTarget: {
-      ...(normalized.humanTarget.departmentId ? { departmentId: normalized.humanTarget.departmentId } : {}),
-      ...(normalized.humanTarget.departmentCode ? { departmentCode: normalized.humanTarget.departmentCode } : {}),
-      ...(normalized.humanTarget.teamId ? { teamId: normalized.humanTarget.teamId } : {}),
-      ...(normalized.humanTarget.teamCode ? { teamCode: normalized.humanTarget.teamCode } : {}),
-      ...(normalized.humanTarget.skillGroupCode ? { skillGroupCode: normalized.humanTarget.skillGroupCode } : {}),
-      ...(normalized.humanTarget.assignmentStrategy ? { assignmentStrategy: normalized.humanTarget.assignmentStrategy } : {})
+    serviceTarget: {
+      ...(normalized.serviceTarget.departmentId ? { departmentId: normalized.serviceTarget.departmentId } : {}),
+      ...(normalized.serviceTarget.departmentCode ? { departmentCode: normalized.serviceTarget.departmentCode } : {}),
+      ...(normalized.serviceTarget.teamId ? { teamId: normalized.serviceTarget.teamId } : {}),
+      ...(normalized.serviceTarget.teamCode ? { teamCode: normalized.serviceTarget.teamCode } : {}),
+      ...(normalized.serviceTarget.skillGroupCode ? { skillGroupCode: normalized.serviceTarget.skillGroupCode } : {})
     },
-    aiTarget: {
-      ...(normalized.aiTarget.aiAgentId ? { aiAgentId: normalized.aiTarget.aiAgentId } : {}),
-      ...(normalized.aiTarget.assignmentStrategy ? { assignmentStrategy: normalized.aiTarget.assignmentStrategy } : {})
-    },
-    ...(normalized.overflowPolicy.humanToAiThresholdPct !== null ||
-    normalized.overflowPolicy.aiToHumanThresholdPct !== null ||
-    normalized.overflowPolicy.aiSoftConcurrencyLimit !== null
-      ? {
-          overflowPolicy: {
-            ...(normalized.overflowPolicy.humanToAiThresholdPct !== null
-              ? { humanToAiThresholdPct: normalized.overflowPolicy.humanToAiThresholdPct }
-              : {}),
-            ...(normalized.overflowPolicy.aiToHumanThresholdPct !== null
-              ? { aiToHumanThresholdPct: normalized.overflowPolicy.aiToHumanThresholdPct }
-              : {}),
-            ...(normalized.overflowPolicy.aiSoftConcurrencyLimit !== null
-              ? { aiSoftConcurrencyLimit: normalized.overflowPolicy.aiSoftConcurrencyLimit }
-              : {})
-          }
-        }
-      : {}),
-    ...(normalized.hybridPolicy.strategy
-      ? {
-          hybridPolicy: {
-            strategy: normalized.hybridPolicy.strategy
-          }
-        }
-      : {}),
-    ...(normalized.overrides.customerRequestsHuman ||
-    normalized.overrides.humanRequestKeywords.length > 0 ||
-    normalized.overrides.aiUnhandled
-      ? {
-          overrides: {
-            ...(normalized.overrides.customerRequestsHuman
-              ? { customerRequestsHuman: normalized.overrides.customerRequestsHuman }
-              : {}),
-            ...(normalized.overrides.humanRequestKeywords.length > 0
-              ? { humanRequestKeywords: normalized.overrides.humanRequestKeywords }
-              : {}),
-            ...(normalized.overrides.aiUnhandled
-              ? { aiUnhandled: normalized.overrides.aiUnhandled }
-              : {})
-          }
-        }
-      : {}),
-    ...(normalized.fallbackTarget
-      ? {
-          fallbackTarget: {
-            ...(normalized.fallbackTarget.departmentId ? { departmentId: normalized.fallbackTarget.departmentId } : {}),
-            ...(normalized.fallbackTarget.teamId ? { teamId: normalized.fallbackTarget.teamId } : {}),
-            ...(normalized.fallbackTarget.skillGroupCode ? { skillGroupCode: normalized.fallbackTarget.skillGroupCode } : {}),
-            ...(normalized.fallbackTarget.assignmentStrategy ? { assignmentStrategy: normalized.fallbackTarget.assignmentStrategy } : {})
-          }
-        }
-      : {})
+    ...(normalized.humanStrategy ? { humanStrategy: normalized.humanStrategy } : {}),
+    ...(normalized.aiStrategy ? { aiStrategy: normalized.aiStrategy } : {})
   };
 }
 

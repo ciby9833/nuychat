@@ -276,37 +276,15 @@ export type RoutingRule = {
   };
   actions: {
     executionMode?: "ai_first" | "human_first" | "ai_only" | "human_only" | "hybrid";
-    humanTarget?: {
+    serviceTarget?: {
       departmentId?: string;
       departmentCode?: string;
       teamId?: string;
       teamCode?: string;
       skillGroupCode?: string;
-      assignmentStrategy?: "round_robin" | "least_busy" | "balanced_new_case" | "sticky";
     };
-    aiTarget?: {
-      aiAgentId?: string;
-      assignmentStrategy?: "round_robin" | "least_busy" | "sticky";
-    };
-    overflowPolicy?: {
-      humanToAiThresholdPct?: number;
-      aiToHumanThresholdPct?: number;
-      aiSoftConcurrencyLimit?: number;
-    };
-    hybridPolicy?: {
-      strategy?: "load_balanced" | "prefer_human" | "prefer_ai";
-    };
-    overrides?: {
-      customerRequestsHuman?: "force_human" | "allow_policy";
-      humanRequestKeywords?: string[];
-      aiUnhandled?: "force_human" | "queue_human" | "allow_policy";
-    };
-    fallbackTarget?: {
-      departmentId?: string;
-      teamId?: string;
-      skillGroupCode?: string;
-      assignmentStrategy?: "round_robin" | "least_busy" | "balanced_new_case" | "sticky";
-    };
+    humanStrategy?: "round_robin" | "least_busy" | "balanced_new_case" | "sticky";
+    aiStrategy?: "round_robin" | "least_busy" | "sticky";
   };
 };
 

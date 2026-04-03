@@ -2,6 +2,11 @@ import type { Knex } from "knex";
 
 import type { RoutingAssignmentStrategy } from "./types.js";
 
+export type AIDispatchTarget = {
+  aiAgentId: string | null;
+  assignmentStrategy: RoutingAssignmentStrategy | null;
+};
+
 type AIAgentCandidate = {
   aiAgentId: string;
   aiAgentName: string;
@@ -42,10 +47,7 @@ export class AIDispatchService {
     db: Knex | Knex.Transaction,
     input: {
       tenantId: string;
-      aiTarget: {
-        aiAgentId: string | null;
-        assignmentStrategy: RoutingAssignmentStrategy | null;
-      };
+      aiTarget: AIDispatchTarget;
       aiSoftConcurrencyLimit: number | null;
     }
   ): Promise<AICapacitySnapshot> {
@@ -75,10 +77,7 @@ export class AIDispatchService {
       tenantId: string;
       customerId: string;
       conversationId?: string | null;
-      aiTarget: {
-        aiAgentId: string | null;
-        assignmentStrategy: RoutingAssignmentStrategy | null;
-      };
+      aiTarget: AIDispatchTarget;
     }
   ): Promise<AIDispatchDecision> {
     const candidates = await loadActiveAIAgents(db, input.tenantId, input.aiTarget.aiAgentId);

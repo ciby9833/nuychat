@@ -33,24 +33,12 @@ export type RuleFormValues = {
   channelId?: string;
   customerLanguage?: string;
   customerTier?: string;
-  executionMode: "ai_first" | "human_first" | "ai_only" | "human_only" | "hybrid";
+  executionMode: "ai_first" | "human_first" | "hybrid";
   targetDepartmentId?: string;
   targetTeamId?: string;
-  targetSkillGroupCode: string;
-  aiAgentId?: string;
-  aiAssignmentStrategy: "round_robin" | "least_busy" | "sticky";
+  targetSkillGroupCode?: string;
   assignmentStrategy: "round_robin" | "least_busy" | "balanced_new_case" | "sticky";
-  humanToAiThresholdPct?: number;
-  aiToHumanThresholdPct?: number;
-  aiSoftConcurrencyLimit?: number;
-  hybridStrategy?: "load_balanced" | "prefer_human" | "prefer_ai";
-  customerRequestsHuman: "force_human" | "allow_policy";
-  humanRequestKeywords?: string;
-  aiUnhandled: "force_human" | "queue_human" | "allow_policy";
-  fallbackDepartmentId?: string;
-  fallbackTeamId?: string;
-  fallbackSkillGroupCode?: string;
-  fallbackAssignmentStrategy?: "round_robin" | "least_busy" | "balanced_new_case" | "sticky";
+  aiAssignmentStrategy: "round_robin" | "least_busy" | "sticky";
   isActive: boolean;
 };
 
@@ -93,26 +81,7 @@ export const MODULE_MODE_OPTIONS = [
 ] as const;
 
 export const EXECUTION_MODE_OPTIONS = [
-  { value: "ai_first", labelKey: "routing.options.executionMode.ai_first" },
+  { value: "hybrid", labelKey: "routing.options.executionMode.hybrid" },
   { value: "human_first", labelKey: "routing.options.executionMode.human_first" },
-  { value: "ai_only", labelKey: "routing.options.executionMode.ai_only" },
-  { value: "human_only", labelKey: "routing.options.executionMode.human_only" },
-  { value: "hybrid", labelKey: "routing.options.executionMode.hybrid" }
-] as const;
-
-export const HYBRID_STRATEGY_OPTIONS = [
-  { value: "load_balanced", labelKey: "routing.options.hybridStrategy.load_balanced" },
-  { value: "prefer_human", labelKey: "routing.options.hybridStrategy.prefer_human" },
-  { value: "prefer_ai", labelKey: "routing.options.hybridStrategy.prefer_ai" }
-] as const;
-
-export const OVERRIDE_OPTIONS = [
-  { value: "force_human", labelKey: "routing.options.override.force_human" },
-  { value: "allow_policy", labelKey: "routing.options.override.allow_policy" }
-] as const;
-
-export const AI_UNHANDLED_OPTIONS = [
-  { value: "force_human", labelKey: "routing.options.aiUnhandled.force_human" },
-  { value: "queue_human", labelKey: "routing.options.aiUnhandled.queue_human" },
-  { value: "allow_policy", labelKey: "routing.options.aiUnhandled.allow_policy" }
+  { value: "ai_first", labelKey: "routing.options.executionMode.ai_first" }
 ] as const;

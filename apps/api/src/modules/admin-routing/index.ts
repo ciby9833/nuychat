@@ -236,7 +236,7 @@ export async function adminRoutingRoutes(app: FastifyInstance) {
         trx("routing_rules")
           .where({ tenant_id: tenantId })
           .whereRaw(
-            "actions #>> '{humanTarget,skillGroupCode}' = (select code from skill_groups where tenant_id = ? and skill_group_id = ?)",
+            "actions #>> '{serviceTarget,skillGroupCode}' = (select code from skill_groups where tenant_id = ? and skill_group_id = ?)",
             [tenantId, skillGroupId]
           )
           .count<{ cnt: string }>("rule_id as cnt")

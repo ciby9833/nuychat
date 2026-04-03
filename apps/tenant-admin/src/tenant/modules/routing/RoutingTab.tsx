@@ -94,7 +94,6 @@ export function RoutingTab() {
             channels={data.channels}
             departments={data.departments}
             teams={data.teams}
-            aiAgents={data.aiAgents}
             loading={data.loading}
             onEdit={openRuleEditor}
             onDelete={handleDeleteRule}
@@ -172,7 +171,6 @@ export function RoutingTab() {
         channels={data.channels}
         departments={data.departments}
         teams={data.teams}
-        aiAgents={data.aiAgents}
         groups={data.groups}
         onClose={() => { setEditorOpen(false); setEditingRule(null); }}
         onSubmit={handleRuleSubmit}

@@ -12,15 +12,12 @@ import { CheckCircleOutlined, DeleteOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Table, Tag, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 
-import type { ChannelConfig, DepartmentItem, RoutingRule, TeamItem, TenantAIAgent } from "../../../types";
-import { buildRuleSummary } from "../helpers";
-import { EXECUTION_MODE_OPTIONS } from "../types";
+import type { ChannelConfig, DepartmentItem, RoutingRule, TeamItem } from "../../../types";
+import { buildRuleSummary, getExecutionModeLabel } from "../helpers";
 
 const executionModeColor: Record<string, string> = {
   ai_first: "blue",
   human_first: "green",
-  ai_only: "purple",
-  human_only: "orange",
   hybrid: "cyan"
 };
 
@@ -29,7 +26,6 @@ export function RuleTable({
   channels,
   departments,
   teams,
-  aiAgents,
   loading,
   onEdit,
   onDelete
@@ -38,7 +34,6 @@ export function RuleTable({
   channels: ChannelConfig[];
   departments: DepartmentItem[];
   teams: TeamItem[];
-  aiAgents: TenantAIAgent[];
   loading: boolean;
   onEdit: (ruleId: string) => void;
   onDelete: (ruleId: string) => void;
@@ -61,8 +56,8 @@ export function RuleTable({
               <Typography.Text strong>{row.name}</Typography.Text>
               <Space size={4}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t("routing.summary.priority", { count: row.priority })}</Typography.Text>
-                <Tag color={executionModeColor[row.actions.executionMode ?? "ai_first"] ?? "default"} style={{ fontSize: 11 }}>
-                  {t(`routing.options.executionMode.${row.actions.executionMode ?? "ai_first"}`, { defaultValue: EXECUTION_MODE_OPTIONS.find((o) => o.value === (row.actions.executionMode ?? "ai_first"))?.labelKey ?? row.actions.executionMode })}
+                <Tag color={executionModeColor[row.actions.executionMode ?? "hybrid"] ?? "default"} style={{ fontSize: 11 }}>
+                  {getExecutionModeLabel((row.actions.executionMode as "ai_first" | "human_first" | "hybrid" | undefined) ?? "hybrid")}
                 </Tag>
               </Space>
             </Space>
@@ -105,7 +100,7 @@ export function RuleTable({
               <Space direction="vertical" size={0}>
                 <Typography.Text>{s.skillGroupCode}</Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  AI: {aiAgents.find((a) => a.aiAgentId === s.aiAgentId)?.name ?? t("routing.summary.auto")} | {s.strategy}
+                  人工: {s.humanStrategy} | AI: {s.aiStrategy}
                 </Typography.Text>
               </Space>
             );

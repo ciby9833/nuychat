@@ -1,9 +1,10 @@
 import type { Knex } from "knex";
 
 import { isHumanHandoffIntent } from "../ai/ai-runtime-contract.js";
-import { AIDispatchService } from "./ai-dispatch.service.js";
-import { HumanDispatchService } from "./human-dispatch.service.js";
-import { normalizeRoutingRuleActions, type NormalizedRoutingRuleActions } from "./routing-rule-schema.js";
+import { AIDispatchService, type AIDispatchTarget } from "./ai-dispatch.service.js";
+import { HumanDispatchService, type HumanDispatchTarget } from "./human-dispatch.service.js";
+import { RoutingDefaultTargetService } from "./routing-default-target.service.js";
+import { normalizeRoutingRuleActions } from "./routing-rule-schema.js";
 import type { RoutingContext, RoutingOwnerSide, RoutingPlan, RoutingPlanAction, RoutingPlanMode } from "./types.js";
 
 type RoutingRuleRow = {
@@ -16,35 +17,33 @@ type RoutingRuleRow = {
 
 const aiDispatchService = new AIDispatchService();
 const humanDispatchService = new HumanDispatchService();
+const routingDefaultTargetService = new RoutingDefaultTargetService();
 
 export class RoutingDecisionService {
-  async createPlan(
-    db: Knex | Knex.Transaction,
-    context: RoutingContext
-  ): Promise<RoutingPlan> {
+  async createPlan(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingPlan> {
     if (context.preserveHumanOwner) {
       return buildPreservedHumanPlan(context);
     }
 
     const matchedRule = await findMatchedRule(db, context);
-    const normalized = normalizeRoutingRuleActions(matchedRule?.actions ?? {});
-    const mode = resolvePolicyMode(context.operatingMode, normalized.executionMode);
+    const policy = await resolvePolicy(db, context, matchedRule);
+    const mode = resolvePolicyMode(context.operatingMode, policy.executionMode);
 
     const [humanCapacity, aiCapacity] = await Promise.all([
       humanDispatchService.inspectTarget(db, {
         tenantId: context.tenantId,
-        target: normalized.humanTarget,
+        target: policy.humanTarget,
         priority: matchedRule?.priority ?? 100
       }),
       aiDispatchService.inspectTarget(db, {
         tenantId: context.tenantId,
-        aiTarget: normalized.aiTarget,
-        aiSoftConcurrencyLimit: normalized.overflowPolicy.aiSoftConcurrencyLimit
+        aiTarget: policy.aiTarget,
+        aiSoftConcurrencyLimit: null
       })
     ]);
 
-    const override = resolveOverride(context, normalized);
-    const selectedOwnerType = resolveOwnerSide(mode, normalized, override, {
+    const override = resolveOverride(context);
+    const selectedOwnerType = resolveOwnerSide(mode, context, override, {
       humanLoadPct: humanCapacity.loadPct,
       humanAvailableAgents: humanCapacity.eligibleAgents,
       aiLoadPct: aiCapacity.loadPct,
@@ -53,7 +52,7 @@ export class RoutingDecisionService {
 
     const humanDecision = await humanDispatchService.decideForTarget(db, {
       tenantId: context.tenantId,
-      target: normalized.humanTarget,
+      target: policy.humanTarget,
       priority: matchedRule?.priority ?? 100,
       reason: selectedOwnerType === "human" ? "policy_selected_human" : "reserved_human_fallback",
       auditSource: buildAuditSource(matchedRule)
@@ -64,17 +63,17 @@ export class RoutingDecisionService {
           tenantId: context.tenantId,
           customerId: context.customerId,
           conversationId: context.conversationId,
-          aiTarget: normalized.aiTarget
+          aiTarget: policy.aiTarget
         })
       : {
           aiAgentId: null,
           aiAgentName: null,
           selectionReason: "policy_selected_human",
-          strategy: normalized.aiTarget.assignmentStrategy,
+          strategy: policy.aiTarget.assignmentStrategy,
           candidates: []
         };
 
-    const fallbackDecision = await buildFallbackDecision(db, context, normalized, matchedRule);
+    const fallbackDecision = await buildFallbackDecision(db, context, policy.humanTarget, matchedRule);
     const action = resolvePlanAction(selectedOwnerType, humanDecision.assignedAgentId);
     const decisionReason = describeDecisionReason({
       mode,
@@ -111,9 +110,7 @@ export class RoutingDecisionService {
       fallback: fallbackDecision,
       statusPlan: {
         conversationStatus: selectedOwnerType === "human" ? "queued" : "open",
-        queueStatus: selectedOwnerType === "human"
-          ? humanDecision.status
-          : "pending",
+        queueStatus: selectedOwnerType === "human" ? humanDecision.status : "pending",
         handoffRequired: false,
         selectedOwnerType
       },
@@ -154,17 +151,14 @@ export class RoutingDecisionService {
     };
   }
 
-  async createAgentHandoffPlan(
-    db: Knex | Knex.Transaction,
-    context: RoutingContext
-  ): Promise<RoutingPlan> {
+  async createAgentHandoffPlan(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingPlan> {
     const matchedRule = await findMatchedRule(db, context);
-    const normalized = normalizeRoutingRuleActions(matchedRule?.actions ?? {});
+    const policy = await resolvePolicy(db, context, matchedRule);
 
     const [humanDecision, aiSelection, fallbackDecision] = await Promise.all([
       humanDispatchService.decideForTarget(db, {
         tenantId: context.tenantId,
-        target: normalized.humanTarget,
+        target: policy.humanTarget,
         priority: matchedRule?.priority ?? 100,
         reason: "agent_handoff_human_fallback",
         auditSource: buildAuditSource(matchedRule)
@@ -173,9 +167,9 @@ export class RoutingDecisionService {
         tenantId: context.tenantId,
         customerId: context.customerId,
         conversationId: context.conversationId,
-        aiTarget: normalized.aiTarget
+        aiTarget: policy.aiTarget
       }),
-      buildFallbackDecision(db, context, normalized, matchedRule)
+      buildFallbackDecision(db, context, policy.humanTarget, matchedRule)
     ]);
 
     const selectedOwnerType: RoutingOwnerSide = aiSelection.aiAgentId ? "ai" : "human";
@@ -258,16 +252,13 @@ export class RoutingDecisionService {
     };
   }
 
-  async createAiHandoffHumanPlan(
-    db: Knex | Knex.Transaction,
-    context: RoutingContext
-  ): Promise<RoutingPlan> {
+  async createAiHandoffHumanPlan(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingPlan> {
     const matchedRule = await findMatchedRule(db, context);
-    const normalized = normalizeRoutingRuleActions(matchedRule?.actions ?? {});
+    const policy = await resolvePolicy(db, context, matchedRule);
 
     let humanDecision = await humanDispatchService.decideForTarget(db, {
       tenantId: context.tenantId,
-      target: normalized.humanTarget,
+      target: policy.humanTarget,
       priority: matchedRule?.priority ?? 100,
       reason: "ai_handoff_human_dispatch",
       auditSource: buildAuditSource(matchedRule)
@@ -276,25 +267,22 @@ export class RoutingDecisionService {
     if (!humanDecision.assignedAgentId) {
       const fallbackHumanDecision = await humanDispatchService.decideForAnyAvailableTarget(db, {
         tenantId: context.tenantId,
-        departmentId: normalized.humanTarget.departmentId,
-        teamId: normalized.humanTarget.teamId,
-        strategy: normalized.humanTarget.assignmentStrategy ?? "least_busy",
+        departmentId: policy.humanTarget.departmentId,
+        teamId: policy.humanTarget.teamId,
+        strategy: policy.humanTarget.assignmentStrategy ?? "balanced_new_case",
         priority: matchedRule?.priority ?? 100,
-        reason: "ai_handoff_human_dispatch_fallback_any_group",
+        reason: "ai_handoff_human_dispatch_any_available",
         auditSource: buildAuditSource(matchedRule),
-        excludeSkillGroupCodes: normalized.humanTarget.skillGroupCode ? [normalized.humanTarget.skillGroupCode] : []
+        excludeSkillGroupCodes: policy.humanTarget.skillGroupCode ? [policy.humanTarget.skillGroupCode] : []
       });
       if (fallbackHumanDecision) {
         humanDecision = fallbackHumanDecision;
       }
     }
 
-    const fallbackDecision = await buildFallbackDecision(db, context, normalized, matchedRule);
-
+    const fallbackDecision = await buildFallbackDecision(db, context, policy.humanTarget, matchedRule);
     const action: RoutingPlanAction = humanDecision.assignedAgentId ? "assign_specific_owner" : "enqueue_for_human";
-    const decisionReason = humanDecision.assignedAgentId
-      ? "ai_handoff:human_assigned"
-      : "ai_handoff:human_queue";
+    const decisionReason = humanDecision.assignedAgentId ? "ai_handoff:human_assigned" : "ai_handoff:human_queue";
 
     return {
       tenantId: context.tenantId,
@@ -365,10 +353,7 @@ export class RoutingDecisionService {
   }
 }
 
-async function findMatchedRule(
-  db: Knex | Knex.Transaction,
-  context: RoutingContext
-): Promise<RoutingRuleRow | null> {
+async function findMatchedRule(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingRuleRow | null> {
   const rules = await db("routing_rules")
     .where({ tenant_id: context.tenantId, is_active: true })
     .select("rule_id", "name", "priority", "conditions", "actions")
@@ -387,39 +372,54 @@ function matchesRule(conditions: Record<string, unknown>, context: RoutingContex
   });
 }
 
+async function resolvePolicy(
+  db: Knex | Knex.Transaction,
+  context: RoutingContext,
+  matchedRule: RoutingRuleRow | null
+): Promise<{
+  executionMode: RoutingPlanMode | null;
+  humanTarget: HumanDispatchTarget;
+  aiTarget: AIDispatchTarget;
+}> {
+  const normalized = normalizeRoutingRuleActions(matchedRule?.actions ?? {});
+  const humanStrategy = normalized.humanStrategy ?? "balanced_new_case";
+  const humanTarget = await routingDefaultTargetService.resolveHumanTarget(db, {
+    tenantId: context.tenantId,
+    serviceTarget: normalized.serviceTarget,
+    assignmentStrategy: humanStrategy,
+    priority: matchedRule?.priority ?? 100
+  });
+
+  return {
+    executionMode: normalized.executionMode,
+    humanTarget,
+    aiTarget: {
+      aiAgentId: null,
+      assignmentStrategy: normalized.aiStrategy ?? "least_busy"
+    }
+  };
+}
+
 function resolvePolicyMode(tenantOperatingMode: string, executionMode: RoutingPlanMode | null): RoutingPlanMode {
   if (executionMode) return executionMode;
   if (tenantOperatingMode === "human_first") return "human_first";
-  if (tenantOperatingMode === "ai_autonomous") return "ai_only";
-  return "ai_first";
+  if (tenantOperatingMode === "ai_first" || tenantOperatingMode === "ai_autonomous") return "ai_first";
+  return "hybrid";
 }
 
-function resolveOverride(
-  context: RoutingContext,
-  normalized: NormalizedRoutingRuleActions
-): { ownerType: RoutingOwnerSide | null; reason: string | null } {
-  const preview = (context.issueSummary.lastMessagePreview ?? "").toLowerCase();
-  const requestedHumanByKeyword = normalized.overrides.humanRequestKeywords.some((keyword) =>
-    preview.includes(keyword.toLowerCase())
-  );
-  const requestedHumanByIntent = isHumanHandoffIntent(context.issueSummary.lastIntent);
-
-  if (
-    normalized.overrides.customerRequestsHuman === "force_human" &&
-    (requestedHumanByKeyword || requestedHumanByIntent)
-  ) {
+function resolveOverride(context: RoutingContext): { ownerType: RoutingOwnerSide | null; reason: string | null } {
+  if (isHumanHandoffIntent(context.issueSummary.lastIntent)) {
     return {
       ownerType: "human",
-      reason: requestedHumanByIntent ? "customer_requested_human_by_intent" : "customer_requested_human_by_keyword"
+      reason: "customer_requested_human"
     };
   }
-
   return { ownerType: null, reason: null };
 }
 
 function resolveOwnerSide(
   mode: RoutingPlanMode,
-  normalized: NormalizedRoutingRuleActions,
+  context: RoutingContext,
   override: { ownerType: RoutingOwnerSide | null; reason: string | null },
   capacity: {
     humanLoadPct: number | null;
@@ -434,53 +434,56 @@ function resolveOwnerSide(
   if (mode === "ai_only") return "ai";
 
   if (mode === "human_first") {
-    if (capacity.humanAvailableAgents === 0 && capacity.aiAvailableAgents > 0) {
-      return "ai";
-    }
-    const overflowThreshold = normalized.overflowPolicy.humanToAiThresholdPct;
-    const shouldOverflow = overflowThreshold !== null &&
-      capacity.humanLoadPct !== null &&
-      capacity.humanLoadPct >= overflowThreshold &&
-      capacity.aiAvailableAgents > 0;
-
-    return shouldOverflow ? "ai" : "human";
+    if (capacity.humanAvailableAgents > 0) return "human";
+    return capacity.aiAvailableAgents > 0 ? "ai" : "human";
   }
 
   if (mode === "ai_first") {
-    if (capacity.aiAvailableAgents === 0 && capacity.humanAvailableAgents > 0) {
-      return "human";
-    }
-    const overflowThreshold = normalized.overflowPolicy.aiToHumanThresholdPct;
-    const shouldOverflow = overflowThreshold !== null &&
-      capacity.aiLoadPct !== null &&
-      capacity.aiLoadPct >= overflowThreshold &&
-      capacity.humanAvailableAgents > 0;
-
-    return shouldOverflow ? "human" : "ai";
-  }
-
-  const hybridStrategy = normalized.hybridPolicy.strategy ?? "load_balanced";
-  if (hybridStrategy === "prefer_human") {
-    if (capacity.humanAvailableAgents > 0) return "human";
-    return "ai";
-  }
-  if (hybridStrategy === "prefer_ai") {
     if (capacity.aiAvailableAgents > 0) return "ai";
-    return "human";
+    return capacity.humanAvailableAgents > 0 ? "human" : "ai";
   }
 
-  const humanLoad = capacity.humanLoadPct ?? Number.POSITIVE_INFINITY;
-  const aiLoad = capacity.aiLoadPct ?? Number.POSITIVE_INFINITY;
-
-  if (capacity.humanAvailableAgents === 0 && capacity.aiAvailableAgents > 0) return "ai";
-  if (capacity.aiAvailableAgents === 0) return "human";
-  return humanLoad <= aiLoad ? "human" : "ai";
+  return resolveSmartOwnerSide(context, capacity);
 }
 
-function resolvePlanAction(
-  selectedOwnerType: RoutingOwnerSide,
-  assignedAgentId: string | null
-): RoutingPlanAction {
+function resolveSmartOwnerSide(
+  context: RoutingContext,
+  capacity: {
+    humanLoadPct: number | null;
+    humanAvailableAgents: number;
+    aiLoadPct: number | null;
+    aiAvailableAgents: number;
+  }
+): RoutingOwnerSide {
+  if (capacity.humanAvailableAgents === 0 && capacity.aiAvailableAgents > 0) return "ai";
+  if (capacity.aiAvailableAgents === 0) return "human";
+
+  if (isHumanPriorityConversation(context)) return "human";
+  if (isAIFriendlyConversation(context)) return "ai";
+
+  const humanLoad = capacity.humanLoadPct ?? 100;
+  const aiLoad = capacity.aiLoadPct ?? 100;
+  return aiLoad < humanLoad ? "ai" : "human";
+}
+
+function isHumanPriorityConversation(context: RoutingContext): boolean {
+  const intent = (context.issueSummary.lastIntent ?? "").toLowerCase();
+  const sentiment = (context.issueSummary.lastSentiment ?? "").toLowerCase();
+  const tier = (context.customerTier ?? "").toLowerCase();
+
+  if (tier === "vip") return true;
+  if (sentiment.includes("negative") || sentiment.includes("angry")) return true;
+  return ["complaint", "refund", "dispute", "legal", "escalat", "cancel"].some((keyword) => intent.includes(keyword));
+}
+
+function isAIFriendlyConversation(context: RoutingContext): boolean {
+  const intent = (context.issueSummary.lastIntent ?? "").toLowerCase();
+  return ["faq", "order_status", "tracking", "logistics", "invoice", "hours", "pricing", "product"].some((keyword) =>
+    intent.includes(keyword)
+  );
+}
+
+function resolvePlanAction(selectedOwnerType: RoutingOwnerSide, assignedAgentId: string | null): RoutingPlanAction {
   if (selectedOwnerType === "ai") return "assign_ai_owner";
   if (assignedAgentId) return "assign_specific_owner";
   return "enqueue_for_human";
@@ -489,26 +492,12 @@ function resolvePlanAction(
 async function buildFallbackDecision(
   db: Knex | Knex.Transaction,
   context: RoutingContext,
-  normalized: NormalizedRoutingRuleActions,
+  humanTarget: HumanDispatchTarget,
   matchedRule: RoutingRuleRow | null
 ): Promise<RoutingPlan["fallback"]> {
-  const fallbackTarget = normalized.fallbackTarget ?? {
-    departmentId: normalized.humanTarget.departmentId,
-    teamId: normalized.humanTarget.teamId,
-    skillGroupCode: normalized.humanTarget.skillGroupCode,
-    assignmentStrategy: normalized.humanTarget.assignmentStrategy
-  };
-
   const decision = await humanDispatchService.decideForTarget(db, {
     tenantId: context.tenantId,
-    target: {
-      departmentId: fallbackTarget.departmentId,
-      departmentCode: null,
-      teamId: fallbackTarget.teamId,
-      teamCode: null,
-      skillGroupCode: fallbackTarget.skillGroupCode,
-      assignmentStrategy: fallbackTarget.assignmentStrategy
-    },
+    target: humanTarget,
     priority: matchedRule?.priority ?? 100,
     reason: "fallback_human_target",
     auditSource: buildAuditSource(matchedRule)
@@ -541,10 +530,9 @@ function describeDecisionReason(input: {
   aiSelectionReason: string;
 }): string {
   if (input.overrideReason) return input.overrideReason;
-  if (input.selectedOwnerType === "human") {
-    return `${input.mode}:${input.humanDecisionReason}`;
-  }
-  return `${input.mode}:${input.aiSelectionReason}`;
+  return input.selectedOwnerType === "human"
+    ? `${input.mode}:${input.humanDecisionReason}`
+    : `${input.mode}:${input.aiSelectionReason}`;
 }
 
 function buildPreservedHumanPlan(context: RoutingContext): RoutingPlan {
