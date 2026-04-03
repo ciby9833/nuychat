@@ -2,18 +2,20 @@ import { db } from "../../infra/db/client.js";
 import { conversationTimeoutQueue } from "../../infra/queue/queues.js";
 
 export type FollowUpMonitorMode = "semantic" | "waiting_customer";
-export type SlaBreachMetric = "first_response" | "assignment_accept" | "follow_up" | "resolution";
+export type SlaBreachMetric = "first_response" | "assignment_accept" | "subsequent_response" | "follow_up" | "resolution";
 export type SlaTriggerActionType = "alert" | "escalate" | "reassign" | "close_case";
 
 export type SlaTriggerAction = {
   type: SlaTriggerActionType;
   mode?: FollowUpMonitorMode;
+  condition?: "always" | "owner_unavailable";
 };
 
 export type ResolvedSlaDefinition = {
   definitionId: string | null;
   firstResponseTargetSec: number;
   assignmentAcceptTargetSec: number | null;
+  subsequentResponseTargetSec: number | null;
   followUpTargetSec: number | null;
   resolutionTargetSec: number;
 } | null;
@@ -22,6 +24,7 @@ export type ResolvedSlaTriggerPolicy = {
   triggerPolicyId: string | null;
   firstResponseActions: SlaTriggerAction[];
   assignmentAcceptActions: SlaTriggerAction[];
+  subsequentResponseActions: SlaTriggerAction[];
   followUpActions: SlaTriggerAction[];
   resolutionActions: SlaTriggerAction[];
 } | null;
@@ -30,18 +33,27 @@ export function deriveInboundTimeoutPlan(input: {
   definition: ResolvedSlaDefinition;
   queueStatus: string;
   preserveHumanOwner: boolean;
+  hasServiceReply: boolean;
 }): {
   scheduleFirstResponse: boolean;
   scheduleAssignmentAccept: boolean;
+  scheduleSubsequentResponse: boolean;
 } {
   const needsHumanResponse = input.preserveHumanOwner || ["assigned", "pending"].includes(input.queueStatus);
+  const scheduleSubsequentResponse = Boolean(
+    input.preserveHumanOwner &&
+    input.hasServiceReply &&
+    input.definition?.subsequentResponseTargetSec &&
+    input.definition.subsequentResponseTargetSec > 0
+  );
   return {
-    scheduleFirstResponse: Boolean(input.definition?.firstResponseTargetSec && needsHumanResponse),
+    scheduleFirstResponse: Boolean(input.definition?.firstResponseTargetSec && needsHumanResponse && !scheduleSubsequentResponse),
     scheduleAssignmentAccept: Boolean(
       input.definition?.assignmentAcceptTargetSec &&
       !input.preserveHumanOwner &&
       ["assigned", "pending"].includes(input.queueStatus)
-    )
+    ),
+    scheduleSubsequentResponse
   };
 }
 
@@ -56,6 +68,7 @@ export async function resolveConversationSlaDefinition(
       "definition_id",
       "first_response_target_sec",
       "assignment_accept_target_sec",
+      "subsequent_response_target_sec",
       "follow_up_target_sec",
       "resolution_target_sec",
       "conditions",
@@ -73,6 +86,10 @@ export async function resolveConversationSlaDefinition(
         definition.assignment_accept_target_sec === null || definition.assignment_accept_target_sec === undefined
           ? null
           : Number(definition.assignment_accept_target_sec),
+      subsequentResponseTargetSec:
+        definition.subsequent_response_target_sec === null || definition.subsequent_response_target_sec === undefined
+          ? null
+          : Number(definition.subsequent_response_target_sec),
       followUpTargetSec:
         definition.follow_up_target_sec === null || definition.follow_up_target_sec === undefined
           ? null
@@ -94,6 +111,7 @@ export async function resolveConversationTriggerPolicy(
       "trigger_policy_id",
       "first_response_actions",
       "assignment_accept_actions",
+      "subsequent_response_actions",
       "follow_up_actions",
       "resolution_actions",
       "conditions",
@@ -108,6 +126,7 @@ export async function resolveConversationTriggerPolicy(
       triggerPolicyId: readNullableString(row.trigger_policy_id),
       firstResponseActions: normalizeTriggerActions(row.first_response_actions, "first_response"),
       assignmentAcceptActions: normalizeTriggerActions(row.assignment_accept_actions, "assignment_accept"),
+      subsequentResponseActions: normalizeTriggerActions(row.subsequent_response_actions, "subsequent_response"),
       followUpActions: normalizeTriggerActions(row.follow_up_actions, "follow_up"),
       resolutionActions: normalizeTriggerActions(row.resolution_actions, "resolution")
     };
@@ -159,6 +178,8 @@ function allowedActionsForMetric(metric: SlaBreachMetric) {
     case "first_response":
       return new Set<SlaTriggerActionType>(["alert", "escalate"]);
     case "assignment_accept":
+      return new Set<SlaTriggerActionType>(["alert", "escalate", "reassign"]);
+    case "subsequent_response":
       return new Set<SlaTriggerActionType>(["alert", "escalate", "reassign"]);
     case "follow_up":
       return new Set<SlaTriggerActionType>(["alert", "escalate", "reassign", "close_case"]);
@@ -244,6 +265,32 @@ export async function scheduleAssignmentAcceptTimeout(
       removeOnFail: 20
     }
   );
+}
+
+export async function scheduleSubsequentResponseTimeout(
+  tenantId: string,
+  conversationId: string,
+  customerId: string
+): Promise<void> {
+  const definition = await resolveConversationSlaDefinition(tenantId, customerId);
+  if (!definition?.subsequentResponseTargetSec || definition.subsequentResponseTargetSec <= 0) return;
+  const scheduledAt = Date.now();
+  const jobId = `conv-subsequent-response-${conversationId}`;
+  await removeTimeoutJobs([jobId]);
+  await conversationTimeoutQueue.add(
+    "conversation.subsequent_response_check",
+    { tenantId, conversationId, alertType: "subsequent_response", scheduledAt },
+    {
+      jobId,
+      delay: definition.subsequentResponseTargetSec * 1000,
+      removeOnComplete: 50,
+      removeOnFail: 20
+    }
+  );
+}
+
+export async function cancelSubsequentResponseTimeout(conversationId: string): Promise<void> {
+  await removeTimeoutJobs([`conv-subsequent-response-${conversationId}`]);
 }
 
 export async function cancelAssignmentAcceptTimeout(conversationId: string): Promise<void> {

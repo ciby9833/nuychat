@@ -21,6 +21,7 @@ import {
   cancelAssignmentAcceptTimeout,
   cancelFirstResponseTimeout,
   cancelFollowUpTimeout,
+  cancelSubsequentResponseTimeout,
   scheduleFollowUpTimeout
 } from "../modules/sla/conversation-sla.service.js";
 
@@ -184,6 +185,7 @@ export function createOutboundWorker() {
         // A human reply satisfies FRT — cancel the first-response timer.
         await cancelFirstResponseTimeout(job.data.conversationId);
         await cancelAssignmentAcceptTimeout(job.data.conversationId);
+        await cancelSubsequentResponseTimeout(job.data.conversationId);
       }
 
       if (saved.customerId) {

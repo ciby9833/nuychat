@@ -90,6 +90,17 @@ export type HumanDispatchTarget = {
 const presenceService = new PresenceService();
 
 export class HumanDispatchService {
+  async inspectAgentAvailability(
+    db: Knex | Knex.Transaction,
+    input: {
+      tenantId: string;
+      agentId: string;
+    }
+  ): Promise<AgentCandidateEvaluation | null> {
+    const evaluations = await loadCandidateEvaluations(db, input.tenantId);
+    return evaluations.find((candidate) => candidate.agentId === input.agentId) ?? null;
+  }
+
   async inspectTarget(
     db: Knex | Knex.Transaction,
     input: {

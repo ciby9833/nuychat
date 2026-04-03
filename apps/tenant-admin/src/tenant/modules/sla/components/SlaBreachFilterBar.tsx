@@ -50,6 +50,7 @@ export function SlaBreachFilterBar({
           options={[
             { value: "first_response", label: t("slaModule.filter.metric.firstResponse") },
             { value: "assignment_accept", label: t("slaModule.filter.metric.assignmentAccept") },
+            { value: "subsequent_response", label: t("slaModule.filter.metric.subsequentResponse") },
             { value: "follow_up", label: t("slaModule.filter.metric.followUp") },
             { value: "resolution", label: t("slaModule.filter.metric.resolution") }
           ]}

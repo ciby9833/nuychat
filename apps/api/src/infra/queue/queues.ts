@@ -90,6 +90,7 @@ export type ConversationTimeoutJobPayload = {
    * Primary timeout semantics:
    * - first_response: no human first reply yet
    * - assignment_accept: assigned/reserved but still unclaimed
+   * - subsequent_response: service has replied before, customer replied again, owner has not followed up
    * - follow_up: already handled, now waiting to close or follow up
    *
    * Legacy values remain accepted in-flight so existing delayed jobs do not break
@@ -98,6 +99,7 @@ export type ConversationTimeoutJobPayload = {
   alertType:
     | "first_response"
     | "assignment_accept"
+    | "subsequent_response"
     | "follow_up"
     | "frt"
     | "reassign"

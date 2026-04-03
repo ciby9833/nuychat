@@ -50,8 +50,7 @@ import type {
   WebhookChannelLinkInfo,
   WhatsAppEmbeddedSignupSetup,
   SlaBreachListResponse,
-  SlaDefinitionItem,
-  SlaTriggerPolicyItem,
+  SlaDefaultConfig,
   ShiftScheduleItem,
   RoutingRule,
   TeamItem
@@ -903,88 +902,25 @@ export function endAgentBreak(agentId: string) {
   });
 }
 
-export function listSlaDefinitions(input?: { active?: boolean; priority?: string }) {
-  const params = new URLSearchParams();
-  if (typeof input?.active === "boolean") params.set("active", String(input.active));
-  if (input?.priority) params.set("priority", input.priority);
-  const query = params.toString();
-  return api<SlaDefinitionItem[]>(`/api/admin/sla-definitions${query ? `?${query}` : ""}`);
+export function getSlaDefaultConfig() {
+  return api<SlaDefaultConfig>("/api/admin/sla/default-config");
 }
 
-export function createSlaDefinition(input: {
-  name: string;
-  priority: string;
+export function updateSlaDefaultConfig(input: {
   firstResponseTargetSec: number;
   assignmentAcceptTargetSec?: number | null;
+  subsequentResponseTargetSec?: number | null;
+  subsequentResponseReassignWhen?: "always" | "owner_unavailable";
   followUpTargetSec?: number | null;
   resolutionTargetSec: number;
-  isActive?: boolean;
-  conditions?: Record<string, unknown>;
+  firstResponseAction: "alert" | "escalate";
+  assignmentAcceptAction: "alert" | "escalate" | "reassign";
+  followUpAction: "alert" | "escalate" | "reassign" | "close_case";
+  followUpCloseMode?: "semantic" | "waiting_customer" | null;
+  resolutionAction: "alert" | "escalate";
 }) {
-  return api<SlaDefinitionItem>("/api/admin/sla-definitions", {
-    method: "POST",
-    body: JSON.stringify(input)
-  });
-}
-
-export function patchSlaDefinition(
-  definitionId: string,
-  input: Partial<{
-    name: string;
-    priority: string;
-    firstResponseTargetSec: number;
-    assignmentAcceptTargetSec: number | null;
-    followUpTargetSec: number | null;
-    resolutionTargetSec: number;
-    isActive: boolean;
-    conditions: Record<string, unknown>;
-  }>
-) {
-  return api<SlaDefinitionItem>(`/api/admin/sla-definitions/${definitionId}`, {
-    method: "PATCH",
-    body: JSON.stringify(input)
-  });
-}
-
-export function listSlaTriggerPolicies(input?: { active?: boolean; priority?: string }) {
-  const params = new URLSearchParams();
-  if (typeof input?.active === "boolean") params.set("active", String(input.active));
-  if (input?.priority) params.set("priority", input.priority);
-  const query = params.toString();
-  return api<SlaTriggerPolicyItem[]>(`/api/admin/sla-trigger-policies${query ? `?${query}` : ""}`);
-}
-
-export function createSlaTriggerPolicy(input: {
-  name: string;
-  priority: string;
-  firstResponseActions: Array<{ type: "alert" | "escalate" | "reassign" | "close_case"; mode?: "semantic" | "waiting_customer" }>;
-  assignmentAcceptActions: Array<{ type: "alert" | "escalate" | "reassign" | "close_case"; mode?: "semantic" | "waiting_customer" }>;
-  followUpActions: Array<{ type: "alert" | "escalate" | "reassign" | "close_case"; mode?: "semantic" | "waiting_customer" }>;
-  resolutionActions: Array<{ type: "alert" | "escalate" | "reassign" | "close_case"; mode?: "semantic" | "waiting_customer" }>;
-  isActive?: boolean;
-  conditions?: Record<string, unknown>;
-}) {
-  return api<SlaTriggerPolicyItem>("/api/admin/sla-trigger-policies", {
-    method: "POST",
-    body: JSON.stringify(input)
-  });
-}
-
-export function patchSlaTriggerPolicy(
-  triggerPolicyId: string,
-  input: Partial<{
-    name: string;
-    priority: string;
-    firstResponseActions: Array<{ type: "alert" | "escalate" | "reassign" | "close_case"; mode?: "semantic" | "waiting_customer" }>;
-    assignmentAcceptActions: Array<{ type: "alert" | "escalate" | "reassign" | "close_case"; mode?: "semantic" | "waiting_customer" }>;
-    followUpActions: Array<{ type: "alert" | "escalate" | "reassign" | "close_case"; mode?: "semantic" | "waiting_customer" }>;
-    resolutionActions: Array<{ type: "alert" | "escalate" | "reassign" | "close_case"; mode?: "semantic" | "waiting_customer" }>;
-    isActive: boolean;
-    conditions: Record<string, unknown>;
-  }>
-) {
-  return api<SlaTriggerPolicyItem>(`/api/admin/sla-trigger-policies/${triggerPolicyId}`, {
-    method: "PATCH",
+  return api<SlaDefaultConfig>("/api/admin/sla/default-config", {
+    method: "PUT",
     body: JSON.stringify(input)
   });
 }

@@ -26,6 +26,22 @@ export function SlaBreachesTable({
   onPageChange
 }: SlaBreachesTableProps) {
   const { t } = useTranslation();
+  const metricLabel = (value: string) => {
+    switch (value) {
+      case "first_response":
+        return t("slaModule.filter.metric.firstResponse");
+      case "assignment_accept":
+        return t("slaModule.filter.metric.assignmentAccept");
+      case "subsequent_response":
+        return t("slaModule.filter.metric.subsequentResponse");
+      case "follow_up":
+        return t("slaModule.filter.metric.followUp");
+      case "resolution":
+        return t("slaModule.filter.metric.resolution");
+      default:
+        return value;
+    }
+  };
 
   return (
     <Table<SlaBreachItem>
@@ -41,9 +57,7 @@ export function SlaBreachesTable({
       }}
       columns={[
         { title: t("slaModule.breaches.createdAt"), dataIndex: "createdAt", key: "createdAt", render: (value: string) => dayjs(value).format("MM-DD HH:mm:ss") },
-        { title: t("slaModule.breaches.metric"), dataIndex: "metric", key: "metric", render: (value: string) => <Tag>{value}</Tag> },
-        { title: t("slaModule.breaches.definitionName"), dataIndex: "definitionName", key: "definitionName", render: (value: string | null) => value ?? t("slaModule.breaches.empty") },
-        { title: t("slaModule.breaches.triggerPolicyName"), dataIndex: "triggerPolicyName", key: "triggerPolicyName", render: (value: string | null) => value ?? t("slaModule.breaches.empty") },
+        { title: t("slaModule.breaches.metric"), dataIndex: "metric", key: "metric", render: (value: string) => <Tag>{metricLabel(value)}</Tag> },
         { title: t("slaModule.breaches.agentName"), dataIndex: "agentName", key: "agentName", render: (value: string | null) => value ?? t("slaModule.breaches.empty") },
         { title: t("slaModule.breaches.caseId"), dataIndex: "caseId", key: "caseId", render: (value: string | null) => (value ? <code>{value.slice(0, 8)}</code> : t("slaModule.breaches.empty")) },
         { title: t("slaModule.breaches.conversationId"), dataIndex: "conversationId", key: "conversationId", render: (value: string | null) => (value ? <code>{value.slice(0, 8)}</code> : t("slaModule.breaches.empty")) },

@@ -1,5 +1,43 @@
 export default {
   slaModule: {
+    config: {
+      title: "默认 SLA 配置",
+      description: "租户只维护一套默认时效与异常动作。系统会用这套配置驱动首响、未接手重分配、跟进关闭与解决超时。",
+      edit: "编辑",
+      editTitle: "编辑默认 SLA",
+      save: "保存配置",
+      cancel: "取消",
+      confirmTitle: "确认保存 SLA 配置",
+      confirmDescription: "保存后，新的默认时效会立即用于后续会话与异常重分配。",
+      confirmSave: "确认保存",
+      confirmCancel: "返回修改",
+      firstResponseTargetSec: "首响时限(秒)",
+      assignmentAcceptTargetSec: "接手时限(秒)",
+      subsequentResponseTargetSec: "后续回复时限(秒)",
+      subsequentResponseReassignWhen: "后续回复超时后的改派条件",
+      followUpTargetSec: "跟进时限(秒)",
+      followUpCloseMode: "关闭方式",
+      disabled: "未启用",
+      updatedAt: "最近更新：{{value}}"
+    },
+    closeModes: {
+      waitingCustomer: "等待客户",
+      semantic: "语义结束"
+    },
+    reassignModes: {
+      ownerUnavailable: "仅负责人不可服务时重分配",
+      always: "超时即重分配"
+    },
+    scenes: {
+      firstResponse: "首响监控",
+      firstResponseHelp: "客户发出新消息后，如果在时限内还没有得到服务侧首次回复，会被记录为首响超时并进入异常监控。",
+      assignmentAccept: "未接手重分配",
+      assignmentAcceptHelp: "会话已分配给人工但迟迟没有真正接手时，到点后系统会再次自动分配给其他可接手座席。",
+      subsequentResponse: "后续回复重分配",
+      subsequentResponseHelp: "服务方已经回复过，但客户再次发言后当前负责人迟迟不继续回复。系统会先记录违规，再按改派条件决定是否重新分配。",
+      followUp: "跟进关闭",
+      followUpHelp: "服务方已经回复后，如果长时间没有后续动作，系统会按所选关闭方式结束本轮服务。"
+    },
     summary: {
       total: "违约总数",
       open: "待处理",
@@ -20,6 +58,7 @@ export default {
       metric: {
         firstResponse: "首响超时",
         assignmentAccept: "未接手超时",
+        subsequentResponse: "后续回复超时",
         followUp: "跟进超时",
         resolution: "解决超时"
       }
@@ -62,8 +101,6 @@ export default {
       title: "SLA 违约列表",
       createdAt: "触发时间",
       metric: "指标",
-      definitionName: "SLA 定义",
-      triggerPolicyName: "动作策略",
       agentName: "坐席",
       caseId: "事项ID",
       conversationId: "会话ID",
@@ -82,56 +119,10 @@ export default {
       statusAcknowledged: "ACK",
       statusResolved: "RESOLVED"
     },
-    definitionModal: {
-      editTitle: "编辑 SLA 定义",
-      createTitle: "新建 SLA 定义",
-      name: "定义名称",
-      nameRequired: "请输入定义名称",
-      priority: "优先级",
-      firstResponseTargetSec: "首响时限(秒)",
-      assignmentAcceptTargetSec: "接手时限(秒)",
-      assignmentAcceptExtra: "已分配但尚未真正接手的最长允许时长。",
-      assignmentAcceptPlaceholder: "留空表示不监控未接手",
-      followUpTargetSec: "跟进时限(秒)",
-      followUpExtra: "已处理过后，进入等待客户/等待关闭阶段的最长允许时长。",
-      followUpPlaceholder: "留空表示不监控跟进超时",
-      resolutionTargetSec: "解决时限(秒)"
-    },
-    triggerModal: {
-      editTitle: "编辑触发策略",
-      createTitle: "新建触发策略",
-      name: "策略名称",
-      nameRequired: "请输入策略名称",
-      priority: "优先级",
-      firstResponseActions: "首响违约动作",
-      assignmentAcceptActions: "未接手违约动作",
-      followUpActions: "跟进违约动作",
-      resolutionActions: "解决违约动作"
-    },
-    helper: {
-      actionOptions: {
-        alert: "提醒",
-        escalate: "升级",
-        reassign: "重新分配",
-        closeCase: "关闭事项"
-      },
-      closeModes: {
-        waitingCustomer: "等待客户",
-        semantic: "语义结束"
-      },
-      addAction: "添加动作",
-      delete: "删除",
-      emptyActions: "-",
-      closeCaseWithMode: "关闭({{mode}})"
-    },
     messages: {
       loadFailed: "加载 SLA 数据失败: {{message}}",
-      definitionUpdated: "SLA 定义更新成功",
-      definitionCreated: "SLA 定义创建成功",
-      triggerUpdated: "触发策略更新成功",
-      triggerCreated: "触发策略创建成功",
+      configUpdated: "默认 SLA 配置已更新",
       saveFailed: "保存失败: {{message}}",
-      updateFailed: "更新失败: {{message}}",
       breachStatusFailed: "更新违约状态失败: {{message}}"
     }
   }

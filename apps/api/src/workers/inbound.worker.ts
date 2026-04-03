@@ -27,11 +27,12 @@ import { RoutingExecutionService } from "../modules/routing-engine/routing-execu
 import { RoutingPlanStepService } from "../modules/routing-engine/routing-plan-step.service.js";
 import { trackEvent } from "../modules/analytics/analytics.service.js";
 import {
-  resolveConversationSlaDefinition,
   cancelFollowUpTimeout,
   deriveInboundTimeoutPlan,
+  resolveConversationSlaDefinition,
   scheduleAssignmentAcceptTimeout,
   scheduleFirstResponseTimeout,
+  scheduleSubsequentResponseTimeout
 } from "../modules/sla/conversation-sla.service.js";
 import { resolveWhatsAppMediaAttachments } from "../modules/channel/adapters/whatsapp/whatsapp-media.service.js";
 import { getWhatsAppPlatformConfig } from "../modules/channel/whatsapp-platform-config.js";
@@ -420,11 +421,17 @@ async function scheduleConversationTimeouts(
 ): Promise<void> {
   const definition = await resolveConversationSlaDefinition(tenantId, customerId);
   if (!definition) return;
+  const hasServiceReply = await db("messages")
+    .where({ tenant_id: tenantId, conversation_id: conversationId, direction: "outbound" })
+    .whereIn("sender_type", ["agent", "bot"])
+    .first("message_id")
+    .then((row) => Boolean(row));
 
   const timeoutPlan = deriveInboundTimeoutPlan({
     definition,
     queueStatus,
-    preserveHumanOwner
+    preserveHumanOwner,
+    hasServiceReply
   });
 
   if (timeoutPlan.scheduleFirstResponse) {
@@ -433,5 +440,9 @@ async function scheduleConversationTimeouts(
 
   if (timeoutPlan.scheduleAssignmentAccept) {
     await scheduleAssignmentAcceptTimeout(tenantId, conversationId, customerId);
+  }
+
+  if (timeoutPlan.scheduleSubsequentResponse) {
+    await scheduleSubsequentResponseTimeout(tenantId, conversationId, customerId);
   }
 }

@@ -4,6 +4,7 @@
  * Normalized timeout semantics:
  * - first_response: customer is waiting for the first human reply
  * - assignment_accept: conversation is reserved/assigned but still unclaimed
+ * - subsequent_response: service replied before, customer replied again, owner still has not followed up
  * - follow_up: conversation was already handled and is now waiting to close or
  *   follow up (`semantic`, `waiting_customer`)
  */
@@ -22,12 +23,13 @@ import { ConversationSegmentService } from "../modules/conversation/conversation
 import { DispatchAuditService } from "../modules/dispatch/dispatch-audit.service.js";
 import { CUSTOMER_MESSAGE_SENDER_TYPE } from "../modules/message/message.constants.js";
 import { realtimeEventBus } from "../modules/realtime/realtime.events.js";
-import { HumanDispatchService } from "../modules/routing-engine/human-dispatch.service.js";
+import { getPrimaryTeamContext, HumanDispatchService } from "../modules/routing-engine/human-dispatch.service.js";
 import { recordConversationSlaBreach } from "../modules/sla/sla-breach.service.js";
 import {
   resolveConversationSlaDefinition,
   resolveConversationTriggerPolicy,
   scheduleAssignmentAcceptTimeout,
+  scheduleSubsequentResponseTimeout,
   type FollowUpMonitorMode,
   type SlaTriggerAction
 } from "../modules/sla/conversation-sla.service.js";
@@ -43,12 +45,16 @@ function hasTriggerAction(actions: SlaTriggerAction[], type: SlaTriggerAction["t
   return actions.some((action) => action.type === type);
 }
 
+function findTriggerAction(actions: SlaTriggerAction[], type: SlaTriggerAction["type"]) {
+  return actions.find((action) => action.type === type) ?? null;
+}
+
 function shouldCloseForMode(actions: SlaTriggerAction[], mode: FollowUpMonitorMode) {
   return actions.some((action) => action.type === "close_case" && (!action.mode || action.mode === mode));
 }
 
 function normalizeTimeoutAlert(input: ConversationTimeoutJobPayload): {
-  alertType: "first_response" | "assignment_accept" | "follow_up";
+  alertType: "first_response" | "assignment_accept" | "subsequent_response" | "follow_up";
   followUpMode: FollowUpMonitorMode | null;
 } {
   if (input.alertType === "frt") return { alertType: "first_response", followUpMode: null };
@@ -59,9 +65,116 @@ function normalizeTimeoutAlert(input: ConversationTimeoutJobPayload): {
     return { alertType: "follow_up", followUpMode: input.followUpMode ?? "waiting_customer" };
   }
   return {
-    alertType: input.alertType as "first_response" | "assignment_accept" | "follow_up",
+    alertType: input.alertType as "first_response" | "assignment_accept" | "subsequent_response" | "follow_up",
     followUpMode: null
   };
+}
+
+async function applyHumanReassignment(
+  trx: Parameters<typeof withTenantTransaction>[1] extends (arg: infer T) => unknown ? T : never,
+  input: {
+    tenantId: string;
+    conversationId: string;
+    customerId: string;
+    caseId: string | null;
+    previousAssignedAgentId: string | null;
+    decision: {
+      departmentId: string | null;
+      teamId: string | null;
+      assignedAgentId: string | null;
+      strategy: "round_robin" | "least_busy" | "balanced_new_case" | "sticky";
+      priority: number;
+      status: "assigned" | "pending";
+    };
+    executionId: string;
+    reason: string;
+    fromOwnerType: "system" | "agent";
+    scheduleAssignmentAccept?: boolean;
+    payload?: Record<string, unknown>;
+  }
+) {
+  const {
+    tenantId,
+    conversationId,
+    customerId,
+    caseId,
+    previousAssignedAgentId,
+    decision,
+    executionId,
+    reason,
+    fromOwnerType,
+    scheduleAssignmentAccept = true,
+    payload
+  } = input;
+
+  await trx("queue_assignments")
+    .where({ tenant_id: tenantId, conversation_id: conversationId })
+    .update({
+      department_id: decision.departmentId,
+      team_id: decision.teamId,
+      assigned_agent_id: decision.assignedAgentId,
+      assigned_ai_agent_id: null,
+      assignment_strategy: decision.strategy,
+      priority: decision.priority,
+      status: decision.status,
+      assignment_reason: reason,
+      updated_at: trx.fn.now()
+    });
+
+  await ownershipService.applyTransition(trx, {
+    type: "release_to_queue",
+    tenantId,
+    conversationId,
+    customerId,
+    caseId,
+    reason,
+    assignedAgentId: decision.assignedAgentId,
+    conversationStatus: "queued"
+  });
+
+  await trx("conversation_events").insert({
+    tenant_id: tenantId,
+    conversation_id: conversationId,
+    event_type: "assignment_reassigned",
+    actor_type: "system",
+    actor_id: null,
+    payload: {
+      previousAssignedAgentId,
+      assignedAgentId: decision.assignedAgentId,
+      status: decision.status,
+      reason,
+      ...(payload ?? {})
+    }
+  });
+
+  await dispatchAuditService.recordTransition(trx, {
+    tenantId,
+    conversationId,
+    caseId,
+    customerId,
+    executionId,
+    transitionType: "assignment_reroute",
+    actorType: "system",
+    fromOwnerType,
+    fromOwnerId: previousAssignedAgentId,
+    toOwnerType: "system",
+    toOwnerId: decision.assignedAgentId,
+    reason,
+    payload: {
+      previousAssignedAgentId,
+      assignedAgentId: decision.assignedAgentId,
+      status: decision.status,
+      ...(payload ?? {})
+    }
+  });
+
+  if (scheduleAssignmentAccept && ["assigned", "pending"].includes(decision.status)) {
+    await scheduleAssignmentAcceptTimeout(tenantId, conversationId, customerId);
+  }
+
+  await emitConversationUpdatedSnapshot(trx, tenantId, conversationId, {
+    occurredAt: new Date().toISOString()
+  });
 }
 
 export function createConversationTimeoutWorker() {
@@ -268,6 +381,159 @@ export function createConversationTimeoutWorker() {
           return { skipped: false, action: "frt_alert_emitted" };
         }
 
+        if (normalized.alertType === "subsequent_response") {
+          const conversation = await trx("conversations")
+            .where({ tenant_id: tenantId, conversation_id: conversationId })
+            .select("customer_id", "current_case_id", "assigned_agent_id", "current_handler_type", "current_handler_id", "channel_type", "channel_id")
+            .first<{
+              customer_id: string | null;
+              current_case_id: string | null;
+              assigned_agent_id: string | null;
+              current_handler_type: string | null;
+              current_handler_id: string | null;
+              channel_type: string;
+              channel_id: string;
+            } | undefined>();
+
+          if (!conversation?.customer_id || !conversation.assigned_agent_id) {
+            return { skipped: true, reason: "subsequent_response_no_human_owner" };
+          }
+          if (conv.status !== "human_active") {
+            return { skipped: true, reason: `status_is_${conv.status}` };
+          }
+
+          const latestServiceReply = await trx("messages")
+            .where({ tenant_id: tenantId, conversation_id: conversationId, direction: "outbound", sender_type: "agent" })
+            .max<{ latest_at: string | Date | null }>("created_at as latest_at")
+            .first();
+          if (latestServiceReply?.latest_at && new Date(latestServiceReply.latest_at).getTime() > scheduledAt) {
+            return { skipped: true, reason: "service_replied_after_schedule" };
+          }
+
+          const latestCustomerReply = await trx("messages")
+            .where({ tenant_id: tenantId, conversation_id: conversationId, direction: "inbound", sender_type: "customer" })
+            .max<{ latest_at: string | Date | null }>("created_at as latest_at")
+            .first();
+          if (!latestCustomerReply?.latest_at) {
+            return { skipped: true, reason: "no_customer_reply_found" };
+          }
+
+          const definition = await resolveConversationSlaDefinition(tenantId, conversation.customer_id);
+          const triggerPolicy = await resolveConversationTriggerPolicy(tenantId, conversation.customer_id);
+          const targetSec = definition?.subsequentResponseTargetSec ?? null;
+          const actualSec = targetSec
+            ? Math.max(targetSec + 1, Math.ceil((Date.now() - new Date(latestCustomerReply.latest_at).getTime()) / 1000))
+            : null;
+
+          if (targetSec && actualSec) {
+            await recordConversationSlaBreach({
+              trx,
+              tenantId,
+              conversationId,
+              customerId: conversation.customer_id,
+              caseId: conversation.current_case_id,
+              agentId: conversation.assigned_agent_id,
+              metric: "subsequent_response",
+              targetSec,
+              actualSec,
+              severity: "warning",
+              details: {
+                trigger: "subsequent_response_timeout",
+                currentOwnerAgentId: conversation.assigned_agent_id
+              }
+            });
+          }
+
+          const reassignAction = findTriggerAction(triggerPolicy?.subsequentResponseActions ?? [], "reassign");
+          const reassignMode = reassignAction?.condition ?? "owner_unavailable";
+          const ownerAvailability = await humanDispatchService.inspectAgentAvailability(trx, {
+            tenantId,
+            agentId: conversation.assigned_agent_id
+          });
+          const ownerUnavailable = !ownerAvailability || !ownerAvailability.eligible;
+
+          if (!reassignAction || (reassignMode === "owner_unavailable" && !ownerUnavailable)) {
+            if (hasTriggerAction(triggerPolicy?.subsequentResponseActions ?? [], "escalate")) {
+              await trx("conversation_events").insert({
+                tenant_id: tenantId,
+                conversation_id: conversationId,
+                event_type: "sla_subsequent_response_escalated",
+                actor_type: "system",
+                actor_id: null,
+                payload: {
+                  currentOwnerAgentId: conversation.assigned_agent_id,
+                  ownerUnavailable,
+                  reassignMode
+                }
+              });
+            }
+            await scheduleSubsequentResponseTimeout(tenantId, conversationId, conversation.customer_id);
+            return { skipped: false, action: "subsequent_response_breach_recorded" };
+          }
+
+          const executionId = await dispatchAuditService.recordExecution(trx, {
+            tenantId,
+            conversationId,
+            caseId: conversation.current_case_id,
+            customerId: conversation.customer_id,
+            triggerType: "subsequent_response_timeout",
+            decisionType: "assignment_reroute",
+            channelType: conversation.channel_type,
+            channelId: conversation.channel_id,
+            inputSnapshot: {
+              previousAssignedAgentId: conversation.assigned_agent_id,
+              conversationStatus: conv.status,
+              ownerUnavailable,
+              reassignMode
+            },
+            decisionReason: "sla_subsequent_response_timeout"
+          });
+
+          const teamContext = await getPrimaryTeamContext(trx, tenantId, conversation.assigned_agent_id);
+          const decision = await humanDispatchService.decideForAnyAvailableTarget(trx, {
+            tenantId,
+            departmentId: teamContext.departmentId,
+            teamId: teamContext.teamId,
+            strategy: "least_busy",
+            priority: 100,
+            reason: "sla_subsequent_response_timeout",
+            auditSource: {
+              ruleId: null,
+              ruleName: "subsequent_response_timeout",
+              matchedConditions: {}
+            },
+            excludeAgentIds: [conversation.assigned_agent_id]
+          });
+
+          if (!decision) {
+            await scheduleSubsequentResponseTimeout(tenantId, conversationId, conversation.customer_id);
+            return { skipped: false, action: "subsequent_response_no_candidate" };
+          }
+
+          await applyHumanReassignment(trx, {
+            tenantId,
+            conversationId,
+            customerId: conversation.customer_id,
+            caseId: conversation.current_case_id,
+            previousAssignedAgentId: conversation.assigned_agent_id,
+            decision,
+            executionId,
+            reason: "sla_subsequent_response_timeout",
+            fromOwnerType: "agent",
+            payload: {
+              ownerUnavailable,
+              reassignMode
+            }
+          });
+
+          return {
+            skipped: false,
+            action: "subsequent_response_reassigned",
+            assignedAgentId: decision.assignedAgentId,
+            queueStatus: decision.status
+          };
+        }
+
         if (normalized.alertType === "assignment_accept") {
           const assignment = await trx("queue_assignments")
             .where({ tenant_id: tenantId, conversation_id: conversationId })
@@ -431,63 +697,17 @@ export function createConversationTimeoutWorker() {
             excludeAgentIds: assignment.assigned_agent_id ? [assignment.assigned_agent_id] : []
           });
 
-          await trx("queue_assignments")
-            .where({ tenant_id: tenantId, conversation_id: conversationId })
-            .update({
-              department_id: decision.departmentId,
-              team_id: decision.teamId,
-              assigned_agent_id: decision.assignedAgentId,
-              assigned_ai_agent_id: null,
-              assignment_strategy: decision.strategy,
-              priority: decision.priority,
-              status: decision.status,
-              assignment_reason: "sla_assignment_accept_timeout",
-              updated_at: trx.fn.now()
-            });
-
-          await ownershipService.applyTransition(trx, {
-            type: "release_to_queue",
+          await applyHumanReassignment(trx, {
             tenantId,
             conversationId,
             customerId: customer.customer_id,
             caseId: customer.current_case_id,
-            reason: "sla_assignment_accept_timeout",
-            assignedAgentId: decision.assignedAgentId,
-            conversationStatus: "queued"
-          });
-
-          await trx("conversation_events").insert({
-            tenant_id: tenantId,
-            conversation_id: conversationId,
-            event_type: "assignment_reassigned",
-            actor_type: "system",
-            actor_id: null,
-            payload: {
-              previousAssignedAgentId: assignment.assigned_agent_id,
-              assignedAgentId: decision.assignedAgentId,
-              status: decision.status,
-              reason: "sla_assignment_accept_timeout"
-            }
-          });
-
-          await dispatchAuditService.recordTransition(trx, {
-            tenantId,
-            conversationId,
-            caseId: customer.current_case_id,
-            customerId: customer.customer_id,
+            previousAssignedAgentId: assignment.assigned_agent_id,
+            decision,
             executionId,
-            transitionType: "assignment_reroute",
-            actorType: "system",
-            fromOwnerType: "system",
-            fromOwnerId: assignment.assigned_agent_id,
-            toOwnerType: "system",
-            toOwnerId: decision.assignedAgentId,
             reason: "sla_assignment_accept_timeout",
-            payload: {
-              previousAssignedAgentId: assignment.assigned_agent_id,
-              assignedAgentId: decision.assignedAgentId,
-              status: decision.status
-            }
+            fromOwnerType: "system",
+            scheduleAssignmentAccept: false
           });
 
           if (["assigned", "pending"].includes(decision.status)) {
@@ -495,10 +715,6 @@ export function createConversationTimeoutWorker() {
               currentJobId: job.id ?? null
             });
           }
-
-          await emitConversationUpdatedSnapshot(trx, tenantId, conversationId, {
-            occurredAt: new Date().toISOString()
-          });
 
           return {
             skipped: false,

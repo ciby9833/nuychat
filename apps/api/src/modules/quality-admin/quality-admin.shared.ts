@@ -1,8 +1,13 @@
 import { withTenantTransaction } from "../../infra/db/client.js";
 import { parseJsonObject, toIsoString } from "../tenant/tenant-admin.shared.js";
 
-export type TriggerMetric = "first_response" | "assignment_accept" | "follow_up" | "resolution";
+export type TriggerMetric = "first_response" | "assignment_accept" | "subsequent_response" | "follow_up" | "resolution";
 export type TriggerActionType = "alert" | "escalate" | "reassign" | "close_case";
+export type TriggerActionRecord = {
+  type: TriggerActionType;
+  mode?: "semantic" | "waiting_customer";
+  condition?: "always" | "owner_unavailable";
+};
 
 export function serializeTriggerPolicyRow(row: Record<string, unknown>) {
   return {
@@ -11,6 +16,7 @@ export function serializeTriggerPolicyRow(row: Record<string, unknown>) {
     priority: row.priority,
     firstResponseActions: normalizeTriggerActionsBody(row.first_response_actions, "first_response"),
     assignmentAcceptActions: normalizeTriggerActionsBody(row.assignment_accept_actions, "assignment_accept"),
+    subsequentResponseActions: normalizeTriggerActionsBody(row.subsequent_response_actions, "subsequent_response"),
     followUpActions: normalizeTriggerActionsBody(row.follow_up_actions, "follow_up"),
     resolutionActions: normalizeTriggerActionsBody(row.resolution_actions, "resolution"),
     conditions: parseJsonObject(row.conditions),
@@ -27,7 +33,7 @@ export function normalizeTriggerActionsBody(raw: unknown, metric: TriggerMetric)
       ? safeParseArray(raw)
       : [];
   const allowed = allowedTriggerActions(metric);
-  const actions: Array<{ type: TriggerActionType; mode?: "semantic" | "waiting_customer" }> = [];
+  const actions: TriggerActionRecord[] = [];
   for (const item of source) {
     if (!item || typeof item !== "object") continue;
     const type = typeof (item as { type?: unknown }).type === "string"
@@ -37,7 +43,14 @@ export function normalizeTriggerActionsBody(raw: unknown, metric: TriggerMetric)
     const mode = typeof (item as { mode?: unknown }).mode === "string"
       ? ((item as { mode: "semantic" | "waiting_customer" }).mode)
       : undefined;
-    actions.push(type === "close_case" && mode ? { type, mode } : { type });
+    const condition = typeof (item as { condition?: unknown }).condition === "string"
+      ? ((item as { condition: "always" | "owner_unavailable" }).condition)
+      : undefined;
+    actions.push({
+      type,
+      ...(type === "close_case" && mode ? { mode } : {}),
+      ...(type === "reassign" && condition ? { condition } : {})
+    });
   }
   return actions;
 }
@@ -66,6 +79,8 @@ function allowedTriggerActions(metric: TriggerMetric) {
       return new Set<TriggerActionType>(["alert", "escalate", "reassign"]);
     case "follow_up":
       return new Set<TriggerActionType>(["alert", "escalate", "reassign", "close_case"]);
+    case "subsequent_response":
+      return new Set<TriggerActionType>(["alert", "escalate", "reassign"]);
     case "resolution":
       return new Set<TriggerActionType>(["alert", "escalate"]);
     default:

@@ -10,12 +10,10 @@
 import type {
   SlaBreachItem,
   SlaBreachListResponse,
-  SlaDefinitionItem,
-  SlaTriggerAction,
-  SlaTriggerPolicyItem
+  SlaDefaultConfig
 } from "../../types";
 
-export type { SlaBreachItem, SlaBreachListResponse, SlaDefinitionItem, SlaTriggerAction, SlaTriggerPolicyItem };
+export type { SlaBreachItem, SlaBreachListResponse, SlaDefaultConfig };
 
 export type BreachFilter = {
   status?: "open" | "acknowledged" | "resolved";
@@ -24,20 +22,11 @@ export type BreachFilter = {
   to?: string;
 };
 
-export type SlaDefinitionFormValues = {
-  name: string;
-  priority: string;
+export type SlaDefaultConfigFormValues = {
   firstResponseTargetSec: number;
   assignmentAcceptTargetSec: number | null;
+  subsequentResponseTargetSec: number | null;
+  subsequentResponseReassignWhen: "always" | "owner_unavailable";
   followUpTargetSec: number | null;
-  resolutionTargetSec: number;
-};
-
-export type SlaTriggerPolicyFormValues = {
-  name: string;
-  priority: string;
-  firstResponseActions: SlaTriggerAction[];
-  assignmentAcceptActions: SlaTriggerAction[];
-  followUpActions: SlaTriggerAction[];
-  resolutionActions: SlaTriggerAction[];
+  followUpCloseMode: "semantic" | "waiting_customer" | null;
 };

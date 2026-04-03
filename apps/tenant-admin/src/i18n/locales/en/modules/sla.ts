@@ -1,5 +1,43 @@
 export default {
   slaModule: {
+    config: {
+      title: "Default SLA Configuration",
+      description: "Maintain one tenant-wide SLA baseline. The platform uses it for first response, assignment reassign, follow-up closure, and resolution timeout handling.",
+      edit: "Edit",
+      editTitle: "Edit Default SLA",
+      save: "Save Configuration",
+      cancel: "Cancel",
+      confirmTitle: "Confirm SLA Update",
+      confirmDescription: "After saving, the new default timings will apply to subsequent conversations and exception re-dispatch.",
+      confirmSave: "Save",
+      confirmCancel: "Back",
+      firstResponseTargetSec: "First Response Target (sec)",
+      assignmentAcceptTargetSec: "Assignment Accept Target (sec)",
+      subsequentResponseTargetSec: "Subsequent Response Target (sec)",
+      subsequentResponseReassignWhen: "Reassign When Subsequent Response Times Out",
+      followUpTargetSec: "Follow-up Target (sec)",
+      followUpCloseMode: "Close Mode",
+      disabled: "Disabled",
+      updatedAt: "Last updated: {{value}}"
+    },
+    closeModes: {
+      waitingCustomer: "Waiting Customer",
+      semantic: "Semantic End"
+    },
+    reassignModes: {
+      ownerUnavailable: "Reassign only if owner is unavailable",
+      always: "Always reassign when overdue"
+    },
+    scenes: {
+      firstResponse: "First Response Monitoring",
+      firstResponseHelp: "When a customer sends a new message and no service-side reply arrives within the target, the conversation is recorded as a first-response breach and enters exception monitoring.",
+      assignmentAccept: "Unaccepted Assignment Re-dispatch",
+      assignmentAcceptHelp: "When a conversation is assigned to a human agent but remains unclaimed, the platform will automatically redistribute it after the timeout.",
+      subsequentResponse: "Subsequent Response Re-dispatch",
+      subsequentResponseHelp: "After the service side has replied once, if the customer replies again and the current owner does not continue the conversation in time, the platform records a breach and can reassign based on the selected rule.",
+      followUp: "Follow-up Closure",
+      followUpHelp: "After the service side has already replied, the platform can close the current service cycle if no follow-up happens for too long."
+    },
     summary: {
       total: "Total Breaches",
       open: "Open",
@@ -20,6 +58,7 @@ export default {
       metric: {
         firstResponse: "First response timeout",
         assignmentAccept: "Assignment accept timeout",
+        subsequentResponse: "Subsequent response timeout",
         followUp: "Follow-up timeout",
         resolution: "Resolution timeout"
       }
@@ -62,8 +101,6 @@ export default {
       title: "SLA Breaches",
       createdAt: "Triggered At",
       metric: "Metric",
-      definitionName: "SLA Definition",
-      triggerPolicyName: "Trigger Policy",
       agentName: "Agent",
       caseId: "Case ID",
       conversationId: "Conversation ID",
@@ -82,56 +119,10 @@ export default {
       statusAcknowledged: "ACK",
       statusResolved: "RESOLVED"
     },
-    definitionModal: {
-      editTitle: "Edit SLA Definition",
-      createTitle: "New SLA Definition",
-      name: "Definition Name",
-      nameRequired: "Please enter the definition name",
-      priority: "Priority",
-      firstResponseTargetSec: "First Response Target (sec)",
-      assignmentAcceptTargetSec: "Assignment Accept Target (sec)",
-      assignmentAcceptExtra: "Maximum allowed time for assigned but not yet accepted cases.",
-      assignmentAcceptPlaceholder: "Leave blank to skip assignment timeout monitoring",
-      followUpTargetSec: "Follow-up Target (sec)",
-      followUpExtra: "Maximum allowed time after handling when waiting for customer or waiting to close.",
-      followUpPlaceholder: "Leave blank to skip follow-up timeout monitoring",
-      resolutionTargetSec: "Resolution Target (sec)"
-    },
-    triggerModal: {
-      editTitle: "Edit Trigger Policy",
-      createTitle: "New Trigger Policy",
-      name: "Policy Name",
-      nameRequired: "Please enter the policy name",
-      priority: "Priority",
-      firstResponseActions: "First Response Breach Actions",
-      assignmentAcceptActions: "Assignment Accept Breach Actions",
-      followUpActions: "Follow-up Breach Actions",
-      resolutionActions: "Resolution Breach Actions"
-    },
-    helper: {
-      actionOptions: {
-        alert: "Alert",
-        escalate: "Escalate",
-        reassign: "Reassign",
-        closeCase: "Close Case"
-      },
-      closeModes: {
-        waitingCustomer: "Waiting Customer",
-        semantic: "Semantic End"
-      },
-      addAction: "Add Action",
-      delete: "Delete",
-      emptyActions: "-",
-      closeCaseWithMode: "Close ({{mode}})"
-    },
     messages: {
       loadFailed: "Failed to load SLA data: {{message}}",
-      definitionUpdated: "SLA definition updated",
-      definitionCreated: "SLA definition created",
-      triggerUpdated: "Trigger policy updated",
-      triggerCreated: "Trigger policy created",
+      configUpdated: "Default SLA configuration updated",
       saveFailed: "Save failed: {{message}}",
-      updateFailed: "Update failed: {{message}}",
       breachStatusFailed: "Failed to update breach status: {{message}}"
     }
   }

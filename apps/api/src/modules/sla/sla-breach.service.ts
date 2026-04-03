@@ -3,7 +3,7 @@ import type { Knex } from "knex";
 import { db } from "../../infra/db/client.js";
 import { resolveConversationSlaDefinition } from "./conversation-sla.service.js";
 
-type ConversationSlaMetric = "first_response" | "assignment_accept" | "follow_up" | "resolution";
+type ConversationSlaMetric = "first_response" | "assignment_accept" | "subsequent_response" | "follow_up" | "resolution";
 
 export async function recordConversationSlaBreach(input: {
   trx?: Knex.Transaction;

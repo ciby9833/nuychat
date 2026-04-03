@@ -1,5 +1,43 @@
 export default {
   slaModule: {
+    config: {
+      title: "Konfigurasi SLA Default",
+      description: "Kelola satu SLA default tingkat tenant. Platform akan memakai konfigurasi ini untuk respons pertama, reassign assignment, penutupan follow-up, dan timeout resolusi.",
+      edit: "Edit",
+      editTitle: "Edit SLA Default",
+      save: "Simpan Konfigurasi",
+      cancel: "Batal",
+      confirmTitle: "Konfirmasi Perubahan SLA",
+      confirmDescription: "Setelah disimpan, waktu default baru akan langsung dipakai untuk percakapan berikutnya dan re-dispatch pengecualian.",
+      confirmSave: "Simpan",
+      confirmCancel: "Kembali",
+      firstResponseTargetSec: "Batas Respons Pertama (detik)",
+      assignmentAcceptTargetSec: "Batas Terima Assignment (detik)",
+      subsequentResponseTargetSec: "Batas Respons Lanjutan (detik)",
+      subsequentResponseReassignWhen: "Kapan Alihkan Ulang Saat Respons Lanjutan Timeout",
+      followUpTargetSec: "Batas Follow-up (detik)",
+      followUpCloseMode: "Mode Penutupan",
+      disabled: "Tidak aktif",
+      updatedAt: "Terakhir diperbarui: {{value}}"
+    },
+    closeModes: {
+      waitingCustomer: "Menunggu Pelanggan",
+      semantic: "Selesai Semantik"
+    },
+    reassignModes: {
+      ownerUnavailable: "Alihkan ulang hanya jika penanggung jawab tidak tersedia",
+      always: "Selalu alihkan ulang saat melewati batas"
+    },
+    scenes: {
+      firstResponse: "Pemantauan Respons Pertama",
+      firstResponseHelp: "Saat pelanggan mengirim pesan baru dan belum ada balasan dari sisi layanan dalam batas waktu, percakapan dicatat sebagai pelanggaran respons pertama dan masuk pemantauan pengecualian.",
+      assignmentAccept: "Re-dispatch Belum Diambil",
+      assignmentAcceptHelp: "Saat percakapan sudah ditugaskan ke agen manusia tetapi belum benar-benar diambil, sistem akan otomatis mengalihkan ulang setelah timeout.",
+      subsequentResponse: "Re-dispatch Respons Lanjutan",
+      subsequentResponseHelp: "Setelah sisi layanan sudah pernah membalas, jika pelanggan membalas lagi tetapi penanggung jawab saat ini tidak melanjutkan percakapan tepat waktu, sistem mencatat pelanggaran dan dapat mengalihkan ulang sesuai aturan.",
+      followUp: "Penutupan Follow-up",
+      followUpHelp: "Setelah sisi layanan sudah membalas, sistem dapat menutup siklus layanan saat ini jika tidak ada tindak lanjut terlalu lama."
+    },
     summary: {
       total: "Total Pelanggaran",
       open: "Belum Diproses",
@@ -20,6 +58,7 @@ export default {
       metric: {
         firstResponse: "Terlambat respons pertama",
         assignmentAccept: "Terlambat menerima assignment",
+        subsequentResponse: "Terlambat respons lanjutan",
         followUp: "Terlambat follow-up",
         resolution: "Terlambat penyelesaian"
       }
@@ -62,8 +101,6 @@ export default {
       title: "Daftar Pelanggaran SLA",
       createdAt: "Waktu Terpicu",
       metric: "Metrik",
-      definitionName: "Definisi SLA",
-      triggerPolicyName: "Kebijakan Aksi",
       agentName: "Agen",
       caseId: "ID Kasus",
       conversationId: "ID Percakapan",
@@ -82,56 +119,10 @@ export default {
       statusAcknowledged: "ACK",
       statusResolved: "RESOLVED"
     },
-    definitionModal: {
-      editTitle: "Edit Definisi SLA",
-      createTitle: "Definisi SLA Baru",
-      name: "Nama Definisi",
-      nameRequired: "Masukkan nama definisi",
-      priority: "Prioritas",
-      firstResponseTargetSec: "Batas Respons Pertama (detik)",
-      assignmentAcceptTargetSec: "Batas Terima Assignment (detik)",
-      assignmentAcceptExtra: "Durasi maksimum untuk kasus yang sudah ditugaskan tetapi belum benar-benar diterima.",
-      assignmentAcceptPlaceholder: "Kosongkan jika tidak memantau timeout penerimaan assignment",
-      followUpTargetSec: "Batas Follow-up (detik)",
-      followUpExtra: "Durasi maksimum setelah penanganan ketika menunggu pelanggan atau menunggu penutupan.",
-      followUpPlaceholder: "Kosongkan jika tidak memantau timeout follow-up",
-      resolutionTargetSec: "Batas Penyelesaian (detik)"
-    },
-    triggerModal: {
-      editTitle: "Edit Kebijakan Pemicu",
-      createTitle: "Kebijakan Pemicu Baru",
-      name: "Nama Kebijakan",
-      nameRequired: "Masukkan nama kebijakan",
-      priority: "Prioritas",
-      firstResponseActions: "Aksi Pelanggaran Respons Pertama",
-      assignmentAcceptActions: "Aksi Pelanggaran Terima Assignment",
-      followUpActions: "Aksi Pelanggaran Follow-up",
-      resolutionActions: "Aksi Pelanggaran Penyelesaian"
-    },
-    helper: {
-      actionOptions: {
-        alert: "Pengingat",
-        escalate: "Eskalasi",
-        reassign: "Alihkan Ulang",
-        closeCase: "Tutup Kasus"
-      },
-      closeModes: {
-        waitingCustomer: "Menunggu Pelanggan",
-        semantic: "Selesai Semantik"
-      },
-      addAction: "Tambah Aksi",
-      delete: "Hapus",
-      emptyActions: "-",
-      closeCaseWithMode: "Tutup ({{mode}})"
-    },
     messages: {
       loadFailed: "Gagal memuat data SLA: {{message}}",
-      definitionUpdated: "Definisi SLA berhasil diperbarui",
-      definitionCreated: "Definisi SLA berhasil dibuat",
-      triggerUpdated: "Kebijakan pemicu berhasil diperbarui",
-      triggerCreated: "Kebijakan pemicu berhasil dibuat",
+      configUpdated: "Konfigurasi SLA default berhasil diperbarui",
       saveFailed: "Gagal menyimpan: {{message}}",
-      updateFailed: "Gagal memperbarui: {{message}}",
       breachStatusFailed: "Gagal memperbarui status pelanggaran: {{message}}"
     }
   }
