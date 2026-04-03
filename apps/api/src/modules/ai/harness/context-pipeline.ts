@@ -24,9 +24,6 @@ import {
 import {
   buildCustomerIntelligenceContext
 } from "../../memory/customer-intelligence.service.js";
-import {
-  getConversationCapabilityState
-} from "../../agent-skills/capability-state.service.js";
 
 export interface ContextPipelineInput {
   tenantId: string;
@@ -37,16 +34,18 @@ export interface ContextPipelineInput {
 }
 
 /**
- * Run the full context pipeline in parallel.
+ * Run the context pipeline: customer intelligence + fact snapshot in parallel.
  *
- * All three stages run concurrently (Promise.all) since they're independent DB reads.
- * Total latency ≈ max(single stage latency) instead of sum.
+ * Note: conversation capability state is NOT loaded here — the orchestrator
+ * already loads it earlier (line ~160) to determine the continuation skill,
+ * which must happen before context pipeline runs. Loading it again here
+ * would be a redundant DB call.
  */
 export async function runContextPipeline(
   db: Knex | Knex.Transaction,
   input: ContextPipelineInput
 ): Promise<HarnessContext> {
-  const [customerIntelligence, factSnapshot, capabilityState] = await Promise.all([
+  const [customerIntelligence, factSnapshot] = await Promise.all([
     buildCustomerIntelligenceContext(
       db,
       input.tenantId,
@@ -60,15 +59,14 @@ export async function runContextPipeline(
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       customerId: input.customerId
-    }),
-    loadConversationState(db, input)
+    })
   ]);
 
   return {
     customerIntelligence,
     factSnapshot,
     factContext: formatFactSnapshotForPrompt(factSnapshot),
-    conversationState: capabilityState
+    conversationState: null
   };
 }
 
@@ -80,26 +78,4 @@ export async function runFactPipeline(
   input: { tenantId: string; conversationId: string; customerId: string }
 ): Promise<FactSnapshot> {
   return buildFactSnapshot(db, input);
-}
-
-// ─── Internal ───────────────────────────────────────────────────────────────
-
-async function loadConversationState(
-  db: Knex | Knex.Transaction,
-  input: ContextPipelineInput
-): Promise<HarnessContext["conversationState"]> {
-  const state = await getConversationCapabilityState(db, {
-    tenantId: input.tenantId,
-    conversationId: input.conversationId
-  });
-
-  if (!state) return null;
-
-  return {
-    capabilityId: state.capabilityId,
-    status: state.status,
-    missingInputs: Array.isArray(state.missingInputs)
-      ? state.missingInputs.map((item: unknown) => String(item))
-      : []
-  };
 }

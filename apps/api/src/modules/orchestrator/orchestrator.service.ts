@@ -606,26 +606,6 @@ export class OrchestratorService {
         outputTokens += forcedFinal.outputTokens;
       }
 
-      await recordAIUsage(db, {
-        tenantId: input.tenantId,
-        provider: providerName,
-        model,
-        feature: "orchestrator",
-        inputTokens,
-        outputTokens,
-        requestCount: Math.max(1, loopMessages.filter((item) => item.role === "assistant").length),
-          metadata: {
-          conversationId: input.conversationId,
-          aiAgentId: input.aiAgentId ?? null,
-          actorType,
-          moduleId: input.moduleId ?? null,
-          skillGroupId: input.skillGroupId ?? null,
-          skillsInvoked,
-          selectedSkillSlug: selectedSkill?.slug ?? null,
-          candidateSkillSlugs: candidateSkills.map((skill) => skill.slug)
-        }
-      });
-
       // ── Parse response ──────────────────────────────────────────────────────
       const aiDecision = normalizeAIInteractionContract(finalContent, {
         chatHistory,
@@ -651,6 +631,27 @@ export class OrchestratorService {
       const sandboxTokens = sandbox.snapshot.sandboxTokens;
       inputTokens += sandboxTokens.input;
       outputTokens += sandboxTokens.output;
+
+      // ── Record AI usage (AFTER sandbox so rewrite/clarify tokens are included)
+      await recordAIUsage(db, {
+        tenantId: input.tenantId,
+        provider: providerName,
+        model,
+        feature: "orchestrator",
+        inputTokens,
+        outputTokens,
+        requestCount: Math.max(1, loopMessages.filter((item) => item.role === "assistant").length),
+        metadata: {
+          conversationId: input.conversationId,
+          aiAgentId: input.aiAgentId ?? null,
+          actorType,
+          moduleId: input.moduleId ?? null,
+          skillGroupId: input.skillGroupId ?? null,
+          skillsInvoked,
+          selectedSkillSlug: selectedSkill?.slug ?? null,
+          candidateSkillSlugs: candidateSkills.map((skill) => skill.slug)
+        }
+      });
 
       if (pointBRevision.modified) {
         if (pointBRevision.action === "handoff") {
