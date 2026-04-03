@@ -20,7 +20,10 @@ async function renameCapabilityAvailabilityScope(knex: Knex) {
       });
   }
 
-  await knex.raw("DROP INDEX IF EXISTS capability_availability_scope_uniq");
+  await knex.raw(`
+    ALTER TABLE capability_availability
+    DROP CONSTRAINT IF EXISTS capability_availability_scope_uniq
+  `);
 
   if (hasModuleId) {
     await knex.schema.alterTable("capability_availability", (t) => {
@@ -56,7 +59,10 @@ async function renameTenantSkillAvailabilityScope(knex: Knex) {
       });
   }
 
-  await knex.raw("DROP INDEX IF EXISTS tenant_skill_availability_scope_uniq");
+  await knex.raw(`
+    ALTER TABLE tenant_skill_availability
+    DROP CONSTRAINT IF EXISTS tenant_skill_availability_scope_uniq
+  `);
 
   if (hasModuleId) {
     await knex.schema.alterTable("tenant_skill_availability", (t) => {
@@ -202,7 +208,10 @@ export async function down(knex: Knex): Promise<void> {
         });
     }
 
-    await knex.raw("DROP INDEX IF EXISTS capability_availability_scope_uniq");
+    await knex.raw(`
+      ALTER TABLE capability_availability
+      DROP CONSTRAINT IF EXISTS capability_availability_scope_uniq
+    `);
     await knex.schema.alterTable("capability_availability", (t) => {
       t.unique(["capability_id", "channel", "role", "module_id", "owner_mode"], "capability_availability_scope_uniq");
     });
@@ -239,7 +248,10 @@ export async function down(knex: Knex): Promise<void> {
         });
     }
 
-    await knex.raw("DROP INDEX IF EXISTS tenant_skill_availability_scope_uniq");
+    await knex.raw(`
+      ALTER TABLE tenant_skill_availability
+      DROP CONSTRAINT IF EXISTS tenant_skill_availability_scope_uniq
+    `);
     await knex.schema.alterTable("tenant_skill_availability", (t) => {
       t.unique(["tenant_skill_id", "channel", "role", "module_id", "owner_mode"], "tenant_skill_availability_scope_uniq");
     });
