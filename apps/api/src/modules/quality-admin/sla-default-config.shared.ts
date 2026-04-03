@@ -36,6 +36,9 @@ export const DEFAULT_SLA_CONFIG: SlaDefaultConfigPayload = {
   followUpCloseMode: "waiting_customer"
 };
 
+const INTERNAL_RESOLUTION_TARGET_SEC = 7200;
+const INTERNAL_RESOLUTION_ACTION = "alert";
+
 export async function readSlaDefaultConfig(trx: Knex.Transaction, tenantId: string): Promise<SlaDefaultConfigRecord> {
   const [definitionRow, triggerRow] = await Promise.all([
     resolveDefaultDefinitionRow(trx, tenantId),
@@ -134,6 +137,7 @@ export async function upsertSlaDefaultConfig(
       input.followUpTargetSec === null || input.followUpTargetSec === undefined
         ? null
         : Math.max(1, Math.floor(input.followUpTargetSec)),
+    resolution_target_sec: INTERNAL_RESOLUTION_TARGET_SEC,
     conditions: {},
     is_active: true,
     updated_at: trx.fn.now()
@@ -151,6 +155,7 @@ export async function upsertSlaDefaultConfig(
         ? [{ type: "close_case", mode: input.followUpCloseMode ?? "waiting_customer" }]
         : [{ type: input.followUpAction }]
     ),
+    resolution_actions: JSON.stringify([{ type: INTERNAL_RESOLUTION_ACTION }]),
     conditions: JSON.stringify({}),
     is_active: true,
     updated_at: trx.fn.now()
