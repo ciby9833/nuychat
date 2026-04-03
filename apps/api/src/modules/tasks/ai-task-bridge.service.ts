@@ -57,7 +57,8 @@ export async function recordSkillExecutionAsTask(
       priority: "normal",
       completed_at: trx.fn.now(),
       creator_type: input.creatorType,
-      creator_agent_id: input.creatorId
+      creator_identity_id: input.creatorType === "ai" ? input.creatorId : null,
+      creator_agent_id: input.creatorType === "agent" ? input.creatorId : null
     })
     .returning(["task_id"]);
 

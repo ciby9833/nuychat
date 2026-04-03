@@ -507,39 +507,22 @@ async function releaseConversationToHumanQueue(input: {
         };
       });
 
-  const activateAssignedHuman =
-    Boolean(resolvedHandoffTarget.assignedAgentId) && Boolean(input.conversation.current_case_id);
-
   await withTenantTransaction(input.tenantId, async (trx) => {
     const fromSegmentId = await trx("conversations")
       .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
       .select("current_segment_id")
       .first<{ current_segment_id: string | null } | undefined>();
 
-    if (activateAssignedHuman) {
-      await ownershipService.applyTransition(trx, {
-        type: "activate_human_owner",
-        tenantId: input.tenantId,
-        conversationId: input.conversationId,
-        customerId: input.conversation.customer_id as string,
-        caseId: input.conversation.current_case_id as string,
-        agentId: resolvedHandoffTarget.assignedAgentId as string,
-        reason: input.reason,
-        caseStatus: "in_progress",
-        conversationStatus: "human_active"
-      });
-    } else {
-      await ownershipService.applyTransition(trx, {
-        type: "release_to_queue",
-        tenantId: input.tenantId,
-        conversationId: input.conversationId,
-        customerId: input.conversation.customer_id as string,
-        caseId: input.conversation.current_case_id as string | null,
-        reason: input.reason,
-        assignedAgentId: resolvedHandoffTarget.assignedAgentId,
-        conversationStatus: "queued"
-      });
-    }
+    await ownershipService.applyTransition(trx, {
+      type: "release_to_queue",
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      customerId: input.conversation.customer_id as string,
+      caseId: input.conversation.current_case_id as string | null,
+      reason: input.reason,
+      assignedAgentId: resolvedHandoffTarget.assignedAgentId,
+      conversationStatus: "queued"
+    });
 
     const updatedConversation = await trx("conversations")
       .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
@@ -557,8 +540,8 @@ async function releaseConversationToHumanQueue(input: {
       fromOwnerType: input.conversation.current_handler_type ?? null,
       fromOwnerId: input.conversation.current_handler_id ?? null,
       fromSegmentId: fromSegmentId?.current_segment_id ?? null,
-      toOwnerType: activateAssignedHuman ? "human" : "system",
-      toOwnerId: activateAssignedHuman ? resolvedHandoffTarget.assignedAgentId : null,
+      toOwnerType: "system",
+      toOwnerId: null,
       toSegmentId: updatedConversation?.current_segment_id ?? null,
       reason: input.reason
     });
@@ -575,8 +558,8 @@ async function releaseConversationToHumanQueue(input: {
         priority: resolvedHandoffTarget.priority,
         status: resolvedHandoffTarget.status,
         assignment_reason: resolvedHandoffTarget.reason,
-        handoff_required: activateAssignedHuman ? false : true,
-        handoff_reason: activateAssignedHuman ? null : input.reason,
+        handoff_required: true,
+        handoff_reason: input.reason,
         updated_at: trx.fn.now()
       });
 
@@ -589,7 +572,7 @@ async function releaseConversationToHumanQueue(input: {
     });
   });
 
-  if (!activateAssignedHuman && ["assigned", "pending"].includes(resolvedHandoffTarget.status)) {
+  if (["assigned", "pending"].includes(resolvedHandoffTarget.status)) {
     await scheduleAssignmentAcceptTimeout(input.tenantId, input.conversationId, input.customerId);
   }
 
