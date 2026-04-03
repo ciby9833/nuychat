@@ -12,6 +12,7 @@ export default {
       target: "Target",
       skillAndStrategy: "Grup skill / Strategi"
     },
+    description: "Platform kini menggunakan pembagian cerdas bawaan berdasarkan instance kanal, cakupan departemen atau tim, agen manusia yang online, seat AI, jadwal kerja, dan beban real-time. Aturan di sini hanya untuk beberapa pengecualian.",
     form: {
       editRule: "Edit aturan dispatch",
       createRule: "Aturan dispatch baru",
@@ -34,6 +35,11 @@ export default {
       anyLanguage: "Semua bahasa",
       customerTier: "Tier pelanggan",
       anyTier: "Semua tier",
+      defaultDispatch: "Kebijakan Dispatch Default",
+      defaultDispatchHint: "Penugasan cerdas akan otomatis memilih manusia atau AI terbaik berdasarkan status online, jadwal kerja, dan beban real-time. Prefer manusia dan prefer AI hanya mengubah kecenderungan default.",
+      serviceTarget: "Target Layanan",
+      humanStrategy: "Strategi Penugasan Manusia",
+      aiStrategy: "Strategi Penugasan AI",
       routingAction: "Aksi routing",
       executionMode: "Mode eksekusi",
       executionHint: "Mode eksekusi menentukan apakah aturan memprioritaskan AI, manusia, atau hanya satu jalur penanganan.",
@@ -97,7 +103,8 @@ export default {
       any: "Semua",
       anyDepartment: "Semua departemen",
       autoTeam: "Pilih tim otomatis",
-      reuseHumanTarget: "Gunakan target manusia"
+      reuseHumanTarget: "Gunakan target manusia",
+      strategyLine: "Manusia: {{humanStrategy}} | AI: {{aiStrategy}}"
     },
     messages: {
       ruleUpdated: "Aturan dispatch diperbarui",
@@ -134,7 +141,10 @@ export default {
         human_first: "Manusia lebih dulu",
         ai_only: "Hanya AI",
         human_only: "Hanya manusia",
-        hybrid: "Hybrid"
+        hybrid: "Hybrid",
+        hybrid_smart: "Pembagian cerdas",
+        human_preferred: "Prefer manusia",
+        ai_preferred: "Prefer AI"
       },
       hybridStrategy: {
         load_balanced: "Seimbang beban",

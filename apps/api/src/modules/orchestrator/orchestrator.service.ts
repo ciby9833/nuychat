@@ -66,8 +66,7 @@ export interface OrchestratorInput {
   channelType: string;
   caseId?: string | null;
   aiAgentId?: string | null;
-  moduleId?: string | null;
-  skillGroupId?: string | null;
+  capabilityScope?: string | null;
   actorType?: "ai" | "agent" | "workflow";
   requesterId?: string | null;
   preferredSkillNames?: string[];
@@ -144,8 +143,7 @@ export class OrchestratorService {
     const actorType = input.actorType ?? "ai";
     const runtimePolicy = await getBoundRuntimePolicies(db, {
       tenantId: input.tenantId,
-      moduleId: input.moduleId,
-      skillGroupId: input.skillGroupId,
+      capabilityScope: input.capabilityScope,
       actorType,
       conversationId: input.conversationId
     });
@@ -154,7 +152,7 @@ export class OrchestratorService {
       tenantId: input.tenantId,
       channelType: input.channelType,
       actorRole: actorType,
-      moduleId: input.moduleId ?? null,
+      capabilityScope: input.capabilityScope ?? null,
       ownerMode: actorType
     });
     const activeCapabilityState = await getConversationCapabilityState(db, {
@@ -440,8 +438,7 @@ export class OrchestratorService {
             const gate = await evaluateSkillExecutionGate(db, {
               tenantId: input.tenantId,
               conversationId: input.conversationId,
-              moduleId: input.moduleId,
-              skillGroupId: input.skillGroupId,
+              capabilityScope: input.capabilityScope,
               actorType,
               requesterId: input.requesterId ?? null,
               policyMap: runtimePolicy,
@@ -645,8 +642,7 @@ export class OrchestratorService {
           conversationId: input.conversationId,
           aiAgentId: input.aiAgentId ?? null,
           actorType,
-          moduleId: input.moduleId ?? null,
-          skillGroupId: input.skillGroupId ?? null,
+          capabilityScope: input.capabilityScope ?? null,
           skillsInvoked,
           selectedSkillSlug: selectedSkill?.slug ?? null,
           candidateSkillSlugs: candidateSkills.map((skill) => skill.slug)

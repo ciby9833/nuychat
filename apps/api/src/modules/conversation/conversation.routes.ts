@@ -395,7 +395,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         tenantId,
         conversationId,
         actorType,
-        moduleId: null,
+        capabilityScope: null,
         preferredSkills: parseJsonStringArray(pref?.preferred_skills)
       });
 

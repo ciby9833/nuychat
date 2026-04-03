@@ -6,8 +6,7 @@ type RuntimeActorType = "ai" | "agent" | "workflow";
 
 type RuntimeBindingInput = {
   tenantId: string;
-  moduleId?: string | null;
-  skillGroupId?: string | null;
+  capabilityScope?: string | null;
   actorType: RuntimeActorType;
   conversationId?: string;
 };
@@ -38,7 +37,7 @@ export async function getBoundRuntimePolicies(
     tenantId: input.tenantId,
     channelType: channelType ?? "",
     actorRole: input.actorType,
-    moduleId: input.moduleId ?? null,
+    capabilityScope: input.capabilityScope ?? null,
     ownerMode: input.actorType
   });
 

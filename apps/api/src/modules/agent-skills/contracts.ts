@@ -33,7 +33,7 @@ export type SkillPlanningInput = {
   tenantId: string;
   channelType: string;
   actorRole: "ai" | "agent" | "workflow";
-  moduleId?: string | null;
+  capabilityScope?: string | null;
   ownerMode?: string | null;
 };
 

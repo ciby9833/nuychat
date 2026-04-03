@@ -27,7 +27,6 @@ type ConversationUpdatedEvent = RealtimeEventBase & {
   status?: string;
   queueStatus?: string;
   assignedAgentId?: string | null;
-  skillGroupId?: string | null;
   occurredAt: string;
 };
 

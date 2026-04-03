@@ -65,7 +65,7 @@ export function RoutingTab() {
       </div>
 
       <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
-        默认不配置复杂回退或技能规则，系统会按渠道实例、部门/团队、在线人工、AI 和实时负载做智能分配。这里只保留少量例外覆盖规则。
+        {t("routing.description")}
       </Typography.Text>
 
       <RuleTable

@@ -6,7 +6,7 @@ export type CapabilityRecommendationInput = {
   tenantId: string;
   conversationId: string;
   actorType: "ai" | "agent";
-  moduleId?: string | null;
+  capabilityScope?: string | null;
   preferredSkills?: string[];
 };
 
@@ -35,7 +35,7 @@ export async function recommendCapabilityScripts(
     tenantId: input.tenantId,
     channelType: conversation?.channel_type ?? "",
     actorRole: input.actorType,
-    moduleId: input.moduleId ?? null,
+    capabilityScope: input.capabilityScope ?? null,
     ownerMode: input.actorType
   });
 

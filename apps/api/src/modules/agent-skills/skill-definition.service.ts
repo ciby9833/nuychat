@@ -93,8 +93,8 @@ export async function listTenantSkillsForPlanning(
             qb.whereNull("av.role").orWhere("av.role", input.actorRole);
           })
           .andWhere((qb) => {
-            if (input.moduleId) qb.whereNull("av.module_id").orWhere("av.module_id", input.moduleId);
-            else qb.whereNull("av.module_id");
+            if (input.capabilityScope) qb.whereNull("av.capability_scope").orWhere("av.capability_scope", input.capabilityScope);
+            else qb.whereNull("av.capability_scope");
           })
           .andWhere((qb) => {
             if (input.ownerMode) qb.whereNull("av.owner_mode").orWhere("av.owner_mode", input.ownerMode);

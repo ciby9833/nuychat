@@ -184,7 +184,7 @@ export function RuleEditorDrawer({
         </Row>
 
         <Divider style={{ marginTop: 4 }}>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>默认调度策略</Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>{t("routing.form.defaultDispatch")}</Typography.Text>
         </Divider>
         <Row gutter={16}>
           <Col span={12}>
@@ -192,18 +192,23 @@ export function RuleEditorDrawer({
               <Select
                 options={EXECUTION_MODE_OPTIONS.map((item) => ({
                   value: item.value,
-                  label: item.value === "hybrid" ? "智能分配" : item.value === "human_first" ? "偏人工" : "偏AI"
+                  label:
+                    item.value === "hybrid"
+                      ? t("routing.options.executionMode.hybrid_smart")
+                      : item.value === "human_first"
+                        ? t("routing.options.executionMode.human_preferred")
+                        : t("routing.options.executionMode.ai_preferred")
                 }))}
               />
             </Form.Item>
           </Col>
         </Row>
         <Typography.Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
-          智能分配会结合在线人工、AI、排班和负载自动选择最合适的处理方。偏人工和偏AI只影响默认倾向，不需要再配置回退规则。
+          {t("routing.form.defaultDispatchHint")}
         </Typography.Text>
 
         <Divider plain>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>服务目标</Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>{t("routing.form.serviceTarget")}</Typography.Text>
         </Divider>
         <Row gutter={16}>
           <Col span={12}>
@@ -228,12 +233,12 @@ export function RuleEditorDrawer({
         </Row>
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item label="人工分配策略" name="assignmentStrategy" rules={[{ required: true }]}>
+            <Form.Item label={t("routing.form.humanStrategy")} name="assignmentStrategy" rules={[{ required: true }]}>
               <Select options={STRATEGY_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))} />
             </Form.Item>
           </Col>
           <Col span={12}>
-            <Form.Item label="AI 分配策略" name="aiAssignmentStrategy" rules={[{ required: true }]}>
+            <Form.Item label={t("routing.form.aiStrategy")} name="aiAssignmentStrategy" rules={[{ required: true }]}>
               <Select options={AI_STRATEGY_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))} />
             </Form.Item>
           </Col>

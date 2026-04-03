@@ -898,17 +898,22 @@ function deriveSupervisorExceptionReason(input: {
   currentResponsibleType: string | null;
   reservedResponsibleType: string | null;
 }) {
+  const hasResponsible =
+    input.reservedResponsibleType === "ai"
+    || input.reservedResponsibleType === "agent"
+    || input.currentResponsibleType === "ai"
+    || input.currentResponsibleType === "agent";
+
   if (input.handoffReason === "unanswered_auto_closed") return "unanswered_auto_closed";
   if (!input.latestCustomerMessageAt) return null;
   if (!input.latestServiceMessageAt) {
-    if (input.reservedResponsibleType === "ai" || input.currentResponsibleType === "ai") return "awaiting_ai_first_response";
-    if (input.reservedResponsibleType === "agent" || input.currentResponsibleType === "agent") return "awaiting_agent_first_response";
+    if (input.handoffRequired) return input.handoffReason ?? "handoff_pending";
+    if (hasResponsible) return null;
     return "unassigned_no_first_response";
   }
   if (new Date(input.latestCustomerMessageAt).getTime() > new Date(input.latestServiceMessageAt).getTime()) {
     if (input.handoffRequired) return input.handoffReason ?? "handoff_pending";
-    if (input.reservedResponsibleType === "ai" || input.currentResponsibleType === "ai") return "awaiting_ai_reply";
-    if (input.reservedResponsibleType === "agent" || input.currentResponsibleType === "agent") return "awaiting_agent_reply";
+    if (hasResponsible) return null;
     return "awaiting_assignment";
   }
   return null;

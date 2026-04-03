@@ -100,7 +100,10 @@ export function RuleTable({
               <Space direction="vertical" size={0}>
                 <Typography.Text>{s.departmentName} / {s.teamName}</Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  人工: {s.humanStrategy} | AI: {s.aiStrategy}
+                  {t("routing.summary.strategyLine", {
+                    humanStrategy: s.humanStrategy,
+                    aiStrategy: s.aiStrategy
+                  })}
                 </Typography.Text>
               </Space>
             );

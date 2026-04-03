@@ -121,7 +121,7 @@ export async function createCapabilityForTenant(tenantId: string, input: Capabil
       capability_id: capabilityRow.capability_id,
       channel: null,
       role: null,
-      module_id: null,
+      capability_scope: null,
       owner_mode: null,
       enabled: true
     });

@@ -107,8 +107,8 @@ export function buildRulePayload(values: RuleFormValues) {
 export function getExecutionModeLabel(mode: RuleFormValues["executionMode"]) {
   const option = EXECUTION_MODE_OPTIONS.find((item) => item.value === mode);
   if (!option) return mode;
-  if (mode === "hybrid") return "智能分配";
-  if (mode === "human_first") return "偏人工";
-  if (mode === "ai_first") return "偏AI";
+  if (mode === "hybrid") return i18next.t("routing.options.executionMode.hybrid_smart");
+  if (mode === "human_first") return i18next.t("routing.options.executionMode.human_preferred");
+  if (mode === "ai_first") return i18next.t("routing.options.executionMode.ai_preferred");
   return option.labelKey;
 }

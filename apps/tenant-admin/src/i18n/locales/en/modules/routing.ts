@@ -12,6 +12,7 @@ export default {
       target: "Target",
       skillAndStrategy: "Skill Group / Strategy"
     },
+    description: "The platform now uses smart default assignment based on channel instance, department or team scope, online human agents, AI seats, schedules, and live load. Only a small number of exception rules should be configured here.",
     form: {
       editRule: "Edit Routing Rule",
       createRule: "New Routing Rule",
@@ -34,6 +35,11 @@ export default {
       anyLanguage: "Any language",
       customerTier: "Customer Tier",
       anyTier: "Any tier",
+      defaultDispatch: "Default Dispatch Policy",
+      defaultDispatchHint: "Smart assignment automatically chooses the best available human or AI based on online status, schedules, and live load. Human-preferred and AI-preferred only change the default bias.",
+      serviceTarget: "Service Target",
+      humanStrategy: "Human Assignment Strategy",
+      aiStrategy: "AI Assignment Strategy",
       routingAction: "Routing Action",
       executionMode: "Execution Mode",
       executionHint: "Execution mode decides whether the rule prefers AI, humans, or only one handling path.",
@@ -97,7 +103,8 @@ export default {
       any: "Any",
       anyDepartment: "Any department",
       autoTeam: "Auto team selection",
-      reuseHumanTarget: "Reuse human target"
+      reuseHumanTarget: "Reuse human target",
+      strategyLine: "Human: {{humanStrategy}} | AI: {{aiStrategy}}"
     },
     messages: {
       ruleUpdated: "Routing rule updated",
@@ -134,7 +141,10 @@ export default {
         human_first: "Human first",
         ai_only: "AI only",
         human_only: "Human only",
-        hybrid: "Hybrid"
+        hybrid: "Hybrid",
+        hybrid_smart: "Smart assignment",
+        human_preferred: "Prefer human",
+        ai_preferred: "Prefer AI"
       },
       hybridStrategy: {
         load_balanced: "Load balanced",

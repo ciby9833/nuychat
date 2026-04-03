@@ -12,6 +12,7 @@ export default {
       target: "目标归属",
       skillAndStrategy: "技能组 / 策略"
     },
+    description: "平台现在会按渠道实例、部门/团队范围、在线人工、AI 座席、排班和实时负载做默认智能分配。这里仅保留少量例外规则。",
     form: {
       editRule: "编辑调度规则",
       createRule: "新增调度规则",
@@ -34,6 +35,11 @@ export default {
       anyLanguage: "任意语言",
       customerTier: "客户等级",
       anyTier: "任意等级",
+      defaultDispatch: "默认调度策略",
+      defaultDispatchHint: "智能分配会结合在线人工、AI、排班和负载自动选择最合适的处理方。偏人工和偏AI只影响默认倾向。",
+      serviceTarget: "服务目标",
+      humanStrategy: "人工分配策略",
+      aiStrategy: "AI 分配策略",
       routingAction: "调度动作",
       executionMode: "执行模式",
       executionHint: "执行模式决定当前规则是先走 AI、先走人工，还是只允许其中一种处理方式。",
@@ -97,7 +103,8 @@ export default {
       any: "任意",
       anyDepartment: "任意部门",
       autoTeam: "自动选团队",
-      reuseHumanTarget: "沿用人工目标"
+      reuseHumanTarget: "沿用人工目标",
+      strategyLine: "人工: {{humanStrategy}} | AI: {{aiStrategy}}"
     },
     messages: {
       ruleUpdated: "调度规则已更新",
@@ -134,7 +141,10 @@ export default {
         human_first: "人工优先",
         ai_only: "仅 AI",
         human_only: "仅人工",
-        hybrid: "混合"
+        hybrid: "混合",
+        hybrid_smart: "智能分配",
+        human_preferred: "偏人工",
+        ai_preferred: "偏AI"
       },
       hybridStrategy: {
         load_balanced: "按负载均衡",

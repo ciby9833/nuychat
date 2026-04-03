@@ -213,8 +213,7 @@ export function createRoutingWorker() {
             customerId,
             channelType,
             caseId: conversation.current_case_id as string | null,
-            moduleId: null,
-            skillGroupId: null,
+            capabilityScope: null,
             actorType: "ai",
             preferredSkillNames: parsePreferredSkills(preferences?.preferred_skills),
             aiAgentId: plan.target.aiAgentId
