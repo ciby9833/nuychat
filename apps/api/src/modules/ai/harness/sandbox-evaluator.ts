@@ -24,14 +24,12 @@
  *   - Point B clarify: LLM call only when evidence is critically insufficient
  */
 
-import type { AIMessage } from "../../../../../../packages/ai-sdk/src/index.js";
+import type { AIMessage, AIProvider } from "../../../../../../packages/ai-sdk/src/index.js";
 import type { HarnessSandbox } from "./types.js";
 import type { VerifiedFact, FactSnapshot } from "../fact-layer.service.js";
-import type { VerifierVerdict } from "../verifier/types.js";
 import type { ReviserOutcome } from "../reviser/types.js";
 import { evaluatePointA, evaluatePointB } from "../verifier/index.js";
 import { revisePointA, revisePointB } from "../reviser/index.js";
-import type { AIProvider } from "../../../../../../packages/ai-sdk/src/index.js";
 
 // ─── Sandbox State ──────────────────────────────────────────────────────────
 

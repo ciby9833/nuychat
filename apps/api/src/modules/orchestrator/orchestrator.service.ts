@@ -49,8 +49,6 @@ import {
   type VerifiedFact
 } from "../ai/fact-layer.service.js";
 import { recordSkillExecutionAsTask } from "../tasks/ai-task-bridge.service.js";
-import type { VerifierVerdict } from "../ai/verifier/index.js";
-import type { ReviserOutcome } from "../ai/reviser/index.js";
 // ── Harness Engineering ──────────────────────────────────────────────────────
 import {
   assembleSystemPrompt,
@@ -106,19 +104,7 @@ type AIAgentRow = {
   system_prompt: string | null;
 };
 
-// ─── System prompt ────────────────────────────────────────────────────────────
-
-const SYSTEM_PROMPT_BASE = `You are a professional AI assistant for customer service.
-
-Rules:
-- Always reply in the same language the customer uses.
-- Be concise, helpful, and empathetic.
-- When you need specific information to answer the customer, use the tools provided — do not guess or fabricate data.
-- Never ask for personal details or extra requirements unless they are explicitly required by the selected skill contract or returned by a tool result/error.
-- At each step, either call tools or answer the user.
-- If you need more information, call tools.
-- If you already have enough information, answer directly.
-- Avoid repeating the same tool call with the same arguments unless new information appears.`;
+// Base system prompt is now in harness/prompt-assembler.ts (single source of truth)
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
@@ -366,7 +352,7 @@ export class OrchestratorService {
     const runVerifiedFacts: VerifiedFact[] = [...factSnapshot.verifiedFacts];
 
     // ── Harness: Prompt Assembly ────────────────────────────────────────────────
-    const promptLayers = buildPromptLayers({ aiAgent });
+    const promptLayers = buildPromptLayers({ aiAgent: aiAgent ?? null });
     const runtimePrompt = assembleSystemPrompt({
       layers: promptLayers,
       customerIntelligence: harnessContext.customerIntelligence,
@@ -787,12 +773,13 @@ export class OrchestratorService {
         }).catch(() => null);
       }
 
+      const sandboxSnapshot = sandbox.snapshot;
       void scheduleExecutionArchive({
         tenantId: input.tenantId,
         customerId: input.customerId,
         conversationId: input.conversationId,
         aiAgent,
-        memoryContext,
+        memoryContext: harnessContext.customerIntelligence ?? "",
         action: effectiveAction,
         finalContent: responseText ?? "",
         intent: aiDecision.intent,
@@ -802,8 +789,7 @@ export class OrchestratorService {
         skillsBlocked,
         toolCalls: lastToolCalls,
         handoffReason: effectiveHandoffReason ?? null,
-        verifierSteps,
-        reviserSteps
+        sandboxSnapshot
       }).catch(() => null);
 
       if (effectiveAction === "handoff") {
@@ -875,8 +861,7 @@ async function scheduleExecutionArchive(input: {
   skillsBlocked: Array<{ name: string; reason: string }>;
   toolCalls: AIToolCall[];
   handoffReason: string | null;
-  verifierSteps: Array<{ point: string; loop?: number; verdict: VerifierVerdict }>;
-  reviserSteps: Array<{ point: string; loop?: number; outcome: ReviserOutcome }>;
+  sandboxSnapshot: import("../ai/harness/types.js").HarnessSandbox;
 }) {
   await scheduleLongTask({
     tenantId: input.tenantId,
@@ -911,20 +896,16 @@ async function scheduleExecutionArchive(input: {
           arguments: call.function.arguments
         })),
         handoffReason: input.handoffReason,
-        verifierSteps: input.verifierSteps.map((s) => ({
+        // Sandbox steps folded from harness snapshot (replaces separate verifier/reviser arrays)
+        sandboxOverride: input.sandboxSnapshot.overrideAction,
+        sandboxTokens: input.sandboxSnapshot.sandboxTokens,
+        verifierSteps: input.sandboxSnapshot.verifierSteps.map((s) => ({
           point: s.point,
           loop: s.loop,
-          action: s.verdict.action,
-          summary: s.verdict.summary,
-          findings: s.verdict.findings.filter((f) => f.triggered)
+          action: s.action,
+          findings: s.findings.filter((f) => f.triggered)
         })),
-        reviserSteps: input.reviserSteps.map((s) => ({
-          point: s.point,
-          loop: s.loop,
-          action: s.outcome.action,
-          modified: s.outcome.modified,
-          summary: s.outcome.summary
-        }))
+        reviserSteps: input.sandboxSnapshot.reviserSteps
       }
     }
   });
@@ -964,62 +945,7 @@ async function scheduleConversationMemoryEncoding(input: {
   });
 }
 
-function buildSystemPrompt(input: {
-  basePrompt: string;
-  memoryContext: string | null;
-  recentSkillContext: string | null;
-  aiAgent: AIAgentRow | null | undefined;
-  candidateSkills?: Array<{
-    name: string;
-    description: string | null;
-    skillMarkdown: string | null;
-  }>;
-}): string {
-  const sections = [input.basePrompt];
-
-  if (input.aiAgent) {
-    const personaLines = [
-      input.aiAgent.name ? `AI seat: ${input.aiAgent.name}` : null,
-      input.aiAgent.role_label ? `Role: ${input.aiAgent.role_label}` : null,
-      input.aiAgent.personality ? `Personality: ${input.aiAgent.personality}` : null,
-      input.aiAgent.scene_prompt ? `Service scope: ${input.aiAgent.scene_prompt}` : null
-    ].filter(Boolean);
-
-    if (personaLines.length > 0) {
-      sections.push(`Seat persona:\n${personaLines.join("\n")}`);
-    }
-
-    if (input.aiAgent.system_prompt) {
-      sections.push(`Seat-specific instructions:\n${input.aiAgent.system_prompt}`);
-    }
-  }
-
-  // Long-term memory & customer profile — who this customer is
-  if (input.memoryContext) {
-    sections.push(input.memoryContext);
-  }
-
-  // Short-term tool results — what was just fetched in this conversation.
-  // Placed after memory so the LLM reads: identity → history → fresh data → task.
-  if (input.recentSkillContext) {
-    sections.push(input.recentSkillContext);
-  }
-
-  if (Array.isArray(input.candidateSkills) && input.candidateSkills.length > 0) {
-    const candidateLines = input.candidateSkills.map((skill, index) => ([
-      `${index + 1}. ${skill.name}`,
-      skill.description ? `Summary: ${skill.description}` : null,
-      skill.skillMarkdown ? `Skill package:\n${skill.skillMarkdown}` : null
-    ].filter(Boolean).join("\n")));
-    if (candidateLines.length > 0) {
-      sections.push(`Candidate capabilities:\n${candidateLines.join("\n\n")}`);
-    }
-  } else {
-    sections.push("No capability is currently suggested. Do not invent unavailable verification procedures or fake lookup requirements.");
-  }
-
-  return sections.join("\n\n");
-}
+// buildSystemPrompt has been moved to harness/prompt-assembler.ts
 
 function buildRuntimeTools(input: {
   candidateSkills: Array<{
