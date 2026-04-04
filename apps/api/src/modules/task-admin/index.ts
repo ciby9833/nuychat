@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
+import { loadConversationPreview } from "../conversation/conversation-preview.service.js";
 import { attachTenantAdminGuard } from "../tenant/tenant-admin.auth.js";
 import { CaseTaskService } from "../tasks/case-task.service.js";
 
@@ -15,8 +16,10 @@ export async function taskAdminRoutes(app: FastifyInstance) {
     const query = req.query as {
       status?: string;
       ownerAgentId?: string;
-      from?: string;
-      to?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      dueFrom?: string;
+      dueTo?: string;
       search?: string;
     };
 
@@ -24,11 +27,25 @@ export async function taskAdminRoutes(app: FastifyInstance) {
       const items = await caseTaskService.listAdminTasks(trx, tenantId, {
         status: query.status ?? null,
         ownerAgentId: query.ownerAgentId ?? null,
-        from: query.from ? new Date(query.from) : null,
-        to: query.to ? new Date(query.to) : null,
+        createdFrom: query.createdFrom ? new Date(query.createdFrom) : null,
+        createdTo: query.createdTo ? new Date(query.createdTo) : null,
+        dueFrom: query.dueFrom ? new Date(query.dueFrom) : null,
+        dueTo: query.dueTo ? new Date(query.dueTo) : null,
         search: query.search ?? null
       });
       return { items };
+    });
+  });
+
+  app.get("/api/admin/conversations/:conversationId/preview", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { conversationId } = req.params as { conversationId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const preview = await loadConversationPreview(trx, tenantId, conversationId);
+      if (!preview) throw app.httpErrors.notFound("Conversation not found");
+      return preview;
     });
   });
 

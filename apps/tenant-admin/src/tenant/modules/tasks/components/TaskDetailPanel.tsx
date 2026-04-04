@@ -23,6 +23,7 @@ type TaskDetailPanelProps = {
   onCommentChange: (value: string) => void;
   onPatch: (patch: { status?: string; assigneeAgentId?: string | null; dueAt?: string | null }) => void;
   onComment: () => void;
+  onOpenConversation: (conversationId: string | null) => void;
 };
 
 export function TaskDetailPanel({
@@ -33,7 +34,8 @@ export function TaskDetailPanel({
   saving,
   onCommentChange,
   onPatch,
-  onComment
+  onComment,
+  onOpenConversation
 }: TaskDetailPanelProps) {
   const { t } = useTranslation();
 
@@ -50,6 +52,18 @@ export function TaskDetailPanel({
           {" · "}
           {t("tasksModule.detail.customerPrefix", { value: selectedTask.customerName || selectedTask.customerRef || t("tasksModule.detail.emptyValue") })}
         </Typography.Paragraph>
+        <Space size={8} style={{ marginTop: 8 }} wrap>
+          <Typography.Text type="secondary">
+            {t("tasksModule.detail.conversationPrefix", {
+              value: selectedTask.conversationId ? selectedTask.conversationId.slice(0, 8) : t("tasksModule.detail.emptyValue")
+            })}
+          </Typography.Text>
+          {selectedTask.conversationId ? (
+            <Button type="link" size="small" style={{ padding: 0, height: "auto" }} onClick={() => onOpenConversation(selectedTask.conversationId)}>
+              {t("tasksModule.detail.openConversation")}
+            </Button>
+          ) : null}
+        </Space>
       </div>
 
       <Form layout="vertical">

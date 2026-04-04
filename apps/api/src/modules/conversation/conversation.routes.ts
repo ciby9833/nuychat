@@ -36,6 +36,7 @@ import {
 } from "../skills/runtime-governance.service.js";
 import { trackEvent } from "../analytics/analytics.service.js";
 import { CaseTaskService } from "../tasks/case-task.service.js";
+import { loadConversationPreview } from "./conversation-preview.service.js";
 import {
   getConversationInsightRecord,
   getCustomerProfileRecord,
@@ -1062,59 +1063,19 @@ export async function conversationRoutes(app: FastifyInstance) {
 
     const attachments = normalizeReplyAttachments(body);
     const replyText = (body.text ?? "").trim();
-    const outboundMessages = buildReplyMessages({
+    await queueConversationReply(app, {
+      tenantId,
+      conversationId,
+      agentId,
+      role,
       text: replyText,
       attachments,
-      agentId,
       replyToMessageId: body.replyToMessageId,
       reactionEmoji: body.reactionEmoji,
-      reactionToMessageId: body.reactionToMessageId
+      reactionToMessageId: body.reactionToMessageId,
+      channelId: body.channelId,
+      channelType: body.channelType
     });
-
-    if (outboundMessages.length === 0) {
-      throw app.httpErrors.badRequest("Reply text, reaction, or attachments are required");
-    }
-
-    const summary = await withTenantTransaction(tenantId, async (trx) => {
-      return getConversationSummary(tenantId, conversationId, trx);
-    });
-
-    if (!summary) throw app.httpErrors.notFound("Conversation not found");
-
-    // Exclusive-assignment guard: only the assigned agent (or admin) may reply
-    if (role !== "admin" && agentId) {
-      const assignedId = (summary as { assigned_agent_id?: string | null }).assigned_agent_id ?? null;
-      if (assignedId && assignedId !== agentId) {
-        throw app.httpErrors.forbidden("Only the assigned agent may reply to this conversation");
-      }
-    }
-
-    const [replyContext, reactionContext] = await withTenantTransaction(tenantId, async (trx) => {
-      return Promise.all([
-        resolveReplyContext(tenantId, body.replyToMessageId, trx),
-        resolveReplyContext(tenantId, body.reactionToMessageId, trx)
-      ]);
-    });
-
-    for (const message of outboundMessages) {
-      await outboundQueue.add(
-        "send-outbound",
-        {
-          tenantId,
-          conversationId,
-          channelId: body.channelId ?? (summary.channel_id as string),
-          channelType: body.channelType ?? (summary.channel_type as string),
-          message: {
-            ...message,
-            replyToMessageId: message.replyToMessageId ?? replyContext.replyToMessageId ?? undefined,
-            replyToExternalId: message.replyToMessageId ? replyContext.replyToExternalId ?? undefined : undefined,
-            reactionMessageId: message.reactionMessageId ? reactionContext.replyToMessageId ?? undefined : undefined,
-            reactionExternalId: message.reactionMessageId ? reactionContext.replyToExternalId ?? undefined : undefined
-          }
-        },
-        { removeOnComplete: 100, removeOnFail: 50 }
-      );
-    }
 
     await withTenantTransaction(tenantId, async (trx) => {
       await recordAgentPresenceActivity(trx, tenantId, agentId);
@@ -1991,6 +1952,26 @@ export async function conversationRoutes(app: FastifyInstance) {
     });
   });
 
+  app.get("/api/tasks/mine", async (req) => {
+    const auth = requireAuth(app, req);
+    const tenantId = auth.tenantId;
+    const agentId = auth.agentId;
+    const query = req.query as { status?: string; search?: string; limit?: string };
+
+    if (!agentId) throw app.httpErrors.forbidden("Agent profile required");
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      const tasks = await caseTaskService.listAgentTasks(trx, {
+        tenantId,
+        agentId,
+        status: query.status ?? null,
+        search: query.search ?? null,
+        limit: query.limit ? Number(query.limit) : null
+      });
+      return { tasks };
+    });
+  });
+
   app.get("/api/conversations/:conversationId/tasks", async (req) => {
     const auth = requireAuth(app, req);
     const tenantId = auth.tenantId;
@@ -2005,6 +1986,21 @@ export async function conversationRoutes(app: FastifyInstance) {
         caseId: result.caseId,
         tasks: result.tasks
       };
+    });
+  });
+
+  app.get("/api/conversations/:conversationId/preview", async (req) => {
+    const auth = requireAuth(app, req);
+    const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
+    const { conversationId } = req.params as { conversationId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      await assertConversationAccess(trx, { tenantId, conversationId, agentId, role, app });
+      const preview = await loadConversationPreview(trx, tenantId, conversationId);
+      if (!preview) throw app.httpErrors.notFound("Conversation not found");
+      return preview;
     });
   });
 
@@ -2036,6 +2032,7 @@ export async function conversationRoutes(app: FastifyInstance) {
       assigneeAgentId?: string | null;
       dueAt?: string | null;
       sourceMessageId?: string | null;
+      requiresCustomerReply?: boolean;
     } | undefined) ?? {};
 
     const title = body.title?.trim();
@@ -2074,9 +2071,10 @@ export async function conversationRoutes(app: FastifyInstance) {
         title,
         description: body.note?.trim() ?? null,
         priority: body.priority ?? null,
-        assigneeAgentId: body.assigneeAgentId ?? null,
+        assigneeAgentId: body.assigneeAgentId ?? auth.agentId ?? null,
         dueAt: body.dueAt ?? null,
         sourceMessageId: body.sourceMessageId ?? null,
+        requiresCustomerReply: body.requiresCustomerReply ?? false,
         creatorType: auth.agentId ? "agent" : "workflow",
         creatorIdentityId: auth.sub,
         creatorAgentId: auth.agentId ?? null
@@ -2099,6 +2097,10 @@ export async function conversationRoutes(app: FastifyInstance) {
       priority?: string;
       assigneeAgentId?: string | null;
       dueAt?: string | null;
+      requiresCustomerReply?: boolean;
+      customerReplyStatus?: "pending" | "sent" | "waived" | null;
+      customerReplyBody?: string | null;
+      sendCustomerReply?: boolean;
     } | undefined) ?? {};
 
     return withTenantTransaction(tenantId, async (trx) => {
@@ -2111,8 +2113,25 @@ export async function conversationRoutes(app: FastifyInstance) {
         status: body.status,
         priority: body.priority,
         assigneeAgentId: body.assigneeAgentId,
-        dueAt: body.dueAt
+        dueAt: body.dueAt,
+        requiresCustomerReply: body.requiresCustomerReply,
+        customerReplyStatus: body.customerReplyStatus
       });
+
+      if (body.sendCustomerReply) {
+        const replyText = body.customerReplyBody?.trim();
+        if (!replyText) throw app.httpErrors.badRequest("customerReplyBody is required when sendCustomerReply=true");
+        await queueConversationReply(app, {
+          tenantId,
+          conversationId,
+          agentId,
+          role,
+          taskId,
+          text: replyText,
+          markTaskCustomerReplySent: true
+        });
+      }
+
       const detail = await caseTaskService.getConversationTaskDetail(trx, tenantId, conversationId, taskId);
       if (!detail) throw app.httpErrors.internalServerError("Task updated but could not be loaded");
       return detail;
@@ -2942,6 +2961,84 @@ type ReplyMessage = {
   reactionMessageId?: string;
   attachment?: { url: string; mimeType: string; fileName?: string };
 };
+
+async function queueConversationReply(
+  app: FastifyInstance,
+  input: {
+    tenantId: string;
+    conversationId: string;
+    agentId?: string;
+    role: string;
+    text: string;
+    attachments?: Array<{ url: string; mimeType: string; fileName?: string }>;
+    replyToMessageId?: string;
+    reactionEmoji?: string;
+    reactionToMessageId?: string;
+    channelId?: string;
+    channelType?: string;
+    taskId?: string;
+    markTaskCustomerReplySent?: boolean;
+  }
+) {
+  const outboundMessages = buildReplyMessages({
+    text: input.text,
+    attachments: input.attachments ?? [],
+    agentId: input.agentId,
+    replyToMessageId: input.replyToMessageId,
+    reactionEmoji: input.reactionEmoji,
+    reactionToMessageId: input.reactionToMessageId
+  });
+
+  if (outboundMessages.length === 0) {
+    throw app.httpErrors.badRequest("Reply text, reaction, or attachments are required");
+  }
+
+  const summary = await withTenantTransaction(input.tenantId, async (trx) => {
+    return getConversationSummary(input.tenantId, input.conversationId, trx);
+  });
+
+  if (!summary) throw app.httpErrors.notFound("Conversation not found");
+
+  if (input.role !== "admin" && input.agentId) {
+    const assignedId = (summary as { assigned_agent_id?: string | null }).assigned_agent_id ?? null;
+    if (assignedId && assignedId !== input.agentId) {
+      throw app.httpErrors.forbidden("Only the assigned agent may reply to this conversation");
+    }
+  }
+
+  const [replyContext, reactionContext] = await withTenantTransaction(input.tenantId, async (trx) => {
+    return Promise.all([
+      resolveReplyContext(input.tenantId, input.replyToMessageId, trx),
+      resolveReplyContext(input.tenantId, input.reactionToMessageId, trx)
+    ]);
+  });
+
+  for (const message of outboundMessages) {
+    await outboundQueue.add(
+      "send-outbound",
+      {
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        channelId: input.channelId ?? (summary.channel_id as string),
+        channelType: input.channelType ?? (summary.channel_type as string),
+        taskContext: input.taskId
+          ? {
+              taskId: input.taskId,
+              markCustomerReplySent: Boolean(input.markTaskCustomerReplySent)
+            }
+          : undefined,
+        message: {
+          ...message,
+          replyToMessageId: message.replyToMessageId ?? replyContext.replyToMessageId ?? undefined,
+          replyToExternalId: message.replyToMessageId ? replyContext.replyToExternalId ?? undefined : undefined,
+          reactionMessageId: message.reactionMessageId ? reactionContext.replyToMessageId ?? undefined : undefined,
+          reactionExternalId: message.reactionMessageId ? reactionContext.replyToExternalId ?? undefined : undefined
+        }
+      },
+      { removeOnComplete: 100, removeOnFail: 50 }
+    );
+  }
+}
 
 function buildReplyMessages(input: {
   text: string;

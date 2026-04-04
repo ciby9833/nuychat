@@ -62,9 +62,11 @@ export function useHumanConversationsData() {
       const nextId =
         keepSelection && currentId && conversationData.items.some((item) => item.conversationId === currentId)
           ? currentId
-          : (selectedConversationRef.current && conversationData.items.some((item) => item.conversationId === selectedConversationRef.current)
-            ? selectedConversationRef.current
-            : (conversationData.items[0]?.conversationId ?? ""));
+          : currentId
+            ? currentId
+            : (selectedConversationRef.current && conversationData.items.some((item) => item.conversationId === selectedConversationRef.current)
+              ? selectedConversationRef.current
+              : (conversationData.items[0]?.conversationId ?? ""));
       setSelectedConversationId(nextId);
     } catch (err) {
       setError(`加载人工会话失败: ${(err as Error).message}`);

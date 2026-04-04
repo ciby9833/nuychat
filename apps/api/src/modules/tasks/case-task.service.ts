@@ -3,6 +3,7 @@ import { recordCaseTaskEvent, recordCaseTaskEvents, type CaseTaskEventInput } fr
 
 type TaskStatus = "open" | "in_progress" | "done" | "cancelled";
 type TaskPriority = "low" | "normal" | "high" | "urgent";
+type CustomerReplyStatus = "pending" | "sent" | "waived";
 
 type BaseTaskRow = {
   task_id: string;
@@ -23,6 +24,10 @@ type BaseTaskRow = {
   creator_type: string;
   creator_identity_id: string | null;
   creator_agent_id: string | null;
+  requires_customer_reply: boolean;
+  customer_reply_status: CustomerReplyStatus | null;
+  customer_reply_message_id: string | null;
+  customer_reply_sent_at: Date | string | null;
   last_commented_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -50,8 +55,10 @@ type CommentRow = {
 type TaskListFilters = {
   status?: string | null;
   ownerAgentId?: string | null;
-  from?: Date | null;
-  to?: Date | null;
+  createdFrom?: Date | null;
+  createdTo?: Date | null;
+  dueFrom?: Date | null;
+  dueTo?: Date | null;
   search?: string | null;
 };
 
@@ -68,6 +75,11 @@ function normalizeTaskStatus(value: unknown): TaskStatus {
 function normalizeTaskPriority(value: unknown): TaskPriority {
   if (value === "low" || value === "normal" || value === "high" || value === "urgent") return value;
   return "normal";
+}
+
+function normalizeCustomerReplyStatus(value: unknown): CustomerReplyStatus | null {
+  if (value === "pending" || value === "sent" || value === "waived") return value;
+  return null;
 }
 
 export class CaseTaskService {
@@ -131,6 +143,10 @@ export class CaseTaskService {
         "ct.creator_type",
         "ct.creator_identity_id",
         "ct.creator_agent_id",
+        "ct.requires_customer_reply",
+        "ct.customer_reply_status",
+        "ct.customer_reply_message_id",
+        "ct.customer_reply_sent_at",
         "ct.last_commented_at",
         "ct.created_at",
         "ct.updated_at",
@@ -165,6 +181,10 @@ export class CaseTaskService {
       creatorType: row.creator_type,
       creatorIdentityId: row.creator_identity_id,
       creatorAgentId: row.creator_agent_id,
+      requiresCustomerReply: Boolean(row.requires_customer_reply),
+      customerReplyStatus: row.customer_reply_status ?? null,
+      customerReplyMessageId: row.customer_reply_message_id ?? null,
+      customerReplySentAt: toIso(row.customer_reply_sent_at),
       creatorName: row.creator_name ?? null,
       creatorEmployeeNo: row.creator_employee_no ?? null,
       sourceMessagePreview: row.source_message_preview ?? null,
@@ -200,6 +220,7 @@ export class CaseTaskService {
 
     const rows = await this.baseTaskQuery(trx, tenantId)
       .where("ct.case_id", caseId)
+      .whereNot("ct.task_type", "skill_execution")
       .orderByRaw(`
         case
           when ct.status = 'open' then 0
@@ -318,6 +339,7 @@ export class CaseTaskService {
       assigneeAgentId?: string | null;
       dueAt?: string | null;
       sourceMessageId?: string | null;
+      requiresCustomerReply?: boolean | null;
       creatorType: string;
       creatorIdentityId: string | null;
       creatorAgentId: string | null;
@@ -337,6 +359,8 @@ export class CaseTaskService {
         status: "open",
         priority: normalizeTaskPriority(input.priority),
         owner_agent_id: input.assigneeAgentId ?? null,
+        requires_customer_reply: Boolean(input.requiresCustomerReply),
+        customer_reply_status: input.requiresCustomerReply ? "pending" : null,
         due_at: dueAt,
         creator_type: input.creatorType,
         creator_identity_id: input.creatorIdentityId,
@@ -387,6 +411,10 @@ export class CaseTaskService {
       priority?: string | null;
       assigneeAgentId?: string | null;
       dueAt?: string | null;
+      requiresCustomerReply?: boolean | null;
+      customerReplyStatus?: CustomerReplyStatus | null;
+      customerReplyMessageId?: string | null;
+      customerReplySentAt?: string | null;
       actorType?: "agent" | "admin" | "ai" | "system";
       actorId?: string | null;
     }
@@ -394,8 +422,14 @@ export class CaseTaskService {
     // Read current state for audit events
     const current = await trx("case_tasks")
       .where({ tenant_id: input.tenantId, task_id: input.taskId })
-      .select("status", "priority", "owner_agent_id")
-      .first<{ status: string; priority: string; owner_agent_id: string | null } | undefined>();
+      .select("status", "priority", "owner_agent_id", "requires_customer_reply", "customer_reply_status")
+      .first<{
+        status: string;
+        priority: string;
+        owner_agent_id: string | null;
+        requires_customer_reply: boolean;
+        customer_reply_status: CustomerReplyStatus | null;
+      } | undefined>();
 
     const patch: Record<string, unknown> = {};
     const events: CaseTaskEventInput[] = [];
@@ -460,6 +494,28 @@ export class CaseTaskService {
       }
     }
     if (input.dueAt !== undefined) patch.due_at = input.dueAt ? new Date(input.dueAt) : null;
+    if (input.requiresCustomerReply !== undefined) {
+      const requiresCustomerReply = Boolean(input.requiresCustomerReply);
+      patch.requires_customer_reply = requiresCustomerReply;
+      if (!requiresCustomerReply) {
+        patch.customer_reply_status = null;
+        patch.customer_reply_message_id = null;
+        patch.customer_reply_sent_at = null;
+      } else if (!current?.customer_reply_status) {
+        patch.customer_reply_status = "pending";
+      }
+    }
+    if (input.customerReplyStatus !== undefined) {
+      patch.customer_reply_status = normalizeCustomerReplyStatus(input.customerReplyStatus);
+      if (patch.customer_reply_status !== "sent") {
+        patch.customer_reply_sent_at = input.customerReplyStatus === "waived" ? null : patch.customer_reply_sent_at;
+        if (patch.customer_reply_status !== "sent") patch.customer_reply_message_id = null;
+      }
+    }
+    if (input.customerReplyMessageId !== undefined) patch.customer_reply_message_id = input.customerReplyMessageId;
+    if (input.customerReplySentAt !== undefined) {
+      patch.customer_reply_sent_at = input.customerReplySentAt ? new Date(input.customerReplySentAt) : null;
+    }
     if (Object.keys(patch).length === 0) return;
     patch.updated_at = trx.fn.now();
 
@@ -514,6 +570,7 @@ export class CaseTaskService {
     filters: TaskListFilters
   ) {
     const query = this.baseTaskQuery(trx, tenantId)
+      .whereNot("ct.task_type", "skill_execution")
       .leftJoin("conversation_cases as cc", function joinCase() {
         this.on("cc.case_id", "=", "ct.case_id").andOn("cc.tenant_id", "=", "ct.tenant_id");
       })
@@ -529,8 +586,10 @@ export class CaseTaskService {
 
     if (filters.status) query.where("ct.status", filters.status);
     if (filters.ownerAgentId) query.where("ct.owner_agent_id", filters.ownerAgentId);
-    if (filters.from) query.where("ct.created_at", ">=", filters.from);
-    if (filters.to) query.where("ct.created_at", "<=", filters.to);
+    if (filters.createdFrom) query.where("ct.created_at", ">=", filters.createdFrom);
+    if (filters.createdTo) query.where("ct.created_at", "<=", filters.createdTo);
+    if (filters.dueFrom) query.where("ct.due_at", ">=", filters.dueFrom);
+    if (filters.dueTo) query.where("ct.due_at", "<=", filters.dueTo);
     if (filters.search?.trim()) {
       const q = `%${filters.search.trim()}%`;
       query.where((builder) => {
@@ -561,6 +620,85 @@ export class CaseTaskService {
       caseStatus: (row as { case_status?: string | null }).case_status ?? null,
       customerName: (row as { customer_name?: string | null }).customer_name ?? null,
       customerRef: (row as { customer_ref?: string | null }).customer_ref ?? null
+    }));
+  }
+
+  async listAgentTasks(
+    trx: Knex.Transaction,
+    input: {
+      tenantId: string;
+      agentId: string;
+      status?: string | null;
+      search?: string | null;
+      limit?: number | null;
+    }
+  ) {
+    const query = this.baseTaskQuery(trx, input.tenantId)
+      .where("ct.owner_agent_id", input.agentId)
+      .whereNot("ct.task_type", "skill_execution")
+      .leftJoin("conversation_cases as cc", function joinCase() {
+        this.on("cc.case_id", "=", "ct.case_id").andOn("cc.tenant_id", "=", "ct.tenant_id");
+      })
+      .leftJoin("customers as cu", function joinCustomer() {
+        this.on("cu.customer_id", "=", "ct.customer_id").andOn("cu.tenant_id", "=", "ct.tenant_id");
+      })
+      .leftJoin("conversations as c", function joinConversation() {
+        this.on("c.conversation_id", "=", "ct.conversation_id").andOn("c.tenant_id", "=", "ct.tenant_id");
+      })
+      .select(
+        "cc.title as case_title",
+        "cc.status as case_status",
+        "cu.display_name as customer_name",
+        "cu.external_ref as customer_ref",
+        "c.status as conversation_status",
+        "c.channel_type",
+        "c.last_message_preview as conversation_last_message_preview",
+        "c.last_message_at as conversation_last_message_at"
+      );
+
+    if (input.status === "active") {
+      query.whereIn("ct.status", ["open", "in_progress"]);
+    } else if (input.status) {
+      query.where("ct.status", input.status);
+    }
+
+    if (input.search?.trim()) {
+      const q = `%${input.search.trim()}%`;
+      query.where((builder) => {
+        builder
+          .whereILike("ct.title", q)
+          .orWhereILike("ct.description", q)
+          .orWhereILike("cc.title", q)
+          .orWhereILike("cu.display_name", q)
+          .orWhereILike("cu.external_ref", q)
+          .orWhereILike("c.last_message_preview", q);
+      });
+    }
+
+    const rows = await query
+      .orderByRaw(`
+        case
+          when ct.status = 'open' then 0
+          when ct.status = 'in_progress' then 1
+          when ct.status = 'done' then 2
+          else 3
+        end
+      `)
+      .orderByRaw("case when ct.due_at is null then 1 else 0 end")
+      .orderBy("ct.due_at", "asc")
+      .orderBy("ct.updated_at", "desc")
+      .limit(Math.max(1, Math.min(input.limit ?? 100, 200)));
+
+    return rows.map((row) => ({
+      ...this.mapTask(row as BaseTaskRow),
+      caseTitle: (row as { case_title?: string | null }).case_title ?? null,
+      caseStatus: (row as { case_status?: string | null }).case_status ?? null,
+      customerName: (row as { customer_name?: string | null }).customer_name ?? null,
+      customerRef: (row as { customer_ref?: string | null }).customer_ref ?? null,
+      conversationStatus: (row as { conversation_status?: string | null }).conversation_status ?? null,
+      channelType: (row as { channel_type?: string | null }).channel_type ?? null,
+      conversationLastMessagePreview: (row as { conversation_last_message_preview?: string | null }).conversation_last_message_preview ?? null,
+      conversationLastMessageAt: toIso((row as { conversation_last_message_at?: Date | string | null }).conversation_last_message_at)
     }));
   }
 }

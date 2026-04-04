@@ -20,7 +20,7 @@ export function HumanConversationDetailPane({
   renderMessages,
   reactionsByTarget
 }: HumanConversationDetailPaneProps) {
-  if (!detail || !currentItem) {
+  if (!detail) {
     return (
       <div style={S.midCol}>
         <div style={S.chatEmpty}>

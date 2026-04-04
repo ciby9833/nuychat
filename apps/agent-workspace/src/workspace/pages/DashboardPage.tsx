@@ -54,18 +54,25 @@ export function DashboardPage() {
 
         {/* Row 2, col 1: conversation inbox */}
         <InboxPanel
+          leftPanelMode={vm.leftPanelMode}
           view={vm.view}
           tierFilter={vm.tierFilter}
           searchText={vm.searchText}
+          taskSearchText={vm.taskSearchText}
           filteredConversations={vm.filteredConversations}
+          filteredMyTasks={vm.filteredMyTasks}
           viewSummaries={vm.viewSummaries}
           selectedId={vm.selectedId}
           hasMore={vm.hasMoreConversations}
           isLoading={vm.conversationsLoading}
+          taskLoading={vm.myTasksLoading}
+          onLeftPanelModeChange={vm.setLeftPanelMode}
           onViewChange={vm.handleViewChange}
           onTierFilterChange={vm.setTierFilter}
           onSearchTextChange={vm.setSearchText}
+          onTaskSearchTextChange={vm.setTaskSearchText}
           onSelectConversation={vm.openConversation}
+          onSelectTask={vm.openTaskConversation}
           onLoadMore={vm.loadMoreConversations}
         />
 
@@ -108,6 +115,7 @@ export function DashboardPage() {
 
         {/* Row 2, col 4: right info panel */}
         <RightPanel
+          currentAgentId={vm.agentId}
           rightTab={vm.rightTab}
           detail={vm.detail}
           copilot={vm.copilot}
@@ -115,6 +123,7 @@ export function DashboardPage() {
           skillRecommendation={vm.skillRecommendation}
           skillSchemas={vm.skillSchemas}
           tickets={vm.tickets}
+          ticketDetailsById={vm.ticketDetailsById}
           ticketLoading={vm.ticketLoading}
           taskDraft={vm.taskDraft}
           colleagues={vm.colleagues}
@@ -127,6 +136,7 @@ export function DashboardPage() {
           onSetPreferredSkills={vm.updatePreferredSkills}
           onCreateTicket={vm.doCreateTicket}
           onPatchTicket={vm.doPatchTicket}
+          onAddTicketComment={vm.doAddTicketComment}
           onConsumeTaskDraft={() => vm.setTaskDraft(null)}
           onExecuteSkill={vm.doExecuteSkill}
         />

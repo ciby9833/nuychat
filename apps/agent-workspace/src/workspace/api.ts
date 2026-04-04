@@ -388,172 +388,214 @@ export function getRealtimeReplay(
 
 // ─── Task API helpers ─────────────────────────────────────────────────────────
 
-import type { Ticket, SkillExecuteResult, AiTrace, SkillSchema, Customer360Data } from "./types";
+import type { Ticket, TicketDetail, TicketNote, SkillExecuteResult, AiTrace, SkillSchema, Customer360Data, MyTaskListItem } from "./types";
+
+type RawTask = {
+  taskId: string;
+  caseId: string;
+  conversationId: string | null;
+  sourceMessageId: string | null;
+  title: string;
+  description: string | null;
+  status: "open" | "in_progress" | "done" | "cancelled";
+  priority: "low" | "normal" | "high" | "urgent";
+  ownerAgentId: string | null;
+  ownerName: string | null;
+  ownerEmployeeNo: string | null;
+  requiresCustomerReply: boolean;
+  customerReplyStatus: "pending" | "sent" | "waived" | null;
+  customerReplyMessageId: string | null;
+  customerReplySentAt: string | null;
+  dueAt: string | null;
+  creatorType: string;
+  creatorIdentityId: string | null;
+  creatorName: string | null;
+  sourceMessagePreview: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  cancelledAt: string | null;
+};
+
+function mapTicket(task: RawTask): Ticket {
+  return {
+    ticketId: task.taskId,
+    conversationId: task.conversationId,
+    caseId: task.caseId,
+    sourceMessageId: task.sourceMessageId,
+    title: task.title,
+    description: task.description,
+    status: task.status,
+    priority: task.priority,
+    assigneeId: task.ownerAgentId,
+    assigneeName: task.ownerName,
+    assigneeEmployeeNo: task.ownerEmployeeNo,
+    requiresCustomerReply: task.requiresCustomerReply,
+    customerReplyStatus: task.customerReplyStatus,
+    customerReplyMessageId: task.customerReplyMessageId,
+    customerReplySentAt: task.customerReplySentAt,
+    slaDeadlineAt: task.dueAt,
+    slaStatus: "none" as const,
+    resolvedAt: task.completedAt,
+    closedAt: task.cancelledAt,
+    createdByType: task.creatorType,
+    createdById: task.creatorIdentityId,
+    createdByName: task.creatorName,
+    sourceMessagePreview: task.sourceMessagePreview,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt
+  };
+}
+
+function mapTicketNote(note: {
+  commentId: string;
+  taskId: string;
+  body: string;
+  isInternal: boolean;
+  authorType: string;
+  authorIdentityId: string | null;
+  authorAgentId: string | null;
+  authorName: string | null;
+  authorEmployeeNo: string | null;
+  createdAt: string;
+}): TicketNote {
+  return {
+    noteId: note.commentId,
+    ticketId: note.taskId,
+    body: note.body,
+    isInternal: note.isInternal,
+    authorType: note.authorType,
+    authorId: note.authorIdentityId,
+    authorAgentId: note.authorAgentId,
+    authorName: note.authorName,
+    authorEmployeeNo: note.authorEmployeeNo,
+    createdAt: note.createdAt
+  };
+}
 
 export function listConversationTickets(conversationId: string, session: Session): Promise<{ tickets: Ticket[] }> {
-  return apiFetch<{ tasks: Array<{
-    taskId: string;
-    caseId: string;
-    conversationId: string | null;
-    sourceMessageId: string | null;
-    title: string;
-    description: string | null;
-    status: "open" | "in_progress" | "done" | "cancelled";
-    priority: "low" | "normal" | "high" | "urgent";
-    ownerAgentId: string | null;
-    ownerName: string | null;
-    ownerEmployeeNo: string | null;
-    dueAt: string | null;
-    creatorType: string;
-    creatorIdentityId: string | null;
-    creatorName: string | null;
-    sourceMessagePreview: string | null;
-    createdAt: string;
-    updatedAt: string;
-    completedAt: string | null;
-    cancelledAt: string | null;
-  }> }>(`/api/conversations/${conversationId}/tasks`, session).then((data) => ({
-    tickets: data.tasks.map((task) => ({
-      ticketId: task.taskId,
-      conversationId: task.conversationId,
-      caseId: task.caseId,
-      sourceMessageId: task.sourceMessageId,
-      title: task.title,
-      description: task.description,
-      status: task.status,
-      priority: task.priority,
-      assigneeId: task.ownerAgentId,
-      assigneeName: task.ownerName,
-      assigneeEmployeeNo: task.ownerEmployeeNo,
-      slaDeadlineAt: task.dueAt,
-      slaStatus: "none" as const,
-      resolvedAt: task.completedAt,
-      closedAt: task.cancelledAt,
-      createdByType: task.creatorType,
-      createdById: task.creatorIdentityId,
-      createdByName: task.creatorName,
-      sourceMessagePreview: task.sourceMessagePreview,
-      createdAt: task.createdAt,
-      updatedAt: task.updatedAt
-    }))
+  return apiFetch<{ tasks: RawTask[] }>(`/api/conversations/${conversationId}/tasks`, session).then((data) => ({
+    tickets: data.tasks.map(mapTicket)
+  }));
+}
+
+export function getConversationTaskDetail(
+  conversationId: string,
+  ticketId: string,
+  session: Session
+): Promise<TicketDetail> {
+  return apiFetch<{
+    task: RawTask;
+    comments: Array<{
+      commentId: string;
+      taskId: string;
+      body: string;
+      isInternal: boolean;
+      authorType: string;
+      authorIdentityId: string | null;
+      authorAgentId: string | null;
+      authorName: string | null;
+      authorEmployeeNo: string | null;
+      createdAt: string;
+    }>;
+  }>(`/api/conversations/${conversationId}/tasks/${ticketId}`, session).then((data) => ({
+    task: mapTicket(data.task),
+    comments: data.comments.map(mapTicketNote)
   }));
 }
 
 export function createConversationTicket(
   conversationId: string,
-  input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null },
+  input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null; requiresCustomerReply?: boolean },
   session: Session
 ): Promise<Ticket> {
-  return apiPostJson<{ task: {
-    taskId: string;
-    caseId: string;
-    conversationId: string | null;
-    sourceMessageId: string | null;
-    title: string;
-    description: string | null;
-    status: "open" | "in_progress" | "done" | "cancelled";
-    priority: "low" | "normal" | "high" | "urgent";
-    ownerAgentId: string | null;
-    ownerName: string | null;
-    ownerEmployeeNo: string | null;
-    dueAt: string | null;
-    creatorType: string;
-    creatorIdentityId: string | null;
-    creatorName: string | null;
-    sourceMessagePreview: string | null;
-    createdAt: string;
-    updatedAt: string;
-    completedAt: string | null;
-    cancelledAt: string | null;
-  } }>(
+  const payload: Record<string, unknown> = {
+    title: input.title,
+    note: input.description ?? "",
+    priority: input.priority ?? "normal",
+    assigneeAgentId: input.assigneeId ?? session.agentId ?? null,
+    requiresCustomerReply: input.requiresCustomerReply ?? false
+  };
+
+  if (input.dueAt !== undefined) payload.dueAt = input.dueAt;
+  if (input.sourceMessageId !== undefined) payload.sourceMessageId = input.sourceMessageId;
+
+  return apiPostJson<{ task: RawTask }>(
     `/api/conversations/${conversationId}/tasks`,
-    {
-      title: input.title,
-      note: input.description ?? "",
-      priority: input.priority ?? "normal",
-      assigneeAgentId: input.assigneeId ?? null,
-      dueAt: input.dueAt ?? null,
-      sourceMessageId: input.sourceMessageId ?? null
-    },
+    payload,
     session
-  ).then((data) => ({
-    ticketId: data.task.taskId,
-    conversationId: data.task.conversationId,
-    caseId: data.task.caseId,
-    sourceMessageId: data.task.sourceMessageId,
-    title: data.task.title,
-    description: data.task.description,
-    status: data.task.status,
-    priority: data.task.priority,
-    assigneeId: data.task.ownerAgentId,
-    assigneeName: data.task.ownerName,
-    assigneeEmployeeNo: data.task.ownerEmployeeNo,
-    slaDeadlineAt: data.task.dueAt,
-    slaStatus: "none" as const,
-    resolvedAt: data.task.completedAt,
-    closedAt: data.task.cancelledAt,
-    createdByType: data.task.creatorType,
-    createdById: data.task.creatorIdentityId,
-    createdByName: data.task.creatorName,
-    sourceMessagePreview: data.task.sourceMessagePreview,
-    createdAt: data.task.createdAt,
-    updatedAt: data.task.updatedAt
-  }));
+  ).then((data) => mapTicket(data.task));
 }
 
 export function patchTicket(
   ticketId: string,
-  input: { conversationId: string; status?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; note?: string },
+  input: {
+    conversationId: string;
+    status?: string;
+    priority?: string;
+    assigneeId?: string | null;
+    dueAt?: string | null;
+    note?: string;
+    requiresCustomerReply?: boolean;
+    customerReplyStatus?: "pending" | "sent" | "waived" | null;
+    sendCustomerReply?: boolean;
+    customerReplyBody?: string | null;
+  },
   session: Session
 ): Promise<Ticket> {
-  return apiPatchJson<{ task: {
-    taskId: string;
-    caseId: string;
-    conversationId: string | null;
-    sourceMessageId: string | null;
-    title: string;
-    description: string | null;
-    status: "open" | "in_progress" | "done" | "cancelled";
-    priority: "low" | "normal" | "high" | "urgent";
-    ownerAgentId: string | null;
-    ownerName: string | null;
-    ownerEmployeeNo: string | null;
-    dueAt: string | null;
-    creatorType: string;
-    creatorIdentityId: string | null;
-    creatorName: string | null;
-    sourceMessagePreview: string | null;
-    createdAt: string;
-    updatedAt: string;
-    completedAt: string | null;
-    cancelledAt: string | null;
-  } }>(`/api/conversations/${input.conversationId}/tasks/${ticketId}`, {
-    status: input.status,
-    priority: input.priority,
-    assigneeAgentId: input.assigneeId ?? null,
-    dueAt: input.dueAt ?? null
-  }, session).then((data) => ({
-    ticketId: data.task.taskId,
-    conversationId: data.task.conversationId,
-    caseId: data.task.caseId,
-    sourceMessageId: data.task.sourceMessageId,
-    title: data.task.title,
-    description: data.task.description,
-    status: data.task.status,
-    priority: data.task.priority,
-    assigneeId: data.task.ownerAgentId,
-    assigneeName: data.task.ownerName,
-    assigneeEmployeeNo: data.task.ownerEmployeeNo,
-    slaDeadlineAt: data.task.dueAt,
-    slaStatus: "none" as const,
-    resolvedAt: data.task.completedAt,
-    closedAt: data.task.cancelledAt,
-    createdByType: data.task.creatorType,
-    createdById: data.task.creatorIdentityId,
-    createdByName: data.task.creatorName,
-    sourceMessagePreview: data.task.sourceMessagePreview,
-    createdAt: data.task.createdAt,
-    updatedAt: data.task.updatedAt
+  const payload: Record<string, unknown> = {};
+  if (input.status !== undefined) payload.status = input.status;
+  if (input.priority !== undefined) payload.priority = input.priority;
+  if (input.assigneeId !== undefined) payload.assigneeAgentId = input.assigneeId;
+  if (input.dueAt !== undefined) payload.dueAt = input.dueAt;
+  if (input.requiresCustomerReply !== undefined) payload.requiresCustomerReply = input.requiresCustomerReply;
+  if (input.customerReplyStatus !== undefined) payload.customerReplyStatus = input.customerReplyStatus;
+  if (input.sendCustomerReply !== undefined) payload.sendCustomerReply = input.sendCustomerReply;
+  if (input.customerReplyBody !== undefined) payload.customerReplyBody = input.customerReplyBody;
+
+  return apiPatchJson<{ task: RawTask }>(`/api/conversations/${input.conversationId}/tasks/${ticketId}`, payload, session).then((data) => mapTicket(data.task));
+}
+
+export function addConversationTaskComment(
+  conversationId: string,
+  ticketId: string,
+  body: string,
+  session: Session
+): Promise<Ticket> {
+  return apiPostJson<{ task: RawTask }>(`/api/conversations/${conversationId}/tasks/${ticketId}/comments`, { body }, session).then((data) => mapTicket(data.task));
+}
+
+export function listMyTasks(
+  session: Session,
+  input: { status?: string; search?: string; limit?: number } = {}
+): Promise<{ tasks: MyTaskListItem[] }> {
+  const params = new URLSearchParams();
+  if (input.status) params.set("status", input.status);
+  if (input.search) params.set("search", input.search);
+  if (input.limit) params.set("limit", String(input.limit));
+  const query = params.toString();
+
+  return apiFetch<{ tasks: Array<RawTask & {
+    customerName: string | null;
+    customerRef: string | null;
+    caseTitle: string | null;
+    caseStatus: string | null;
+    conversationStatus: string | null;
+    channelType: string | null;
+    conversationLastMessagePreview: string | null;
+    conversationLastMessageAt: string | null;
+  }> }>(`/api/tasks/mine${query ? `?${query}` : ""}`, session).then((data) => ({
+    tasks: data.tasks.map((task) => ({
+      ...mapTicket(task),
+      customerName: task.customerName,
+      customerRef: task.customerRef,
+      caseTitle: task.caseTitle,
+      caseStatus: task.caseStatus,
+      conversationStatus: task.conversationStatus,
+      channelType: task.channelType,
+      conversationLastMessagePreview: task.conversationLastMessagePreview,
+      conversationLastMessageAt: task.conversationLastMessageAt
+    }))
   }));
 }
 

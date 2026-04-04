@@ -17,4 +17,8 @@ export type TasksFilters = {
   status?: string;
   ownerAgentId?: string;
   search?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  dueFrom?: string;
+  dueTo?: string;
 };

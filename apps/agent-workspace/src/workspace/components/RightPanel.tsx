@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AVAILABLE_SKILLS } from "../constants";
@@ -12,6 +12,7 @@ import type {
   RightTab,
   SkillExecuteResult,
   SkillSchema,
+  TicketDetail,
   Ticket
 } from "../types";
 import { intentLabel, sentimentLabel, shortTime } from "../utils";
@@ -19,6 +20,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/ta
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
+import { TaskOrdersTab } from "./tasks/TaskOrdersTab";
 
 function titleCaseLabel(value: string): string {
   return value
@@ -73,6 +75,7 @@ function compactReadableText(value: string | null | undefined, fallback = ""): s
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 type RightPanelProps = {
+  currentAgentId: string | null;
   rightTab: RightTab;
   detail: ConversationDetail | null;
   copilot: CopilotData | null;
@@ -80,6 +83,7 @@ type RightPanelProps = {
   skillRecommendation: ConversationSkillRecommendationResponse | null;
   skillSchemas: SkillSchema[];
   tickets: Ticket[];
+  ticketDetailsById: Record<string, TicketDetail>;
   ticketLoading: boolean;
   taskDraft: { sourceMessageId: string | null; sourceMessagePreview: string | null } | null;
   colleagues: AgentColleague[];
@@ -90,8 +94,9 @@ type RightPanelProps = {
   onSelectConversation: (id: string) => void;
   onApplyTopRecommendedSkills: () => void;
   onSetPreferredSkills: (skills: string[]) => void;
-  onCreateTicket: (input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null }) => Promise<void>;
-  onPatchTicket: (ticketId: string, input: { status?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null }) => Promise<void>;
+  onCreateTicket: (input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null; requiresCustomerReply?: boolean }) => Promise<void>;
+  onPatchTicket: (ticketId: string, input: { status?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; requiresCustomerReply?: boolean; customerReplyStatus?: "pending" | "sent" | "waived" | null; sendCustomerReply?: boolean; customerReplyBody?: string | null }) => Promise<void>;
+  onAddTicketComment: (ticketId: string, body: string) => Promise<void>;
   onConsumeTaskDraft: () => void;
   onExecuteSkill: (skillName: string, parameters: Record<string, unknown>) => Promise<void>;
 };
@@ -217,6 +222,7 @@ function KVRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 export function RightPanel(props: RightPanelProps) {
   const {
+    currentAgentId,
     rightTab,
     detail,
     copilot,
@@ -224,6 +230,7 @@ export function RightPanel(props: RightPanelProps) {
     skillRecommendation,
     skillSchemas,
     tickets,
+    ticketDetailsById,
     ticketLoading,
     taskDraft,
     colleagues,
@@ -236,6 +243,7 @@ export function RightPanel(props: RightPanelProps) {
     onSetPreferredSkills,
     onCreateTicket,
     onPatchTicket,
+    onAddTicketComment,
     onConsumeTaskDraft,
     onExecuteSkill
   } = props;
@@ -243,48 +251,6 @@ export function RightPanel(props: RightPanelProps) {
   const { t } = useTranslation();
   const [c360Tab, setC360Tab] = useState<"base" | "history" | "orders" | "analysis">("base");
   const [paramSkillName, setParamSkillName] = useState<string | null>(null);
-  const [showTicketForm, setShowTicketForm] = useState(false);
-  const [ticketTitle, setTicketTitle] = useState("");
-  const [ticketDesc, setTicketDesc] = useState("");
-  const [ticketAssigneeId, setTicketAssigneeId] = useState<string>("");
-  const [ticketDueAt, setTicketDueAt] = useState("");
-  const [ticketSourceMessageId, setTicketSourceMessageId] = useState<string | null>(null);
-  const [ticketSourceMessagePreview, setTicketSourceMessagePreview] = useState<string | null>(null);
-  const [ticketFormLoading, setTicketFormLoading] = useState(false);
-
-  useEffect(() => {
-    if (!taskDraft) return;
-    setShowTicketForm(true);
-    setTicketSourceMessageId(taskDraft.sourceMessageId ?? null);
-    setTicketSourceMessagePreview(taskDraft.sourceMessagePreview ?? null);
-    setTicketDesc((current) => current || taskDraft.sourceMessagePreview || "");
-    onConsumeTaskDraft();
-  }, [onConsumeTaskDraft, taskDraft]);
-
-  const handleCreateTicket = async () => {
-    if (!ticketTitle.trim()) return;
-    setTicketFormLoading(true);
-    try {
-      await onCreateTicket({
-        title: ticketTitle.trim(),
-        description: ticketDesc.trim() || undefined,
-        priority: "normal",
-        assigneeId: ticketAssigneeId || null,
-        dueAt: ticketDueAt || null,
-        sourceMessageId: ticketSourceMessageId
-      });
-      setTicketTitle("");
-      setTicketDesc("");
-      setTicketAssigneeId("");
-      setTicketDueAt("");
-      setTicketSourceMessageId(null);
-      setTicketSourceMessagePreview(null);
-      setShowTicketForm(false);
-    } finally {
-      setTicketFormLoading(false);
-    }
-  };
-
   const sentimentBars = (customer360?.sentimentTrend ?? []).map((item) => {
     const s = item.sentiment.toLowerCase();
     const score = s === "positive" ? 5 : s === "neutral" ? 3 : s === "negative" ? 2 : 1;
@@ -299,15 +265,7 @@ export function RightPanel(props: RightPanelProps) {
   const memoryTypeLabel = (memoryType: string): string =>
     t(`rp.memoryType.${memoryType}`, { defaultValue: titleCaseLabel(memoryType) });
 
-  const taskStatusLabel = (status: Ticket["status"]): string =>
-    t(`rp.orders.status.${status}`, { defaultValue: status });
-
-  const taskStatusVariant = (status: Ticket["status"]): "default" | "success" | "warning" | "danger" | "info" => {
-    if (status === "done") return "success";
-    if (status === "cancelled") return "default";
-    if (status === "in_progress") return "info";
-    return "default";
-  };
+  const taskStatusLabel = (status: Ticket["status"]): string => t(`rp.orders.status.${status}`, { defaultValue: status });
 
   const TABS: Array<{ key: RightTab; label: string }> = [
     { key: "case",     label: t("rp.tabs.case") },
@@ -775,127 +733,19 @@ export function RightPanel(props: RightPanelProps) {
           </div>
         </TabsContent>
 
-        {/* ── Orders / Tasks ── */}
-        <TabsContent value="orders" className="flex-1 overflow-y-auto p-3">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{t("rp.orders.title")}</span>
-            <Button
-              variant={showTicketForm ? "ghost" : "outline"}
-              size="sm"
-              onClick={() => setShowTicketForm((v) => !v)}
-            >
-              {showTicketForm ? t("rp.orders.cancelCreate") : t("rp.orders.create")}
-            </Button>
-          </div>
-
-          {showTicketForm && (
-            <Card className="mb-3">
-              {ticketSourceMessagePreview && (
-                <div className="text-[11px] text-slate-500 bg-blue-50 rounded-md px-2 py-1.5 mb-2 border border-blue-100">
-                  {t("rp.orders.quotedMsg", { preview: ticketSourceMessagePreview })}
-                </div>
-              )}
-              <div className="flex flex-col gap-2">
-                <input
-                  type="text"
-                  placeholder={t("rp.orders.titlePlaceholder")}
-                  value={ticketTitle}
-                  onChange={(e) => setTicketTitle(e.target.value)}
-                  className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                />
-                <textarea
-                  placeholder={t("rp.orders.descPlaceholder")}
-                  value={ticketDesc}
-                  onChange={(e) => setTicketDesc(e.target.value)}
-                  className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 min-h-[64px] resize-none"
-                />
-                <select
-                  value={ticketAssigneeId}
-                  onChange={(e) => setTicketAssigneeId(e.target.value)}
-                  className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                >
-                  <option value="">{t("rp.orders.assigneePlaceholder")}</option>
-                  {colleagues.map((item) => (
-                    <option key={item.agentId} value={item.agentId}>
-                      {item.displayName}{item.employeeNo ? ` #${item.employeeNo}` : ""}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="datetime-local"
-                  value={ticketDueAt}
-                  onChange={(e) => setTicketDueAt(e.target.value)}
-                  className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                />
-                <Button
-                  variant="primary"
-                  size="md"
-                  disabled={ticketFormLoading || !ticketTitle.trim()}
-                  onClick={() => void handleCreateTicket()}
-                  className="w-full"
-                >
-                  {ticketFormLoading ? t("rp.orders.creating") : t("rp.orders.confirm")}
-                </Button>
-              </div>
-            </Card>
-          )}
-
-          {(copilot?.entities.orderIds ?? []).length > 0 && (
-            <>
-              <SectionTitle>{t("rp.orders.orderMarks")}</SectionTitle>
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                {(copilot?.entities.orderIds ?? []).map((id) => (
-                  <Badge key={id} variant="outline">{id}</Badge>
-                ))}
-              </div>
-            </>
-          )}
-
-          {ticketLoading && <p className="text-xs text-slate-400">{t("rp.orders.loading")}</p>}
-          {!ticketLoading && tickets.length === 0 && <p className="text-xs text-slate-400">{t("rp.orders.empty")}</p>}
-
-          <div className="flex flex-col gap-2">
-            {tickets.map((ticket) => (
-              <Card key={ticket.ticketId}>
-                <div className="flex items-start justify-between gap-2 mb-1.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-slate-800 mb-1">{ticket.title}</div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <Badge variant={taskStatusVariant(ticket.status)}>{taskStatusLabel(ticket.status)}</Badge>
-                      {ticket.assigneeName && (
-                        <span className="text-[10px] text-slate-400">
-                          {ticket.assigneeName}{ticket.assigneeEmployeeNo ? ` #${ticket.assigneeEmployeeNo}` : ""}
-                        </span>
-                      )}
-                      {ticket.slaDeadlineAt && (
-                        <span className="text-[10px] text-slate-400">
-                          {t("rp.orders.dueAt", { time: shortTime(ticket.slaDeadlineAt) })}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1 shrink-0">
-                    {ticket.status === "open" && (
-                      <Button variant="outline" size="sm" onClick={() => void onPatchTicket(ticket.ticketId, { status: "in_progress" })}>
-                        {t("rp.orders.start")}
-                      </Button>
-                    )}
-                    {ticket.status !== "done" && ticket.status !== "cancelled" && (
-                      <Button variant="ghost" size="sm" onClick={() => void onPatchTicket(ticket.ticketId, { status: "done" })}>
-                        {t("rp.orders.done")}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                {ticket.description && <p className="text-[11px] text-slate-500 mb-1">{ticket.description}</p>}
-                {ticket.sourceMessagePreview && (
-                  <p className="text-[11px] text-slate-400 italic mb-1">{t("rp.orders.quoted", { preview: ticket.sourceMessagePreview })}</p>
-                )}
-                <p className="text-[10px] text-slate-400">{t("rp.orders.createdAt", { time: shortTime(ticket.createdAt) })}</p>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
+        <TaskOrdersTab
+          currentAgentId={currentAgentId}
+          tickets={tickets}
+          ticketDetailsById={ticketDetailsById}
+          ticketLoading={ticketLoading}
+          taskDraft={taskDraft}
+          colleagues={colleagues}
+          copilot={copilot}
+          onCreateTicket={onCreateTicket}
+          onPatchTicket={onPatchTicket}
+          onAddTicketComment={onAddTicketComment}
+          onConsumeTaskDraft={onConsumeTaskDraft}
+        />
       </Tabs>
     </aside>
   );

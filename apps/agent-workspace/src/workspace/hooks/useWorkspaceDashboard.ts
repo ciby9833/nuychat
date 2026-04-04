@@ -26,6 +26,9 @@ import {
   switchTenantSession,
   unregisterSessionUpdater,
   listConversationTickets,
+  listMyTasks,
+  addConversationTaskComment,
+  getConversationTaskDetail,
   createConversationTicket,
   patchTicket,
   executeSkill as apiExecuteSkill,
@@ -48,9 +51,12 @@ import type {
   CopilotData,
   MessageItem,
   MessageAttachment,
+  MyTaskListItem,
+  LeftPanelMode,
   RightTab,
   SideView,
   Session,
+  TicketDetail,
   Ticket,
   SkillExecuteResult,
   ComposerSkillAssist,
@@ -81,6 +87,7 @@ export function useWorkspaceDashboard() {
   const selectedIdRef = useRef<string | null>(null);
   const effectiveViewRef = useRef<SideView>("all");
   const loadConversationsRef = useRef<(() => Promise<void>) | null>(null);
+  const loadMyTasksRef = useRef<(() => Promise<void>) | null>(null);
   const lastActivityPostAtRef = useRef(0);
   const lastRealtimeEventIdRef = useRef<string | null>(
     typeof window !== "undefined" ? window.sessionStorage.getItem("nuychat.lastRealtimeEventId") : null
@@ -88,8 +95,10 @@ export function useWorkspaceDashboard() {
 
   const [socketStatus, setSocketStatus] = useState("connecting");
   const [view, setView] = useState<SideView>("all");
+  const [leftPanelMode, setLeftPanelMode] = useState<LeftPanelMode>("conversations");
   const [rightTab, setRightTab] = useState<RightTab>("copilot");
   const [searchText, setSearchText] = useState("");
+  const [taskSearchText, setTaskSearchText] = useState("");
   const [tierFilter, setTierFilter] = useState<"all" | "vip" | "premium" | "standard">("all");
 
   // ── Pagination state ─────────────────────────────────────────────────────────
@@ -113,7 +122,10 @@ export function useWorkspaceDashboard() {
 
   // ── Tickets ─────────────────────────────────────────────────────────────────
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [ticketDetailsById, setTicketDetailsById] = useState<Record<string, TicketDetail>>({});
   const [ticketLoading, setTicketLoading] = useState(false);
+  const [myTasks, setMyTasks] = useState<MyTaskListItem[]>([]);
+  const [myTasksLoading, setMyTasksLoading] = useState(false);
   const [taskDraft, setTaskDraft] = useState<{ sourceMessageId: string | null; sourceMessagePreview: string | null } | null>(null);
 
   // ── Skill execute ────────────────────────────────────────────────────────────
@@ -279,10 +291,54 @@ export function useWorkspaceDashboard() {
     try {
       const data = await listConversationTickets(id, session);
       setTickets(data.tickets);
+      const details = await Promise.all(
+        data.tickets.map(async (ticket) => {
+          try {
+            const detail = await getConversationTaskDetail(id, ticket.ticketId, session);
+            return [ticket.ticketId, detail] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+      setTicketDetailsById(Object.fromEntries(details.filter((item): item is readonly [string, TicketDetail] => Boolean(item))));
     } catch {
       setTickets([]);
+      setTicketDetailsById({});
     }
   }, [session]);
+
+  const refreshTicketDetail = useCallback(async (conversationId: string, ticketId: string) => {
+    if (!session) return;
+    try {
+      const detail = await getConversationTaskDetail(conversationId, ticketId, session);
+      setTicketDetailsById((prev) => ({ ...prev, [ticketId]: detail }));
+    } catch {
+      // noop
+    }
+  }, [session]);
+
+  const loadMyTasks = useCallback(async () => {
+    if (!session?.agentId) {
+      setMyTasks([]);
+      return;
+    }
+    setMyTasksLoading(true);
+    try {
+      const data = await listMyTasks(session, {
+        status: "active",
+        search: taskSearchText.trim() || undefined,
+        limit: 100
+      });
+      setMyTasks(data.tasks);
+    } catch {
+      setMyTasks([]);
+    } finally {
+      setMyTasksLoading(false);
+    }
+  }, [session, taskSearchText]);
+
+  loadMyTasksRef.current = loadMyTasks;
 
   const loadAiTraces = useCallback(async (id: string) => {
     if (!session) return;
@@ -407,6 +463,7 @@ export function useWorkspaceDashboard() {
       void loadMessages(ev.conversationId);
       void loadTickets(ev.conversationId);
     }
+    void loadMyTasksRef.current?.();
   }, [loadMessages, loadTickets, rememberRealtimeEventId]);
 
   const replayRealtimeGap = useCallback(async () => {
@@ -622,6 +679,11 @@ export function useWorkspaceDashboard() {
   }, [loadColleagues]);
 
   useEffect(() => {
+    if (leftPanelMode !== "tasks") return;
+    void loadMyTasks();
+  }, [leftPanelMode, loadMyTasks]);
+
+  useEffect(() => {
     if (!selectedId) {
       setDetail(null);
       setMessages([]);
@@ -629,6 +691,7 @@ export function useWorkspaceDashboard() {
       setComposerAiSuggestions([]);
       setSkillRecommendation(null);
       setTickets([]);
+      setTicketDetailsById({});
       setLastSkillResult(null);
       setAiTraces([]);
       setSkillSchemas([]);
@@ -675,6 +738,21 @@ export function useWorkspaceDashboard() {
       });
   }, [conversations, searchText, tierFilter]);
 
+  const filteredMyTasks = useMemo(() => {
+    const q = taskSearchText.trim().toLowerCase();
+    return myTasks.filter((task) => {
+      if (!q) return true;
+      return [
+        task.title,
+        task.description,
+        task.customerName,
+        task.customerRef,
+        task.caseTitle,
+        task.conversationLastMessagePreview
+      ].some((value) => (value ?? "").toLowerCase().includes(q));
+    });
+  }, [myTasks, taskSearchText]);
+
   useEffect(() => {
     if (selectedId && !filteredConversations.some((c) => c.conversationId === selectedId)) {
       setSelectedId(filteredConversations[0]?.conversationId ?? null);
@@ -698,7 +776,16 @@ export function useWorkspaceDashboard() {
     setViewHint("");
   }, [agentId]);
 
+  const openTaskConversation = useCallback((task: MyTaskListItem) => {
+    if (!task.conversationId) return;
+    setLeftPanelMode("conversations");
+    setSelectedId(task.conversationId);
+    setRightTab("orders");
+    void syncConversationReadIfVisible(task.conversationId);
+  }, [syncConversationReadIfVisible]);
+
   const openConversation = useCallback(async (conversationId: string) => {
+    setLeftPanelMode("conversations");
     setSelectedId(conversationId);
 
     void syncConversationReadIfVisible(conversationId);
@@ -965,12 +1052,13 @@ export function useWorkspaceDashboard() {
   // ── Task handlers ────────────────────────────────────────────────────────────
 
   const doCreateTicket = useCallback(
-    async (input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null }) => {
+    async (input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null; requiresCustomerReply?: boolean }) => {
       if (!session || !selectedId) return;
       setTicketLoading(true);
       try {
         const ticket = await createConversationTicket(selectedId, input, session);
         setTickets((prev) => [ticket, ...prev]);
+        await refreshTicketDetail(selectedId, ticket.ticketId);
         setTaskDraft(null);
       } finally {
         setTicketLoading(false);
@@ -980,12 +1068,40 @@ export function useWorkspaceDashboard() {
   );
 
   const doPatchTicket = useCallback(
-    async (ticketId: string, input: { status?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null }) => {
+    async (
+      ticketId: string,
+      input: {
+        status?: string;
+        priority?: string;
+        assigneeId?: string | null;
+        dueAt?: string | null;
+        requiresCustomerReply?: boolean;
+        customerReplyStatus?: "pending" | "sent" | "waived" | null;
+        sendCustomerReply?: boolean;
+        customerReplyBody?: string | null;
+      }
+    ) => {
       if (!session || !selectedId) return;
       setTicketLoading(true);
       try {
         const ticket = await patchTicket(ticketId, { conversationId: selectedId, ...input }, session);
         setTickets((prev) => prev.map((item) => (item.ticketId === ticket.ticketId ? ticket : item)));
+        await refreshTicketDetail(selectedId, ticket.ticketId);
+      } finally {
+        setTicketLoading(false);
+      }
+    },
+    [selectedId, session]
+  );
+
+  const doAddTicketComment = useCallback(
+    async (ticketId: string, body: string) => {
+      if (!session || !selectedId) return;
+      setTicketLoading(true);
+      try {
+        const ticket = await addConversationTaskComment(selectedId, ticketId, body, session);
+        setTickets((prev) => prev.map((item) => (item.ticketId === ticket.ticketId ? ticket : item)));
+        await refreshTicketDetail(selectedId, ticket.ticketId);
       } finally {
         setTicketLoading(false);
       }
@@ -1039,14 +1155,19 @@ export function useWorkspaceDashboard() {
     memberships: workspaceMemberships,
     socketStatus,
     view,
+    leftPanelMode,
     rightTab,
     searchText,
+    taskSearchText,
     tierFilter,
     conversations,
     filteredConversations,
+    myTasks,
+    filteredMyTasks,
     viewSummaries,
     hasMoreConversations,
     conversationsLoading,
+    myTasksLoading,
     loadMoreConversations,
     selectedId,
     detail,
@@ -1061,11 +1182,14 @@ export function useWorkspaceDashboard() {
     viewHint,
     isAssignedToMe,
     selectedConversation,
+    setLeftPanelMode,
     setRightTab,
     setSearchText,
+    setTaskSearchText,
     setTierFilter,
     setSelectedId,
     openConversation,
+    openTaskConversation,
     setReply,
     setPendingAttachments,
     setReplyTargetMessageId,
@@ -1084,10 +1208,12 @@ export function useWorkspaceDashboard() {
     onSwitchTenant,
     onLogout,
     tickets,
+    ticketDetailsById,
     ticketLoading,
     taskDraft,
     doCreateTicket,
     doPatchTicket,
+    doAddTicketComment,
     setTaskDraft,
     skillExecuting,
     lastSkillResult,

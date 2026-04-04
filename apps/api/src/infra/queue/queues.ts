@@ -33,6 +33,10 @@ export type OutboundJobPayload = {
   conversationId: string;
   channelId: string;
   channelType: string;
+  taskContext?: {
+    taskId: string;
+    markCustomerReplySent?: boolean;
+  };
   message: {
     text: string;
     structured?: StructuredMessage | null;

@@ -11,8 +11,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { addAdminTaskComment, getAdminTaskDetail, listAdminTasks, listAgents, patchAdminTask } from "../../../api";
+import { addAdminTaskComment, getAdminConversationPreview, getAdminTaskDetail, listAdminTasks, listAgents, patchAdminTask } from "../../../api";
 import type { AdminTaskDetail, AdminTaskItem, AgentProfile, TasksFilters } from "../types";
+import type { HumanConversationDetail } from "../../../types";
 
 export function useTasksData() {
   const [items, setItems] = useState<AdminTaskItem[]>([]);
@@ -21,8 +22,11 @@ export function useTasksData() {
   const [detail, setDetail] = useState<AdminTaskDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [comment, setComment] = useState("");
   const [filters, setFilters] = useState<TasksFilters>({});
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewDetail, setPreviewDetail] = useState<HumanConversationDetail | null>(null);
 
   const selectedTask = useMemo(
     () => items.find((item) => item.taskId === selectedId) ?? detail?.task ?? null,
@@ -49,7 +53,7 @@ export function useTasksData() {
 
   useEffect(() => {
     void load();
-  }, [filters.status, filters.ownerAgentId, filters.search]);
+  }, [filters.status, filters.ownerAgentId, filters.search, filters.createdFrom, filters.createdTo, filters.dueFrom, filters.dueTo]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -84,6 +88,23 @@ export function useTasksData() {
     }
   };
 
+  const openConversationPreview = async (conversationId: string | null) => {
+    if (!conversationId) return;
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    try {
+      const next = await getAdminConversationPreview(conversationId);
+      setPreviewDetail(next);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const closeConversationPreview = () => {
+    setPreviewOpen(false);
+    setPreviewDetail(null);
+  };
+
   return {
     items,
     agents,
@@ -91,14 +112,19 @@ export function useTasksData() {
     detail,
     loading,
     saving,
+    previewLoading,
     comment,
     filters,
     selectedTask,
+    previewOpen,
+    previewDetail,
     setSelectedId,
     setComment,
     setFilters,
     load,
     handlePatch,
-    handleComment
+    handleComment,
+    openConversationPreview,
+    closeConversationPreview
   };
 }

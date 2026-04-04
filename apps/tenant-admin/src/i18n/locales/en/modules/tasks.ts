@@ -7,11 +7,18 @@ export default {
     filter: {
       ownerPlaceholder: "Owner",
       allOwners: "All Owners",
-      searchPlaceholder: "Search task / case / customer"
+      searchPlaceholder: "Search task / case / customer",
+      createdFrom: "Created From",
+      createdTo: "Created To",
+      dueFrom: "Due From",
+      dueTo: "Due To"
     },
     table: {
       task: "Task",
       owner: "Owner",
+      conversation: "Conversation",
+      conversationPrefix: "Conversation {{id}}",
+      openConversation: "Open",
       status: "Status",
       dueAt: "Due At",
       empty: "-"
@@ -20,6 +27,8 @@ export default {
       empty: "Select a task on the left to view details",
       casePrefix: "Case {{value}}",
       customerPrefix: "Customer {{value}}",
+      conversationPrefix: "Conversation {{value}}",
+      openConversation: "Open Related Conversation",
       owner: "Owner",
       unassigned: "Unassigned",
       status: "Status",

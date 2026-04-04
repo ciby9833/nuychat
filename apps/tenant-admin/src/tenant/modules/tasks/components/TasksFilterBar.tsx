@@ -7,7 +7,8 @@
  * - ../hooks/useTasksData.ts
  */
 
-import { Input, Select, Space } from "antd";
+import { DatePicker, Input, Select, Space } from "antd";
+import dayjs from "dayjs";
 import { useTranslation } from "react-i18next";
 
 import { getStatusOptions } from "../helpers";
@@ -21,6 +22,7 @@ type TasksFilterBarProps = {
 
 export function TasksFilterBar({ filters, agents, onFiltersChange }: TasksFilterBarProps) {
   const { t } = useTranslation();
+  const { RangePicker } = DatePicker;
 
   return (
     <Space style={{ marginBottom: 12, width: "100%" }} wrap>
@@ -48,6 +50,30 @@ export function TasksFilterBar({ filters, agents, onFiltersChange }: TasksFilter
         placeholder={t("tasksModule.filter.searchPlaceholder")}
         style={{ width: 260 }}
         onSearch={(value) => onFiltersChange((prev) => ({ ...prev, search: value || undefined }))}
+      />
+      <RangePicker
+        value={[
+          filters.createdFrom ? dayjs(filters.createdFrom) : null,
+          filters.createdTo ? dayjs(filters.createdTo) : null
+        ]}
+        onChange={(values) => onFiltersChange((prev) => ({
+          ...prev,
+          createdFrom: values?.[0] ? values[0].startOf("day").toISOString() : undefined,
+          createdTo: values?.[1] ? values[1].endOf("day").toISOString() : undefined
+        }))}
+        placeholder={[t("tasksModule.filter.createdFrom"), t("tasksModule.filter.createdTo")]}
+      />
+      <RangePicker
+        value={[
+          filters.dueFrom ? dayjs(filters.dueFrom) : null,
+          filters.dueTo ? dayjs(filters.dueTo) : null
+        ]}
+        onChange={(values) => onFiltersChange((prev) => ({
+          ...prev,
+          dueFrom: values?.[0] ? values[0].startOf("day").toISOString() : undefined,
+          dueTo: values?.[1] ? values[1].endOf("day").toISOString() : undefined
+        }))}
+        placeholder={[t("tasksModule.filter.dueFrom"), t("tasksModule.filter.dueTo")]}
       />
     </Space>
   );

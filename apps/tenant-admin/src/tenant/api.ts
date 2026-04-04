@@ -266,18 +266,26 @@ export function getHumanConversationDetail(conversationId: string) {
 export function listAdminTasks(input?: {
   status?: string;
   ownerAgentId?: string;
-  from?: string;
-  to?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  dueFrom?: string;
+  dueTo?: string;
   search?: string;
 }) {
   const params = new URLSearchParams();
   if (input?.status) params.set("status", input.status);
   if (input?.ownerAgentId) params.set("ownerAgentId", input.ownerAgentId);
-  if (input?.from) params.set("from", input.from);
-  if (input?.to) params.set("to", input.to);
+  if (input?.createdFrom) params.set("createdFrom", input.createdFrom);
+  if (input?.createdTo) params.set("createdTo", input.createdTo);
+  if (input?.dueFrom) params.set("dueFrom", input.dueFrom);
+  if (input?.dueTo) params.set("dueTo", input.dueTo);
   if (input?.search) params.set("search", input.search);
   const query = params.toString();
   return api<{ items: AdminTaskItem[] }>(`/api/admin/tasks${query ? `?${query}` : ""}`);
+}
+
+export function getAdminConversationPreview(conversationId: string) {
+  return api<HumanConversationDetail>(`/api/admin/conversations/${conversationId}/preview`);
 }
 
 export function getAdminTaskDetail(taskId: string) {

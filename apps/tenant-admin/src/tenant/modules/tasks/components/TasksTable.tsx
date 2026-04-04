@@ -7,7 +7,7 @@
  * - ../hooks/useTasksData.ts
  */
 
-import { Table, Tag, Typography } from "antd";
+import { Button, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useTranslation } from "react-i18next";
@@ -20,9 +20,10 @@ type TasksTableProps = {
   loading: boolean;
   selectedId: string | null;
   onSelect: (taskId: string) => void;
+  onOpenConversation: (conversationId: string | null) => void;
 };
 
-export function TasksTable({ items, loading, selectedId, onSelect }: TasksTableProps) {
+export function TasksTable({ items, loading, selectedId, onSelect, onOpenConversation }: TasksTableProps) {
   const { t } = useTranslation();
 
   const columns: ColumnsType<AdminTaskItem> = [
@@ -39,6 +40,34 @@ export function TasksTable({ items, loading, selectedId, onSelect }: TasksTableP
     {
       title: t("tasksModule.table.owner"),
       render: (_value, row) => (row.ownerName ? `${row.ownerName}${row.ownerEmployeeNo ? ` #${row.ownerEmployeeNo}` : ""}` : t("tasksModule.table.empty"))
+    },
+    {
+      title: t("tasksModule.table.conversation"),
+      render: (_value, row) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text>{row.customerName || row.customerRef || t("tasksModule.table.empty")}</Typography.Text>
+          <Space size={6}>
+            <Typography.Text type="secondary">
+              {row.conversationId
+                ? t("tasksModule.table.conversationPrefix", { id: row.conversationId.slice(0, 8) })
+                : t("tasksModule.table.empty")}
+            </Typography.Text>
+            {row.conversationId ? (
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: 0, height: "auto" }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenConversation(row.conversationId);
+                }}
+              >
+                {t("tasksModule.table.openConversation")}
+              </Button>
+            ) : null}
+          </Space>
+        </Space>
+      )
     },
     {
       title: t("tasksModule.table.status"),

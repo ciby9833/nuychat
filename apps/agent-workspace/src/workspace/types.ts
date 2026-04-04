@@ -143,6 +143,7 @@ export type CopilotData = {
 };
 
 export type SideView = "all" | "mine" | "follow_up";
+export type LeftPanelMode = "conversations" | "tasks";
 
 export type ConversationViewSummary = {
   totalConversations: number;
@@ -209,6 +210,10 @@ export type Ticket = {
   assigneeId: string | null;
   assigneeName: string | null;
   assigneeEmployeeNo: string | null;
+  requiresCustomerReply: boolean;
+  customerReplyStatus: "pending" | "sent" | "waived" | null;
+  customerReplyMessageId: string | null;
+  customerReplySentAt: string | null;
   slaDeadlineAt: string | null;
   slaStatus: "none";
   resolvedAt: string | null;
@@ -221,6 +226,17 @@ export type Ticket = {
   updatedAt: string;
 };
 
+export type MyTaskListItem = Ticket & {
+  customerName: string | null;
+  customerRef: string | null;
+  caseTitle: string | null;
+  caseStatus: string | null;
+  conversationStatus: string | null;
+  channelType: string | null;
+  conversationLastMessagePreview: string | null;
+  conversationLastMessageAt: string | null;
+};
+
 export type TicketNote = {
   noteId: string;
   ticketId: string;
@@ -228,7 +244,15 @@ export type TicketNote = {
   isInternal: boolean;
   authorType: string;
   authorId: string | null;
+  authorAgentId?: string | null;
+  authorName?: string | null;
+  authorEmployeeNo?: string | null;
   createdAt: string;
+};
+
+export type TicketDetail = {
+  task: Ticket;
+  comments: TicketNote[];
 };
 
 export type SkillExecuteResult = {

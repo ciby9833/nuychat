@@ -1,24 +1,38 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { ConversationItem, ConversationListItem, ConversationViewSummaries, SideView } from "../types";
+import type {
+  ConversationItem,
+  ConversationListItem,
+  ConversationViewSummaries,
+  LeftPanelMode,
+  MyTaskListItem,
+  SideView
+} from "../types";
 import { dateGroupLabel, listTimestamp } from "../utils";
 import { cn } from "../../lib/utils";
 
 type TierFilter = "all" | "vip" | "premium" | "standard";
 
 type InboxPanelProps = {
+  leftPanelMode: LeftPanelMode;
   view: SideView;
   tierFilter: TierFilter;
   searchText: string;
+  taskSearchText: string;
   filteredConversations: ConversationItem[];
+  filteredMyTasks: MyTaskListItem[];
   viewSummaries: ConversationViewSummaries;
   selectedId: string | null;
   hasMore: boolean;
   isLoading: boolean;
+  taskLoading: boolean;
+  onLeftPanelModeChange: (mode: LeftPanelMode) => void;
   onViewChange: (v: SideView) => void;
   onTierFilterChange: (v: TierFilter) => void;
   onSearchTextChange: (v: string) => void;
+  onTaskSearchTextChange: (v: string) => void;
   onSelectConversation: (id: string) => void;
+  onSelectTask: (task: MyTaskListItem) => void;
   onLoadMore: () => void;
 };
 
@@ -31,18 +45,25 @@ function tierAvatarClasses(tier: string | undefined): string {
 
 export function InboxPanel(props: InboxPanelProps) {
   const {
+    leftPanelMode,
     view,
     tierFilter,
     searchText,
+    taskSearchText,
     filteredConversations,
+    filteredMyTasks,
     viewSummaries,
     selectedId,
     hasMore,
     isLoading,
+    taskLoading,
+    onLeftPanelModeChange,
     onViewChange,
     onTierFilterChange,
     onSearchTextChange,
+    onTaskSearchTextChange,
     onSelectConversation,
+    onSelectTask,
     onLoadMore
   } = props;
 
@@ -64,6 +85,7 @@ export function InboxPanel(props: InboxPanelProps) {
   }, []);
 
   const isFollowUpView = view === "follow_up";
+  const isTaskMode = leftPanelMode === "tasks";
 
   const listItems = useMemo<ConversationListItem[]>(() => {
     const result: ConversationListItem[] = [];
@@ -81,6 +103,7 @@ export function InboxPanel(props: InboxPanelProps) {
 
   const TIER_KEYS = ["all", "vip", "premium", "standard"] as const;
   const VIEW_KEYS = ["all", "mine", "follow_up"] as const;
+  const PANEL_MODE_KEYS = ["conversations", "tasks"] as const;
 
   return (
     <aside
@@ -89,34 +112,54 @@ export function InboxPanel(props: InboxPanelProps) {
     >
       {/* Header section */}
       <div className="flex flex-col gap-0 border-b border-slate-200 bg-white">
-        {/* View tabs */}
-        <div className="flex items-center px-3 pt-2.5 gap-0">
-          {VIEW_KEYS.map((v) => {
-            const unread = viewSummaries[v]?.unreadMessages ?? 0;
-            return (
+        <div className="px-3 pt-2.5">
+          <div className="inline-flex rounded-lg bg-slate-100 p-1">
+            {PANEL_MODE_KEYS.map((mode) => (
               <button
-                key={v}
+                key={mode}
                 type="button"
-                onClick={() => onViewChange(v)}
+                onClick={() => onLeftPanelModeChange(mode)}
                 className={cn(
-                  "relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
-                  view === v
-                    ? "bg-blue-50 text-blue-600"
-                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+                  "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                  leftPanelMode === mode
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
                 )}
               >
-                {t(`inbox.views.${v}`)}
-                {unread > 0 && (
-                  <span className="inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold leading-none">
-                    {unread > 99 ? "99+" : unread}
-                  </span>
-                )}
+                {t(`inbox.mode.${mode}`)}
               </button>
-            );
-          })}
+            ))}
+          </div>
         </div>
 
-        {/* Search */}
+        {!isTaskMode && (
+          <div className="flex items-center px-3 pt-2 gap-0">
+            {VIEW_KEYS.map((v) => {
+              const unread = viewSummaries[v]?.unreadMessages ?? 0;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => onViewChange(v)}
+                  className={cn(
+                    "relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                    view === v
+                      ? "bg-blue-50 text-blue-600"
+                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+                  )}
+                >
+                  {t(`inbox.views.${v}`)}
+                  {unread > 0 && (
+                    <span className="inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold leading-none">
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div className="px-3 py-2">
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -124,15 +167,18 @@ export function InboxPanel(props: InboxPanelProps) {
             </svg>
             <input
               className="w-full h-7 pl-7 pr-3 rounded-md border border-slate-200 bg-slate-50 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:bg-white transition-colors"
-              value={searchText}
-              onChange={(e) => onSearchTextChange(e.target.value)}
-              placeholder={t("inbox.search")}
+              value={isTaskMode ? taskSearchText : searchText}
+              onChange={(e) => (
+                isTaskMode
+                  ? onTaskSearchTextChange(e.target.value)
+                  : onSearchTextChange(e.target.value)
+              )}
+              placeholder={t(isTaskMode ? "inbox.taskSearch" : "inbox.search")}
             />
           </div>
         </div>
 
-        {/* Tier filter chips */}
-        {!isFollowUpView && (
+        {!isTaskMode && !isFollowUpView && (
           <div className="flex items-center gap-1 px-3 pb-2.5 flex-wrap">
             {TIER_KEYS.map((tag) => (
               <button
@@ -152,17 +198,32 @@ export function InboxPanel(props: InboxPanelProps) {
           </div>
         )}
 
-        {isFollowUpView && (
+        {!isTaskMode && isFollowUpView && (
           <div className="mx-3 mb-2.5 flex items-center gap-1.5 rounded-md bg-blue-50 px-2.5 py-1.5 text-[11px] text-blue-600">
             <span>📋</span>
             <span>{t("inbox.followUpHint")}</span>
           </div>
         )}
+
+        {isTaskMode && (
+          <div className="mx-3 mb-2.5 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
+            {t("inbox.tasksHint")}
+          </div>
+        )}
       </div>
 
-      {/* Conversation list */}
       <div className="flex-1 overflow-y-auto">
-        {filteredConversations.length === 0 && !isLoading && (
+        {isTaskMode && filteredMyTasks.length === 0 && !taskLoading && (
+          <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 opacity-40">
+              <path d="M9 11l3 3L22 4"/>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+            <p className="text-xs">{t("inbox.tasksEmpty")}</p>
+          </div>
+        )}
+
+        {!isTaskMode && filteredConversations.length === 0 && !isLoading && (
           <div className="flex flex-col items-center justify-center py-12 text-slate-400">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 opacity-40">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -171,7 +232,53 @@ export function InboxPanel(props: InboxPanelProps) {
           </div>
         )}
 
-        {listItems.map((item, idx) => {
+        {isTaskMode && filteredMyTasks.map((task) => {
+          const displayName = task.customerName ?? task.customerRef ?? t("inbox.unknown");
+          const latestPreview = task.conversationLastMessagePreview ?? task.sourceMessagePreview ?? task.description ?? t("inbox.noMessage");
+          return (
+            <button
+              key={task.ticketId}
+              type="button"
+              onClick={() => onSelectTask(task)}
+              className="w-full border-b border-slate-100 px-3 py-3 text-left transition-colors hover:bg-slate-50"
+            >
+              <div className="mb-1.5 flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-slate-900">{task.title}</div>
+                  <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                    {displayName}
+                    {task.caseTitle ? ` · ${task.caseTitle}` : ""}
+                  </div>
+                </div>
+                <span className={cn(
+                  "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                  task.status === "open" && "bg-amber-100 text-amber-700",
+                  task.status === "in_progress" && "bg-blue-100 text-blue-700",
+                  task.status === "done" && "bg-emerald-100 text-emerald-700",
+                  task.status === "cancelled" && "bg-slate-100 text-slate-500"
+                )}>
+                  {t(`rp.orders.status.${task.status}`)}
+                </span>
+              </div>
+              <div className="mb-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                {latestPreview}
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                <span className="truncate">
+                  {task.conversationStatus ? t(`utils.convStatus.${task.conversationStatus}`) : t("inbox.mode.conversations")}
+                  {task.channelType ? ` · ${task.channelType}` : ""}
+                </span>
+                <span className="shrink-0">
+                  {task.slaDeadlineAt
+                    ? t("inbox.taskDue", { time: listTimestamp(task.slaDeadlineAt) })
+                    : t("inbox.taskUpdated", { time: listTimestamp(task.updatedAt) })}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+
+        {!isTaskMode && listItems.map((item, idx) => {
           if (item.kind === "header") {
             return (
               <div key={`header-${item.label}-${idx}`} className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide bg-transparent sticky top-0 z-[1] backdrop-blur-sm">
@@ -238,9 +345,9 @@ export function InboxPanel(props: InboxPanelProps) {
           );
         })}
 
-        {hasMore && <div ref={sentinelRef} className="h-1" />}
+        {!isTaskMode && hasMore && <div ref={sentinelRef} className="h-1" />}
 
-        {isLoading && (
+        {(isTaskMode ? taskLoading : isLoading) && (
           <div className="flex items-center justify-center py-4 text-xs text-slate-400">
             <svg className="animate-spin mr-2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 12a9 9 0 1 1-6.219-8.56"/>

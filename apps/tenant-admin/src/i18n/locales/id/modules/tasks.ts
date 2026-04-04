@@ -7,11 +7,18 @@ export default {
     filter: {
       ownerPlaceholder: "Penanggung Jawab",
       allOwners: "Semua Penanggung Jawab",
-      searchPlaceholder: "Cari tugas / kasus / pelanggan"
+      searchPlaceholder: "Cari tugas / kasus / pelanggan",
+      createdFrom: "Dibuat Dari",
+      createdTo: "Dibuat Sampai",
+      dueFrom: "Jatuh Tempo Dari",
+      dueTo: "Jatuh Tempo Sampai"
     },
     table: {
       task: "Tugas",
       owner: "Penanggung Jawab",
+      conversation: "Percakapan Terkait",
+      conversationPrefix: "Percakapan {{id}}",
+      openConversation: "Buka",
       status: "Status",
       dueAt: "Batas Waktu",
       empty: "-"
@@ -20,6 +27,8 @@ export default {
       empty: "Pilih tugas di sebelah kiri untuk melihat detail",
       casePrefix: "Kasus {{value}}",
       customerPrefix: "Pelanggan {{value}}",
+      conversationPrefix: "Percakapan {{value}}",
+      openConversation: "Buka Percakapan Terkait",
       owner: "Penanggung Jawab",
       unassigned: "Belum Ditugaskan",
       status: "Status",

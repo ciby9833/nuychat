@@ -174,6 +174,17 @@ export function createOutboundWorker() {
           });
         }
 
+        if (job.data.taskContext?.markCustomerReplySent) {
+          await trx("case_tasks")
+            .where({ tenant_id: job.data.tenantId, task_id: job.data.taskContext.taskId })
+            .update({
+              customer_reply_status: "sent",
+              customer_reply_message_id: message.messageId,
+              customer_reply_sent_at: trx.fn.now(),
+              updated_at: trx.fn.now()
+            });
+        }
+
         return {
           message,
           customerId: convRow?.customer_id ?? null,
@@ -204,6 +215,15 @@ export function createOutboundWorker() {
         text: job.data.message.text,
         occurredAt: new Date().toISOString()
       });
+
+      if (job.data.taskContext?.markCustomerReplySent) {
+        realtimeEventBus.emitEvent("task.updated", {
+          tenantId: job.data.tenantId,
+          conversationId: job.data.conversationId,
+          taskId: job.data.taskContext.taskId,
+          occurredAt: new Date().toISOString()
+        });
+      }
 
       await emitConversationUpdatedSnapshot(db, job.data.tenantId, job.data.conversationId, {
         occurredAt: new Date().toISOString()

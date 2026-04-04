@@ -13,6 +13,7 @@
 import { Card } from "antd";
 import { useTranslation } from "react-i18next";
 
+import { ConversationPreviewModal } from "./components/ConversationPreviewModal";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TasksFilterBar } from "./components/TasksFilterBar";
 import { TasksTable } from "./components/TasksTable";
@@ -23,33 +24,44 @@ export function TasksTab() {
   const data = useTasksData();
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 16 }}>
-      <Card title={t("tasksModule.page.listTitle")}>
-        <TasksFilterBar
-          filters={data.filters}
-          agents={data.agents}
-          onFiltersChange={data.setFilters}
-        />
-        <TasksTable
-          items={data.items}
-          loading={data.loading}
-          selectedId={data.selectedId}
-          onSelect={data.setSelectedId}
-        />
-      </Card>
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 16 }}>
+        <Card title={t("tasksModule.page.listTitle")}>
+          <TasksFilterBar
+            filters={data.filters}
+            agents={data.agents}
+            onFiltersChange={data.setFilters}
+          />
+          <TasksTable
+            items={data.items}
+            loading={data.loading}
+            selectedId={data.selectedId}
+            onSelect={data.setSelectedId}
+            onOpenConversation={data.openConversationPreview}
+          />
+        </Card>
 
-      <Card title={t("tasksModule.page.detailTitle")}>
-        <TaskDetailPanel
-          detail={data.detail}
-          selectedTask={data.selectedTask}
-          agents={data.agents}
-          comment={data.comment}
-          saving={data.saving}
-          onCommentChange={data.setComment}
-          onPatch={(patch) => { void data.handlePatch(patch); }}
-          onComment={() => { void data.handleComment(); }}
-        />
-      </Card>
-    </div>
+        <Card title={t("tasksModule.page.detailTitle")}>
+          <TaskDetailPanel
+            detail={data.detail}
+            selectedTask={data.selectedTask}
+            agents={data.agents}
+            comment={data.comment}
+            saving={data.saving}
+            onCommentChange={data.setComment}
+            onPatch={(patch) => { void data.handlePatch(patch); }}
+            onComment={() => { void data.handleComment(); }}
+            onOpenConversation={data.openConversationPreview}
+          />
+        </Card>
+      </div>
+
+      <ConversationPreviewModal
+        open={data.previewOpen}
+        loading={data.previewLoading}
+        detail={data.previewDetail}
+        onClose={data.closeConversationPreview}
+      />
+    </>
   );
 }
