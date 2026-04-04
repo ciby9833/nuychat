@@ -6,7 +6,7 @@ export const Tabs = TabsPrimitive.Root;
 export function TabsList({ className, ...props }: React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>) {
   return (
     <TabsPrimitive.List
-      className={cn("flex items-center gap-0 border-b border-slate-200 px-3", className)}
+      className={cn("mx-3 mt-3 inline-flex w-fit items-center gap-1 rounded-2xl bg-slate-100/90 p-1", className)}
       {...props}
     />
   );
@@ -16,8 +16,7 @@ export function TabsTrigger({ className, ...props }: React.ComponentPropsWithout
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        "relative px-3 py-2 text-xs font-medium text-slate-500 transition-colors hover:text-slate-800 data-[state=active]:text-blue-600",
-        "after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-t after:bg-blue-600 after:scale-x-0 data-[state=active]:after:scale-x-100 after:transition-transform",
+        "rounded-xl px-3 py-2 text-xs font-medium text-slate-500 transition-colors hover:text-slate-800 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm",
         className
       )}
       {...props}
@@ -28,7 +27,7 @@ export function TabsTrigger({ className, ...props }: React.ComponentPropsWithout
 export function TabsContent({ className, ...props }: React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>) {
   return (
     <TabsPrimitive.Content
-      className={cn("flex-1 overflow-auto focus-visible:outline-none min-h-0", className)}
+      className={cn("min-h-0 flex-1 overflow-auto focus-visible:outline-none", className)}
       {...props}
     />
   );

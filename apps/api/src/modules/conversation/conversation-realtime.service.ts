@@ -9,7 +9,20 @@ export async function buildConversationUpdatedSnapshot(
   tenantId: string,
   conversationId: string
 ): Promise<ConversationRealtimeSnapshot> {
+  const unreadCounts = db("messages as mu")
+    .select("mu.conversation_id")
+    .count<{ unread_count: string }>("mu.message_id as unread_count")
+    .where({
+      "mu.tenant_id": tenantId,
+      "mu.direction": "inbound",
+      "mu.sender_type": "customer"
+    })
+    .whereNull("mu.read_at")
+    .groupBy("mu.conversation_id")
+    .as("uc");
+
   const row = await db("conversations as c")
+    .leftJoin(unreadCounts, "uc.conversation_id", "c.conversation_id")
     .leftJoin("queue_assignments as qa", function joinQueueAssignment() {
       this.on("qa.conversation_id", "=", "c.conversation_id").andOn("qa.tenant_id", "=", "c.tenant_id");
     })
@@ -17,7 +30,7 @@ export async function buildConversationUpdatedSnapshot(
       "c.status",
       "c.assigned_agent_id",
       "c.last_message_preview",
-      "c.unread_count",
+      db.raw("coalesce(uc.unread_count, 0)::int as unread_count"),
       "qa.status as queue_status"
     )
     .where({

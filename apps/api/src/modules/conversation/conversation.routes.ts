@@ -1956,7 +1956,14 @@ export async function conversationRoutes(app: FastifyInstance) {
     const auth = requireAuth(app, req);
     const tenantId = auth.tenantId;
     const agentId = auth.agentId;
-    const query = req.query as { status?: string; search?: string; limit?: string };
+    const query = req.query as {
+      status?: string;
+      search?: string;
+      taskSearch?: string;
+      customerSearch?: string;
+      createdFrom?: string;
+      limit?: string;
+    };
 
     if (!agentId) throw app.httpErrors.forbidden("Agent profile required");
 
@@ -1964,8 +1971,13 @@ export async function conversationRoutes(app: FastifyInstance) {
       const tasks = await caseTaskService.listAgentTasks(trx, {
         tenantId,
         agentId,
-        status: query.status ?? null,
+        status: query.status
+          ? query.status.split(",").map((item) => item.trim()).filter(Boolean)
+          : null,
         search: query.search ?? null,
+        taskSearch: query.taskSearch ?? null,
+        customerSearch: query.customerSearch ?? null,
+        createdFrom: query.createdFrom ?? null,
         limit: query.limit ? Number(query.limit) : null
       });
       return { tasks };

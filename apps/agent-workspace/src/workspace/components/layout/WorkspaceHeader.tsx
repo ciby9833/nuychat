@@ -50,10 +50,7 @@ export function WorkspaceHeader(props: WorkspaceHeaderProps) {
   const dotColor = socketColors[socketStatus] ?? "bg-amber-400";
 
   return (
-    <header
-      className="flex items-center gap-3 px-4 bg-white border-b border-slate-200 z-10"
-      style={{ gridColumn: "1 / -1", gridRow: 1, height: "var(--header-h)" }}
-    >
+    <header className="flex h-[var(--header-h)] items-center gap-3 border-b border-slate-200 bg-white px-4">
       {/* Brand */}
       <div className="flex items-center gap-2.5 shrink-0">
         <div className="h-8 w-8 rounded-lg bg-blue-600 flex items-center justify-center text-white text-sm font-bold shadow-sm shadow-blue-500/30">

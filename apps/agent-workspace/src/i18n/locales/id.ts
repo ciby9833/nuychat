@@ -1,6 +1,31 @@
+import messages from "./modules/id/messages";
 import skillAssist from "./modules/id/skill-assist";
+import tasks from "./modules/id/tasks";
 
 export default {
+  ...messages,
+  ...tasks,
+  nav: {
+    home: "Beranda",
+    messages: "Pesan",
+    tasks: "Tugas"
+  },
+  home: {
+    title: "Ringkasan Workspace",
+    cards: {
+      unread: "Pesan Belum Dibaca",
+      tasks: "Tugas Saya",
+      urgent: "Prioritas Tinggi"
+    },
+    unreadSection: "Percakapan Belum Dibaca",
+    taskSection: "Tugas Aktif",
+    openMessages: "Buka Halaman Pesan",
+    openTasks: "Buka Halaman Tugas",
+    emptyUnread: "Tidak ada percakapan belum dibaca saat ini",
+    emptyTasks: "Tidak ada tugas aktif saat ini",
+    unknown: "Pelanggan Tidak Dikenal",
+    noMessage: "(Tidak ada pesan)"
+  },
   login: {
     subtitle: "Hanya agen dengan akses aktif yang dapat masuk",
     emailLabel: "Email",
@@ -23,266 +48,6 @@ export default {
     },
     language: "Bahasa",
     logout: "Keluar"
-  },
-  inbox: {
-    mode: { conversations: "Percakapan", tasks: "Tugas Saya" },
-    views: { all: "Semua", mine: "Saya", follow_up: "Tindak Lanjut" },
-    search: "Cari pelanggan, pesan…",
-    taskSearch: "Cari tugas, pelanggan, konteks…",
-    tier: { all: "Semua", vip: "VIP", premium: "Premium", standard: "Standar" },
-    followUpHint: "Percakapan dengan tiket terbuka",
-    tasksHint: "Daftar ini menampilkan tugas yang ditugaskan kepada Anda. Klik untuk membuka konteks percakapannya.",
-    tasksEmpty: "Tidak ada tugas untuk ditindaklanjuti",
-    taskDue: "Tenggat {{time}}",
-    taskUpdated: "Diperbarui {{time}}",
-    empty: "Tidak ada percakapan",
-    unknown: "Pelanggan Tidak Dikenal",
-    noMessage: "(Tidak ada pesan)",
-    myOpenTicket: "Ada tiket terbuka",
-    loading: "Memuat…"
-  },
-  timeline: {
-    selectConversation: "Pilih percakapan dari kiri",
-    processing: "Memproses…",
-    assign: "Ambil Alih",
-    handoff: "Kembalikan ke AI",
-    transfer: "Transfer",
-    transferring: "Mentransfer…",
-    resolve: "Selesaikan",
-    resolved: "✓ Terselesaikan",
-    lockedBanner: "🔒 Hanya baca · Ditangani agen lain",
-    resolveBanner: "{{count}} tiket belum selesai",
-    endConversation: "Akhiri Percakapan",
-    cancel: "Batal",
-    transferTitle: "Transfer ke:",
-    selectAgent: "— Pilih agen —",
-    transferNote: "Catatan (opsional)",
-    confirmTransfer: "Konfirmasi Transfer",
-    closePreview: "Tutup pratinjau gambar",
-    copyFailed: "Gagal menyalin. Periksa izin browser.",
-    deleted: "[Dihapus]",
-    attachment: "[Lampiran]",
-    message: "[Pesan]",
-    nonText: "[Pesan non-teks]"
-  },
-  composer: {
-    replyPrefix: "Balas:",
-    cancelReply: "Batal balas",
-    removeAttachment: "Hapus lampiran",
-    clearAttachments: "Hapus semua lampiran",
-    clear: "Bersihkan",
-    retry: "Coba lagi",
-    retryUpload: "Unggah ulang",
-    uploadFailed: "Gagal: {{error}}",
-    placeholderLocked: "Hanya baca · Tidak dapat membalas",
-    placeholderResolved: "Kirim pesan untuk mengaktifkan kembali…",
-    placeholderOwned: "Ketik pesan…",
-    placeholderNotOwned: "Ambil alih untuk membalas",
-    emoji: "Emoji",
-    addAttachment: "Tambah lampiran",
-    sticker: "Kirim stiker",
-    send: "Kirim",
-    enterToSend: "Enter untuk kirim",
-    charCount: "{{count}} kar",
-    tools: {
-      summary: "Ringkasan",
-      summaryTitle: "Ringkas masalah pelanggan",
-      polish: "Perbaiki",
-      polishTitle: "Perbaiki draf saat ini",
-      translate: "Terjemahkan",
-      translateTitle: "Terjemahkan ke bahasa pelanggan"
-    }
-  },
-  msgList: {
-    selectHint: "Pilih percakapan untuk memulai",
-    noMessages: "Tidak ada pesan",
-    replyLabel: "Balas",
-    react: "Reaksi",
-    moreActions: "Tindakan lainnya",
-    quoteReply: "Kutip balas",
-    addToTask: "Tambah ke tugas",
-    copyContent: "Salin",
-    attachment: "Lampiran",
-    unknown: "Tidak dikenal",
-    preview: "Pratinjau",
-    download: "Unduh",
-    msgStatus: {
-      read: "Dibaca",
-      delivered: "Terkirim",
-      sent: "Dikirim",
-      failed: "Gagal",
-      deleted: "Dihapus"
-    }
-  },
-  rp: {
-    tabs: { case: "Kasus", customer: "Pelanggan", copilot: "AI", skills: "Skill", orders: "Tugas" },
-    case: {
-      empty: "Tidak ada kasus",
-      id: "ID Kasus",
-      status: "Status",
-      type: "Tipe",
-      title: "Judul",
-      openedAt: "Dibuka",
-      lastActivity: "Aktivitas terakhir",
-      summary: "Ringkasan",
-      noSummary: "Tidak ada ringkasan",
-      tasks: "Tiket",
-      noTasks: "Tidak ada tiket"
-    },
-    customer: {
-      tabs: { base: "Info", history: "Riwayat", orders: "Pesanan", analysis: "Analisis AI" },
-      name: "Nama",
-      customerId: "ID Pelanggan",
-      tier: "Tingkat",
-      channel: "Saluran",
-      language: "Bahasa",
-      firstContact: "Kontak pertama",
-      noHistory: "Tidak ada riwayat",
-      unnamed: "Tidak bernama",
-      orderClues: "Referensi pesanan",
-      noOrderClues: "Tidak ada pesanan",
-      analysisSummary: "Analisis Pelanggan",
-      noAnalysis: "Tidak ada analisis",
-      currentIntent: "Niat: {{value}}",
-      currentSentiment: "Sentimen: {{value}}",
-      profileSummary: "Ringkasan Profil",
-      currentConversation: "Percakapan Saat Ini",
-      keyMemory: "Memori Utama",
-      currentState: "Status Saat Ini",
-      agentSuggestion: "Saran Agen",
-      longTermMemory: "Memori Jangka Panjang",
-      activeState: "Status Aktif",
-      noStateDetail: "Tidak ada detail",
-      sentimentTrend: "Tren Sentimen",
-      knowledgeRec: "Rekomendasi Pengetahuan",
-      noContent: "Tidak ada konten"
-    },
-    copilot: {
-      summary: "Ringkasan Percakapan",
-      noSummary: "Tidak ada ringkasan",
-      intentSentiment: "Niat · Sentimen",
-      aiTrace: "Jejak Penalaran AI",
-      noTrace: "Tidak ada orkestrasi AI",
-      skillsLabel: "Skill:",
-      handoffLabel: "Serah terima:",
-      errorLabel: "Error:",
-      steps: "Langkah ({{count}})"
-    },
-    skills: {
-      recommended: "Skill Rekomendasi AI",
-      noRecommendation: "Tidak ada rekomendasi",
-      useOnly: "Gunakan saja",
-      addPref: "Tambah preferensi",
-      execute: "Jalankan",
-      executing: "Menjalankan…",
-      applyTop3: "Terapkan Top 3",
-      clearPrefs: "Hapus preferensi",
-      skillDone: "Selesai",
-      installed: "Skill Terpasang",
-      needsParams: "Perlu parameter",
-      collapse: "Tutup",
-      required: "Wajib diisi",
-      confirm: "Jalankan",
-      cancelParam: "Batal"
-    },
-    orders: {
-      title: "Daftar Tugas",
-      create: "+ Buat tugas",
-      cancelCreate: "Batal",
-      quotedMsg: "Dikutip: {{preview}}",
-      titlePlaceholder: "Judul tugas *",
-      descPlaceholder: "Deskripsi (opsional)",
-      assigneePlaceholder: "Penerima tugas (opsional)",
-      assigneeMe: "Saya sendiri",
-      requiresCustomerReply: "Tugas ini perlu balasan akhir ke pelanggan",
-      confirm: "Buat",
-      creating: "Membuat…",
-      orderMarks: "Referensi pesanan",
-      loading: "Memuat…",
-      empty: "Tidak ada tugas",
-      start: "Mulai",
-      done: "Selesai",
-      doneWithReply: "Balas pelanggan & selesaikan",
-      replyPlaceholder: "Catat penanganan, progres, atau hasil tindak lanjut…",
-      replyAction: "Balas penanganan",
-      replySaving: "Menyimpan…",
-      replies: "Riwayat Penanganan",
-      sendResultToCustomer: "Kirim hasil penanganan ke pelanggan",
-      customerReplyPlaceholder: "Masukkan hasil penanganan yang akan dikirim ke pelanggan…",
-      cancelCompletion: "Batal",
-      confirmCompletion: "Konfirmasi selesai",
-      dueAt: "Tenggat {{time}}",
-      createdAt: "Dibuat {{time}}",
-      quoted: "Dikutip: {{preview}}",
-      customerReplyStatus: {
-        pending: "Menunggu balasan ke pelanggan",
-        sent: "Sudah dibalas ke pelanggan",
-        waived: "Balasan dilewati"
-      },
-      status: {
-        open: "Terbuka",
-        in_progress: "Sedang Dikerjakan",
-        done: "Selesai",
-        cancelled: "Dibatalkan"
-      }
-    },
-    memoryType: {
-      unresolved_issue: "Masalah Belum Selesai",
-      preference: "Preferensi",
-      fact: "Fakta Pelanggan",
-      commitment: "Komitmen",
-      outcome: "Hasil",
-      risk_flag: "Tanda Risiko",
-      profile_trait: "Sifat Profil"
-    }
-  },
-  emoji: {
-    search: "Cari emoji…",
-    searchResults: "Hasil pencarian",
-    empty: "Tidak ada emoji",
-    recent: "Terbaru",
-    recentUsed: "Baru digunakan",
-    categories: {
-      smileys: "Ekspresi",
-      hands: "Gestur",
-      animals: "Hewan",
-      food: "Makanan",
-      activities: "Aktivitas",
-      travel: "Perjalanan",
-      objects: "Objek",
-      symbols: "Simbol"
-    }
-  },
-  utils: {
-    today: "Hari Ini",
-    yesterday: "Kemarin",
-    convStatus: {
-      open: "Aktif",
-      queued: "Antrian",
-      bot_active: "AI Aktif",
-      human_active: "Agen Aktif",
-      resolved: "Selesai"
-    },
-    sentiment: {
-      positive: "Positif",
-      neutral: "Netral",
-      negative: "Negatif",
-      angry: "Marah"
-    },
-    intent: {
-      order_inquiry: "Pertanyaan Pesanan",
-      delivery_inquiry: "Pertanyaan Pengiriman",
-      refund_request: "Refund",
-      cancellation: "Pembatalan",
-      complaint: "Keluhan",
-      payment_inquiry: "Pertanyaan Pembayaran",
-      general_inquiry: "Pertanyaan Umum"
-    }
-  },
-  validation: {
-    stickerOnlyWebp: "Stiker WhatsApp hanya mendukung format WEBP",
-    unsupportedType: "Tipe file tidak didukung",
-    fileTooLarge: "File melampaui batas: maks {{size}}MB"
   },
   ...skillAssist
 } as const;

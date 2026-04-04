@@ -7,7 +7,8 @@
  * - ../hooks/useWorkspaceDashboard.ts: 提供消息数据与交互动作。
  */
 
-import { useMemo, useRef, type RefObject, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import { resolveApiUrl } from "../api";
@@ -251,6 +252,7 @@ type SideActionsProps = {
   visible: boolean;                 // controlled by React state (no CSS hover magic)
   isReactOpen: boolean;
   isMenuOpen: boolean;
+  reactionPlacement: PopoverPlacement;
   menuPlacement: PopoverPlacement;
   reactionOptions: string[];
   onReply: () => void;
@@ -265,16 +267,66 @@ type SideActionsProps = {
   t: (key: string) => string;
 };
 
+type FloatingLayerProps = {
+  anchor: HTMLElement | null;
+  open: boolean;
+  isOut: boolean;
+  placement: PopoverPlacement;
+  width?: number;
+  children: ReactNode;
+};
+
+function FloatingLayer({ anchor, open, isOut, placement, width, children }: FloatingLayerProps) {
+  const [style, setStyle] = useState<CSSProperties | null>(null);
+
+  useEffect(() => {
+    if (!open || !anchor) {
+      setStyle(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      const rect = anchor.getBoundingClientRect();
+      const gap = 10;
+      const viewportPadding = 12;
+      const layerWidth = width ?? 0;
+      const baseTop = placement === "down" ? rect.top : rect.bottom;
+      const nextLeft = isOut
+        ? Math.max(viewportPadding, rect.left - gap - layerWidth)
+        : Math.min(window.innerWidth - viewportPadding - layerWidth, rect.right + gap);
+
+      setStyle({
+        position: "fixed",
+        zIndex: 80,
+        top: Math.max(viewportPadding, baseTop),
+        left: nextLeft,
+        width,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchor, isOut, open, placement, width]);
+
+  if (!open || !style) return null;
+  return createPortal(<div style={style}>{children}</div>, document.body);
+}
+
 function SideActions({
   isOut, canReply, canReact, canTask, visible,
-  isReactOpen, isMenuOpen, menuPlacement, reactionOptions,
+  isReactOpen, isMenuOpen, reactionPlacement, menuPlacement, reactionOptions,
   onToggleReact, onToggleMenu,
   onSelectReaction, onMenuClose, onSetReplyTarget, onAddTask, onSkill, onCopy,
   t,
 }: SideActionsProps) {
-
-  // Base classes for each icon button
-  const btn = "flex items-center justify-center w-7 h-7 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-200/80 transition-colors cursor-pointer";
+  const reactButtonRef = useRef<HTMLButtonElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const btn = "flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700";
 
   return (
     <div
@@ -287,6 +339,7 @@ function SideActions({
       {canReact && (
         <div className="relative">
           <button
+            ref={reactButtonRef}
             type="button"
             className={cn(btn, isReactOpen && "text-blue-500 bg-blue-50")}
             title={t("msgList.react")}
@@ -296,35 +349,36 @@ function SideActions({
             <IcoSmile />
           </button>
 
-          {/* Reaction picker popover — opens UP or DOWN based on space */}
-          {isReactOpen && (
+          <FloatingLayer
+            anchor={reactButtonRef.current}
+            open={isReactOpen}
+            isOut={isOut}
+            placement={reactionPlacement}
+            width={188}
+          >
             <div
-              className={cn(
-                "absolute z-50 flex gap-1 p-2 bg-white border border-slate-200 rounded-2xl shadow-xl",
-                // Position: always float away from the bubble
-                isOut ? "right-full mr-2" : "left-full ml-2",
-                menuPlacement === "down" ? "top-0" : "bottom-0",
-              )}
+              className="flex gap-1 rounded-2xl border border-slate-200/70 bg-white/95 p-2 shadow-lg shadow-slate-200/60 backdrop-blur"
               onMouseDown={(e) => e.stopPropagation()}
             >
               {reactionOptions.map((emoji) => (
                 <button
                   key={emoji}
                   type="button"
-                  className="text-[18px] w-8 h-8 rounded-xl hover:bg-slate-100 hover:scale-125 transition-transform flex items-center justify-center"
+                  className="flex h-8 w-8 items-center justify-center rounded-xl text-[18px] transition-transform hover:bg-slate-100 hover:scale-125"
                   onClick={() => onSelectReaction(emoji)}
                 >
                   {emoji}
                 </button>
               ))}
             </div>
-          )}
+          </FloatingLayer>
         </div>
       )}
 
       {/* ── More options ── */}
       <div className="relative">
         <button
+          ref={menuButtonRef}
           type="button"
           className={cn(btn, isMenuOpen && "text-blue-500 bg-blue-50")}
           title={t("msgList.moreActions")}
@@ -334,14 +388,15 @@ function SideActions({
           <IcoDots />
         </button>
 
-        {/* More-menu dropdown */}
-        {isMenuOpen && (
+        <FloatingLayer
+          anchor={menuButtonRef.current}
+          open={isMenuOpen}
+          isOut={isOut}
+          placement={menuPlacement}
+          width={188}
+        >
           <div
-            className={cn(
-              "absolute z-50 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 min-w-[156px]",
-              isOut ? "right-full mr-2" : "left-full ml-2",
-              menuPlacement === "down" ? "top-0" : "bottom-0",
-            )}
+            className="min-w-[188px] rounded-2xl border border-slate-200/70 bg-white/95 py-1.5 shadow-xl shadow-slate-200/60 backdrop-blur"
             onMouseDown={(e) => e.stopPropagation()}
           >
             {canReply && (
@@ -357,7 +412,7 @@ function SideActions({
             <MenuItem icon={<IcoCopy />} label={t("msgList.copyContent")}
               onClick={() => { onMenuClose(); onCopy(); }}/>
           </div>
-        )}
+        </FloatingLayer>
       </div>
     </div>
   );
@@ -534,7 +589,7 @@ export function MessageList(props: MessageListProps) {
 
   return (
     <div ref={listRef}
-      className="flex-1 overflow-y-auto bg-white px-4 py-4 flex flex-col gap-0.5">
+      className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto bg-white px-4 py-4">
 
       {/* Empty states */}
       {!detailOpen && (
@@ -605,7 +660,7 @@ export function MessageList(props: MessageListProps) {
             className={cn(
               "flex flex-col",
               isSys ? "items-center" : isOut ? "items-end" : "items-start",
-              isCluster ? "mb-0.5" : "mb-2",
+              isCluster ? "mb-1" : "mb-3.5",
               "[animation:bubble-in_0.16s_ease_both]"
             )}
             onMouseEnter={() => handleRowEnter(m.message_id)}
@@ -630,14 +685,14 @@ export function MessageList(props: MessageListProps) {
               so moving the cursor from bubble→buttons never leaves the parent.
             */}
             <div className={cn(
-              "flex items-end gap-1",
-              isSys  ? "justify-center max-w-[72%]"
-              : isOut ? "flex-row-reverse max-w-[78%]"
-              :         "flex-row max-w-[78%]"
+              "flex items-end gap-1.5",
+              isSys  ? "justify-center max-w-[70%]"
+              : isOut ? "flex-row-reverse max-w-[74%]"
+              :         "flex-row max-w-[74%]"
             )}>
               {/* ── Bubble ── */}
               <div className={cn(
-                "px-3 py-2 text-[13px] leading-relaxed break-words min-w-0 max-w-full",
+                "min-w-0 max-w-full break-words px-3.5 py-2.5 text-[13px] leading-6",
                 bubbleCls
               )}>
                 {/* Quoted reply — WhatsApp style */}
@@ -668,6 +723,7 @@ export function MessageList(props: MessageListProps) {
                   visible={barVisible}
                   isReactOpen={isReactOpen}
                   isMenuOpen={isMenuOpen}
+                  reactionPlacement={reactionPlacement}
                   menuPlacement={menuPlacement}
                   reactionOptions={capability.reactionOptions}
                   onReply={() => onSetReplyTarget(m.message_id)}
@@ -690,12 +746,12 @@ export function MessageList(props: MessageListProps) {
             {/* ── Reaction chips ── */}
             {reactions.length > 0 && (
               <div className={cn(
-                "flex flex-wrap gap-1 mt-1 px-1",
+                "mt-1.5 flex flex-wrap gap-1 px-1",
                 isOut ? "justify-end" : "justify-start"
               )}>
                 {reactions.map((r) => (
                   <span key={`${m.message_id}-${r.emoji}`}
-                    className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-white border border-slate-200 shadow-sm text-[13px] select-none cursor-default">
+                    className="inline-flex cursor-default select-none items-center gap-0.5 rounded-full border border-slate-200/80 bg-white/90 px-2 py-0.5 text-[13px]">
                     {r.emoji}
                     {r.count > 1 && (
                       <span className="text-[11px] text-slate-500 font-medium">{r.count}</span>

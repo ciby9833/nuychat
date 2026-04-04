@@ -71,6 +71,30 @@ const EMPTY_VIEW_SUMMARIES: ConversationViewSummaries = {
   follow_up: { totalConversations: 0, unreadMessages: 0, unreadConversations: 0 }
 };
 
+function clampUnreadSummary(
+  summary: ConversationViewSummaries,
+  deltaMessages: number,
+  deltaConversations: number
+): ConversationViewSummaries {
+  return {
+    all: {
+      ...summary.all,
+      unreadMessages: Math.max(0, summary.all.unreadMessages + deltaMessages),
+      unreadConversations: Math.max(0, summary.all.unreadConversations + deltaConversations)
+    },
+    mine: {
+      ...summary.mine,
+      unreadMessages: Math.max(0, summary.mine.unreadMessages + deltaMessages),
+      unreadConversations: Math.max(0, summary.mine.unreadConversations + deltaConversations)
+    },
+    follow_up: {
+      ...summary.follow_up,
+      unreadMessages: Math.max(0, summary.follow_up.unreadMessages + deltaMessages),
+      unreadConversations: Math.max(0, summary.follow_up.unreadConversations + deltaConversations)
+    }
+  };
+}
+
 export function useWorkspaceDashboard() {
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(() => readSession());
@@ -127,6 +151,9 @@ export function useWorkspaceDashboard() {
   const [myTasks, setMyTasks] = useState<MyTaskListItem[]>([]);
   const [myTasksLoading, setMyTasksLoading] = useState(false);
   const [taskDraft, setTaskDraft] = useState<{ sourceMessageId: string | null; sourceMessagePreview: string | null } | null>(null);
+  const [taskStatusFilter, setTaskStatusFilter] = useState<Array<"open" | "in_progress" | "done" | "cancelled">>(["open", "in_progress"]);
+  const [taskCustomerSearchText, setTaskCustomerSearchText] = useState("");
+  const [taskRecentDays, setTaskRecentDays] = useState(3);
 
   // ── Skill execute ────────────────────────────────────────────────────────────
   const [skillExecuting, setSkillExecuting] = useState<string | null>(null);
@@ -181,11 +208,17 @@ export function useWorkspaceDashboard() {
   }, []);
 
   const clearConversationUnreadLocal = useCallback((conversationId: string) => {
-    setConversations((prev) => prev.map((item) => (
-      item.conversationId === conversationId
-        ? { ...item, unreadCount: 0 }
-        : item
-    )));
+    setConversations((prev) => {
+      const target = prev.find((item) => item.conversationId === conversationId);
+      const unreadBefore = target?.unreadCount ?? 0;
+      if (unreadBefore <= 0) return prev;
+      setViewSummaries((current) => clampUnreadSummary(current, -unreadBefore, -1));
+      return prev.map((item) => (
+        item.conversationId === conversationId
+          ? { ...item, unreadCount: 0 }
+          : item
+      ));
+    });
   }, []);
 
   const syncConversationReadIfVisible = useCallback(async (conversationId: string) => {
@@ -325,9 +358,14 @@ export function useWorkspaceDashboard() {
     }
     setMyTasksLoading(true);
     try {
+      const createdFrom = taskRecentDays >= 9999
+        ? undefined
+        : new Date(Date.now() - taskRecentDays * 24 * 60 * 60 * 1000).toISOString();
       const data = await listMyTasks(session, {
-        status: "active",
-        search: taskSearchText.trim() || undefined,
+        status: taskStatusFilter || undefined,
+        taskSearch: taskSearchText.trim() || undefined,
+        customerSearch: taskCustomerSearchText.trim() || undefined,
+        createdFrom,
         limit: 100
       });
       setMyTasks(data.tasks);
@@ -336,7 +374,7 @@ export function useWorkspaceDashboard() {
     } finally {
       setMyTasksLoading(false);
     }
-  }, [session, taskSearchText]);
+  }, [session, taskCustomerSearchText, taskRecentDays, taskSearchText, taskStatusFilter]);
 
   loadMyTasksRef.current = loadMyTasks;
 
@@ -739,19 +777,14 @@ export function useWorkspaceDashboard() {
   }, [conversations, searchText, tierFilter]);
 
   const filteredMyTasks = useMemo(() => {
-    const q = taskSearchText.trim().toLowerCase();
-    return myTasks.filter((task) => {
-      if (!q) return true;
-      return [
-        task.title,
-        task.description,
-        task.customerName,
-        task.customerRef,
-        task.caseTitle,
-        task.conversationLastMessagePreview
-      ].some((value) => (value ?? "").toLowerCase().includes(q));
-    });
-  }, [myTasks, taskSearchText]);
+    return myTasks;
+  }, [myTasks]);
+
+  const unreadConversations = useMemo(
+    () => filteredConversations.filter((conversation) => (conversation.unreadCount ?? 0) > 0),
+    [filteredConversations]
+  );
+  const totalUnreadMessages = viewSummaries.all.unreadMessages;
 
   useEffect(() => {
     if (selectedId && !filteredConversations.some((c) => c.conversationId === selectedId)) {
@@ -1159,15 +1192,21 @@ export function useWorkspaceDashboard() {
     rightTab,
     searchText,
     taskSearchText,
+    taskCustomerSearchText,
+    taskStatusFilter,
+    taskRecentDays,
     tierFilter,
     conversations,
     filteredConversations,
+    unreadConversations,
     myTasks,
     filteredMyTasks,
     viewSummaries,
+    totalUnreadMessages,
     hasMoreConversations,
     conversationsLoading,
     myTasksLoading,
+    loadMyTasks,
     loadMoreConversations,
     selectedId,
     detail,
@@ -1186,6 +1225,9 @@ export function useWorkspaceDashboard() {
     setRightTab,
     setSearchText,
     setTaskSearchText,
+    setTaskCustomerSearchText,
+    setTaskStatusFilter,
+    setTaskRecentDays,
     setTierFilter,
     setSelectedId,
     openConversation,
@@ -1225,6 +1267,8 @@ export function useWorkspaceDashboard() {
     customer360
   };
 }
+
+export type WorkspaceDashboardVM = ReturnType<typeof useWorkspaceDashboard>;
 
 function humanizeSkillAssistTitle(skillName: string) {
   if (skillName === "cargo_trace") return i18next.t("skillAssist.skillTitles.cargo_trace");

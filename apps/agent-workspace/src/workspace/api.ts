@@ -15,7 +15,7 @@
  */
 
 import { apiHeaders, writeSession } from "./session";
-import type { ConversationViewSummaries, MessageAttachment, RealtimeReplayEvent, Session } from "./types";
+import type { ConversationPreviewDetail, ConversationViewSummaries, MessageAttachment, RealtimeReplayEvent, Session } from "./types";
 
 export const API_BASE_URL = readRequiredEnv("VITE_API_BASE_URL");
 
@@ -373,6 +373,13 @@ export function markConversationRead(conversationId: string, session: Session): 
   return apiPost(`/api/conversations/${conversationId}/read`, {}, session);
 }
 
+export function getConversationPreview(
+  conversationId: string,
+  session: Session
+): Promise<ConversationPreviewDetail> {
+  return apiFetch<ConversationPreviewDetail>(`/api/conversations/${conversationId}/preview`, session);
+}
+
 export function getRealtimeReplay(
   session: Session,
   params: { afterEventId?: string | null; limit?: number } = {}
@@ -567,11 +574,21 @@ export function addConversationTaskComment(
 
 export function listMyTasks(
   session: Session,
-  input: { status?: string; search?: string; limit?: number } = {}
+  input: {
+    status?: string[];
+    search?: string;
+    taskSearch?: string;
+    customerSearch?: string;
+    createdFrom?: string;
+    limit?: number;
+  } = {}
 ): Promise<{ tasks: MyTaskListItem[] }> {
   const params = new URLSearchParams();
-  if (input.status) params.set("status", input.status);
+  if (input.status?.length) params.set("status", input.status.join(","));
   if (input.search) params.set("search", input.search);
+  if (input.taskSearch) params.set("taskSearch", input.taskSearch);
+  if (input.customerSearch) params.set("customerSearch", input.customerSearch);
+  if (input.createdFrom) params.set("createdFrom", input.createdFrom);
   if (input.limit) params.set("limit", String(input.limit));
   const query = params.toString();
 

@@ -149,7 +149,6 @@ export function MessageComposer(props: MessageComposerProps) {
         detailOpen={detailOpen}
         aiSuggestions={aiSuggestions}
         isAssignedToMe={isAssignedToMe}
-        reply={reply}
         onReplyChange={onReplyChange}
       />
 

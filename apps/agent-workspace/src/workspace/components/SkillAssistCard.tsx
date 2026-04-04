@@ -23,13 +23,13 @@ type SkillAssistCardProps = {
 export function SkillAssistCard(props: SkillAssistCardProps) {
   const { assist, disabled, onInsert } = props;
   const { t } = useTranslation();
-  const [collapsed, setCollapsed] = useState(false);
-
   const model = useMemo(() => buildSkillAssistDisplayModel(assist), [assist]);
+  const defaultCollapsed = shouldStartCollapsed(assist, model);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   useEffect(() => {
-    setCollapsed(false);
-  }, [assist.sourceMessageId, assist.skillName, assist.status]);
+    setCollapsed(defaultCollapsed);
+  }, [assist.sourceMessageId, assist.skillName, assist.status, defaultCollapsed]);
 
   if (!shouldRenderSkillAssist(model, assist)) {
     return null;
@@ -43,7 +43,7 @@ export function SkillAssistCard(props: SkillAssistCardProps) {
   };
 
   return (
-    <div className="mx-3 mt-2 mr-auto max-w-[calc(100%-24px)] rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2.5">
+    <div className="mx-4 mt-3 mr-auto max-w-[calc(100%-32px)] rounded-[22px] border border-emerald-100/70 bg-emerald-50/55 px-3.5 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold text-emerald-700">{assist.title}</div>
@@ -55,7 +55,7 @@ export function SkillAssistCard(props: SkillAssistCardProps) {
           <button
             type="button"
             onClick={() => setCollapsed((value) => !value)}
-            className="h-7 px-2 rounded-md bg-white text-xs text-slate-600 border border-emerald-200 hover:bg-emerald-50"
+            className="h-7 rounded-full border border-emerald-200/80 bg-white/90 px-2.5 text-xs text-slate-600 hover:bg-emerald-50"
           >
             {collapsed ? t("skillAssist.expand") : t("skillAssist.collapse")}
           </button>
@@ -63,7 +63,7 @@ export function SkillAssistCard(props: SkillAssistCardProps) {
             type="button"
             onClick={() => { void handleCopy(); }}
             disabled={!copyText}
-            className="h-7 px-2 rounded-md bg-white text-xs text-slate-600 border border-emerald-200 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="h-7 rounded-full border border-emerald-200/80 bg-white/90 px-2.5 text-xs text-slate-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {t("skillAssist.copy")}
           </button>
@@ -71,12 +71,20 @@ export function SkillAssistCard(props: SkillAssistCardProps) {
             type="button"
             onClick={() => onInsert(copyText)}
             disabled={!copyText || disabled}
-            className="h-7 px-2 rounded-md bg-emerald-600 text-xs text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="h-7 rounded-full bg-emerald-600 px-2.5 text-xs text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {t("skillAssist.insertReply")}
           </button>
         </div>
       </div>
+
+      {collapsed && assist.status === "ready" ? (
+        <div className="mt-2">
+          <div className="rounded-2xl border border-emerald-100/70 bg-white/88 px-3 py-2.5">
+            {renderCollapsedPreview(model)}
+          </div>
+        </div>
+      ) : null}
 
       {collapsed ? null : (
         <>
@@ -93,19 +101,19 @@ export function SkillAssistCard(props: SkillAssistCardProps) {
           {assist.status === "ready" ? (
             <div className="mt-2 grid gap-1.5">
               {model.primary ? (
-                <div className="rounded-lg bg-white/95 border border-emerald-100 px-2.5 py-2">
+                <div className="rounded-2xl border border-emerald-100/70 bg-white/90 px-3 py-2.5">
                   <div className="text-xs text-slate-700 whitespace-pre-wrap break-words">{model.primary}</div>
                 </div>
               ) : null}
 
               {model.timeline.length > 0 ? (
-                <div className="rounded-lg border border-emerald-100 overflow-hidden">
-                  <div className="bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                <div className="overflow-hidden rounded-2xl border border-emerald-100/70">
+                  <div className="bg-emerald-50/75 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
                     {t("skillAssist.timelineTitle")}
                   </div>
                   <div className="divide-y divide-emerald-50/80">
                     {model.timeline.map((event, index) => (
-                      <div key={index} className="bg-white/90 px-2.5 py-2 flex gap-3">
+                      <div key={index} className="flex gap-3 bg-white/85 px-3 py-2.5">
                         <div className="flex flex-col items-center pt-0.5 shrink-0">
                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                           {index < model.timeline.length - 1 ? (
@@ -137,7 +145,7 @@ export function SkillAssistCard(props: SkillAssistCardProps) {
               ) : null}
 
               {model.fields.map((field) => (
-                <div key={field.label} className="rounded-lg bg-white/90 border border-emerald-100 px-2.5 py-2">
+                <div key={field.label} className="rounded-2xl border border-emerald-100/70 bg-white/85 px-3 py-2.5">
                   <div className="text-[10px] uppercase tracking-wide text-emerald-700/80">{field.label}</div>
                   <div className="mt-1 text-xs text-slate-700 whitespace-pre-wrap break-words">{field.value}</div>
                 </div>
@@ -163,6 +171,64 @@ type DisplayModel = {
   fields: Array<{ label: string; value: string }>;
   timeline: TimelineEvent[];
 };
+
+function shouldStartCollapsed(assist: ComposerSkillAssist, model: DisplayModel) {
+  if (assist.status !== "ready") return false;
+  if (model.timeline.length > 0) return true;
+  if (model.fields.length > 1) return true;
+  if ((model.primary ?? "").length > 140) return true;
+  return false;
+}
+
+function renderCollapsedPreview(model: DisplayModel) {
+  if (model.primary) {
+    return (
+      <div className="text-xs leading-6 text-slate-700 whitespace-pre-wrap break-words line-clamp-3">
+        {model.primary}
+      </div>
+    );
+  }
+
+  const firstEvent = model.timeline[0];
+  if (firstEvent) {
+    return (
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          {firstEvent.status ? (
+            <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+              {firstEvent.status}
+            </span>
+          ) : null}
+          {firstEvent.time ? (
+            <span className="text-[10px] text-slate-400">{firstEvent.time}</span>
+          ) : null}
+          {firstEvent.location ? (
+            <span className="text-[10px] text-slate-500">📍 {firstEvent.location}</span>
+          ) : null}
+        </div>
+        {firstEvent.description ? (
+          <div className="mt-1 line-clamp-2 text-xs leading-6 text-slate-600 break-words">
+            {firstEvent.description}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const firstField = model.fields[0];
+  if (firstField) {
+    return (
+      <div className="min-w-0">
+        <div className="text-[10px] uppercase tracking-wide text-emerald-700/80">{firstField.label}</div>
+        <div className="mt-1 line-clamp-2 text-xs leading-6 text-slate-700 whitespace-pre-wrap break-words">
+          {firstField.value}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
 
 const SUPPRESSED_RESULT_KEYS = new Set([
   "status", "customerReply", "message", "missingInputs",

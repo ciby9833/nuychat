@@ -1,24 +1,19 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { AVAILABLE_SKILLS } from "../constants";
 import type {
   AiTrace,
   AgentColleague,
   ConversationDetail,
-  ConversationSkillRecommendationResponse,
   CopilotData,
   Customer360Data,
   RightTab,
-  SkillExecuteResult,
-  SkillSchema,
   TicketDetail,
   Ticket
 } from "../types";
 import { intentLabel, sentimentLabel, shortTime } from "../utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs";
 import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
 import { TaskOrdersTab } from "./tasks/TaskOrdersTab";
 
@@ -80,126 +75,25 @@ type RightPanelProps = {
   detail: ConversationDetail | null;
   copilot: CopilotData | null;
   aiTraces: AiTrace[];
-  skillRecommendation: ConversationSkillRecommendationResponse | null;
-  skillSchemas: SkillSchema[];
   tickets: Ticket[];
   ticketDetailsById: Record<string, TicketDetail>;
   ticketLoading: boolean;
   taskDraft: { sourceMessageId: string | null; sourceMessagePreview: string | null } | null;
   colleagues: AgentColleague[];
-  skillExecuting: string | null;
-  lastSkillResult: SkillExecuteResult | null;
   customer360: Customer360Data | null;
   onTabChange: (tab: RightTab) => void;
   onSelectConversation: (id: string) => void;
-  onApplyTopRecommendedSkills: () => void;
-  onSetPreferredSkills: (skills: string[]) => void;
   onCreateTicket: (input: { title: string; description?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; sourceMessageId?: string | null; requiresCustomerReply?: boolean }) => Promise<void>;
   onPatchTicket: (ticketId: string, input: { status?: string; priority?: string; assigneeId?: string | null; dueAt?: string | null; requiresCustomerReply?: boolean; customerReplyStatus?: "pending" | "sent" | "waived" | null; sendCustomerReply?: boolean; customerReplyBody?: string | null }) => Promise<void>;
   onAddTicketComment: (ticketId: string, body: string) => Promise<void>;
   onConsumeTaskDraft: () => void;
-  onExecuteSkill: (skillName: string, parameters: Record<string, unknown>) => Promise<void>;
 };
-
-// ─── Skill parameter form ─────────────────────────────────────────────────────
-
-type ParamFormProps = {
-  schema: SkillSchema;
-  executing: boolean;
-  onExecute: (params: Record<string, unknown>) => void;
-  onCancel: () => void;
-};
-
-function SkillParamForm({ schema, executing, onExecute, onCancel }: ParamFormProps) {
-  const { t } = useTranslation();
-  const props = schema.parameters?.properties ?? {};
-  const required = schema.parameters?.required ?? [];
-  const [values, setValues] = useState<Record<string, string | number | boolean>>(() => {
-    const defaults: Record<string, string | number | boolean> = {};
-    for (const [k, def] of Object.entries(props)) {
-      if (def.enum && def.enum.length > 0) defaults[k] = def.enum[0];
-    }
-    return defaults;
-  });
-  const [errors, setErrors] = useState<string[]>([]);
-  const valuesRef = useRef(values);
-  valuesRef.current = values;
-
-  const handleExecute = () => {
-    const missing = required.filter((k) => {
-      const v = valuesRef.current[k];
-      return v === undefined || v === "" || v === null;
-    });
-    if (missing.length > 0) { setErrors(missing); return; }
-    setErrors([]);
-    onExecute(valuesRef.current as Record<string, unknown>);
-  };
-
-  return (
-    <div className="flex flex-col gap-2 mt-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-      {Object.entries(props).map(([key, def]) => {
-        const isRequired = required.includes(key);
-        const hasError = errors.includes(key);
-        const cur = values[key];
-        return (
-          <div key={key} className="flex flex-col gap-1">
-            <label className="text-[11px] font-medium text-slate-600">
-              {key}{isRequired ? <span className="text-red-500 ml-0.5">*</span> : ""}
-              {def.description ? <span className="text-slate-400 ml-1">{def.description.slice(0, 40)}</span> : null}
-            </label>
-            {def.enum ? (
-              <select
-                className={cn("h-7 rounded-md border bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500/50", hasError ? "border-red-300" : "border-slate-200")}
-                value={cur as string ?? ""}
-                onChange={(e) => { setValues((p) => ({ ...p, [key]: e.target.value })); setErrors((p) => p.filter((x) => x !== key)); }}
-              >
-                {def.enum.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-            ) : def.type === "boolean" ? (
-              <select
-                className={cn("h-7 rounded-md border bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500/50", hasError ? "border-red-300" : "border-slate-200")}
-                value={cur === undefined ? "" : String(cur)}
-                onChange={(e) => { setValues((p) => ({ ...p, [key]: e.target.value === "true" })); setErrors((p) => p.filter((x) => x !== key)); }}
-              >
-                <option value="true">true</option>
-                <option value="false">false</option>
-              </select>
-            ) : (def.type === "number" || def.type === "integer") ? (
-              <input
-                type="number"
-                className={cn("h-7 rounded-md border bg-white px-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/50", hasError ? "border-red-300" : "border-slate-200")}
-                value={cur as number ?? ""}
-                onChange={(e) => { setValues((p) => ({ ...p, [key]: Number(e.target.value) })); setErrors((p) => p.filter((x) => x !== key)); }}
-                placeholder={def.description ?? key}
-              />
-            ) : (
-              <input
-                type="text"
-                className={cn("h-7 rounded-md border bg-white px-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/50", hasError ? "border-red-300" : "border-slate-200")}
-                value={cur as string ?? ""}
-                onChange={(e) => { setValues((p) => ({ ...p, [key]: e.target.value })); setErrors((p) => p.filter((x) => x !== key)); }}
-                placeholder={def.description ?? key}
-              />
-            )}
-            {hasError && <div className="text-[10px] text-red-500">{t("rp.skills.required")}</div>}
-          </div>
-        );
-      })}
-      <div className="flex gap-2 mt-1">
-        <Button variant="primary" size="sm" disabled={executing} onClick={handleExecute}>
-          {executing ? t("rp.skills.executing") : t("rp.skills.confirm")}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onCancel}>{t("rp.skills.cancelParam")}</Button>
-      </div>
-    </div>
-  );
-}
 
 // ─── Shared card style ────────────────────────────────────────────────────────
 
 function Card({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn("rounded-xl border border-slate-100 bg-slate-50/50 p-3", className)}>
+    <div className={cn("rounded-2xl border border-slate-100/70 bg-white/75 p-3 shadow-[0_1px_2px_rgba(15,23,42,0.03)]", className)}>
       {children}
     </div>
   );
@@ -211,7 +105,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 function KVRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-2 py-1.5 border-b border-slate-100 last:border-0">
+    <div className="flex items-start justify-between gap-2 border-b border-slate-100/70 py-1.5 last:border-0">
       <span className="text-xs text-slate-500 shrink-0">{label}</span>
       <span className="text-xs font-medium text-slate-800 text-right">{value}</span>
     </div>
@@ -227,30 +121,22 @@ export function RightPanel(props: RightPanelProps) {
     detail,
     copilot,
     aiTraces,
-    skillRecommendation,
-    skillSchemas,
     tickets,
     ticketDetailsById,
     ticketLoading,
     taskDraft,
     colleagues,
-    skillExecuting,
-    lastSkillResult,
     customer360,
     onTabChange,
     onSelectConversation,
-    onApplyTopRecommendedSkills,
-    onSetPreferredSkills,
     onCreateTicket,
     onPatchTicket,
     onAddTicketComment,
-    onConsumeTaskDraft,
-    onExecuteSkill
+    onConsumeTaskDraft
   } = props;
 
   const { t } = useTranslation();
   const [c360Tab, setC360Tab] = useState<"base" | "history" | "orders" | "analysis">("base");
-  const [paramSkillName, setParamSkillName] = useState<string | null>(null);
   const sentimentBars = (customer360?.sentimentTrend ?? []).map((item) => {
     const s = item.sentiment.toLowerCase();
     const score = s === "positive" ? 5 : s === "neutral" ? 3 : s === "negative" ? 2 : 1;
@@ -271,15 +157,11 @@ export function RightPanel(props: RightPanelProps) {
     { key: "case",     label: t("rp.tabs.case") },
     { key: "customer", label: t("rp.tabs.customer") },
     { key: "copilot",  label: t("rp.tabs.copilot") },
-    { key: "skills",   label: t("rp.tabs.skills") },
     { key: "orders",   label: t("rp.tabs.orders") }
   ];
 
   return (
-    <aside
-      className="flex flex-col overflow-hidden bg-white border-l border-slate-200"
-      style={{ gridColumn: 4, gridRow: 2 }}
-    >
+    <aside className="flex h-full flex-col overflow-hidden bg-transparent">
       {/* Tab bar */}
       <Tabs
         value={rightTab}
@@ -300,7 +182,7 @@ export function RightPanel(props: RightPanelProps) {
         </TabsList>
 
         {/* ── Case ── */}
-        <TabsContent value="case" className="flex-1 overflow-y-auto p-3">
+        <TabsContent value="case" className="flex-1 overflow-y-auto px-3 pb-3 pt-2">
           {!detail?.caseId ? (
             <div className="flex flex-col items-center justify-center py-10 text-slate-400">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 opacity-40">
@@ -340,7 +222,7 @@ export function RightPanel(props: RightPanelProps) {
         </TabsContent>
 
         {/* ── Customer 360 ── */}
-        <TabsContent value="customer" className="flex-1 overflow-y-auto p-3">
+        <TabsContent value="customer" className="flex-1 overflow-y-auto px-3 pb-3 pt-2">
           {/* Sub-tabs */}
           <div className="flex items-center gap-1 mb-3">
             {(["base", "history", "orders", "analysis"] as const).map((tab) => (
@@ -536,7 +418,7 @@ export function RightPanel(props: RightPanelProps) {
         </TabsContent>
 
         {/* ── AI Copilot ── */}
-        <TabsContent value="copilot" className="flex-1 overflow-y-auto p-3">
+        <TabsContent value="copilot" className="flex-1 overflow-y-auto px-3 pb-3 pt-2">
           <div className="flex flex-col gap-0">
 
             {/* Summary */}
@@ -626,110 +508,6 @@ export function RightPanel(props: RightPanelProps) {
               ))}
             </div>
 
-          </div>
-        </TabsContent>
-
-        {/* ── Skills ── */}
-        <TabsContent value="skills" className="flex-1 overflow-y-auto p-3">
-          <SectionTitle>{t("rp.skills.recommended")}</SectionTitle>
-          {(skillRecommendation?.recommendations ?? []).length === 0 && (
-            <p className="text-xs text-slate-400 mb-3">{t("rp.skills.noRecommendation")}</p>
-          )}
-          <div className="flex flex-col gap-2 mb-3">
-            {(skillRecommendation?.recommendations ?? []).map((item) => (
-              <Card key={item.skillName}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-semibold text-slate-800">{item.skillName}</span>
-                  <span className="text-[10px] text-slate-400">score {item.score}</span>
-                </div>
-                <div className="text-[11px] text-slate-500 mb-2">{item.reasons.join(", ") || "context_match"}</div>
-                <div className="flex flex-wrap gap-1.5">
-                  <Button variant="outline" size="sm" onClick={() => onSetPreferredSkills([item.skillName])}>
-                    {t("rp.skills.useOnly")}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => onSetPreferredSkills([...(skillRecommendation?.preferredSkillNames ?? []), item.skillName])}>
-                    {t("rp.skills.addPref")}
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    disabled={skillExecuting === item.skillName}
-                    onClick={() => void onExecuteSkill(item.skillName, {})}
-                  >
-                    {skillExecuting === item.skillName ? t("rp.skills.executing") : t("rp.skills.execute")}
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            <Button variant="outline" size="sm" onClick={onApplyTopRecommendedSkills}>{t("rp.skills.applyTop3")}</Button>
-            <Button variant="outline" size="sm" onClick={() => onSetPreferredSkills([])}>{t("rp.skills.clearPrefs")}</Button>
-          </div>
-
-          {lastSkillResult && (
-            <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 mb-3">
-              <span className="text-emerald-600">✅</span>
-              <span className="text-xs text-emerald-700"><b>{lastSkillResult.skillName}</b> {t("rp.skills.skillDone")}</span>
-            </div>
-          )}
-
-          <SectionTitle>{t("rp.skills.installed")}</SectionTitle>
-          <div className="flex flex-col gap-2">
-            {skillSchemas.length > 0 ? (
-              skillSchemas.map((schema) => {
-                const hasProps = Object.keys(schema.parameters?.properties ?? {}).length > 0;
-                const isExpanded = paramSkillName === schema.name;
-                const isExecuting = skillExecuting === schema.name;
-                return (
-                  <Card key={schema.name}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-xs font-semibold text-slate-800 truncate">{schema.name}</span>
-                        {hasProps && <Badge variant="warning">{t("rp.skills.needsParams")}</Badge>}
-                      </div>
-                      <Button
-                        variant={isExpanded ? "ghost" : "primary"}
-                        size="sm"
-                        disabled={isExecuting && !isExpanded}
-                        onClick={() => {
-                          if (!hasProps) { void onExecuteSkill(schema.name, {}); return; }
-                          setParamSkillName(isExpanded ? null : schema.name);
-                        }}
-                      >
-                        {isExpanded ? t("rp.skills.collapse") : isExecuting ? t("rp.skills.executing") : t("rp.skills.execute")}
-                      </Button>
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-1">{schema.description.slice(0, 60)}{schema.description.length > 60 ? "…" : ""}</div>
-                    {isExpanded && (
-                      <SkillParamForm
-                        schema={schema}
-                        executing={isExecuting}
-                        onExecute={(params) => { setParamSkillName(null); void onExecuteSkill(schema.name, params); }}
-                        onCancel={() => setParamSkillName(null)}
-                      />
-                    )}
-                  </Card>
-                );
-              })
-            ) : (
-              (skillRecommendation?.availableSkillNames ?? AVAILABLE_SKILLS.map((s) => s.code)).map((skillName) => (
-                <Card key={skillName}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-800">{skillName}</span>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={skillExecuting === skillName}
-                      onClick={() => void onExecuteSkill(skillName, {})}
-                    >
-                      {skillExecuting === skillName ? t("rp.skills.executing") : t("rp.skills.execute")}
-                    </Button>
-                  </div>
-                </Card>
-              ))
-            )}
           </div>
         </TabsContent>
 

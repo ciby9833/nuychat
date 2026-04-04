@@ -628,8 +628,11 @@ export class CaseTaskService {
     input: {
       tenantId: string;
       agentId: string;
-      status?: string | null;
+      status?: string[] | null;
       search?: string | null;
+      taskSearch?: string | null;
+      customerSearch?: string | null;
+      createdFrom?: string | null;
       limit?: number | null;
     }
   ) {
@@ -656,10 +659,8 @@ export class CaseTaskService {
         "c.last_message_at as conversation_last_message_at"
       );
 
-    if (input.status === "active") {
-      query.whereIn("ct.status", ["open", "in_progress"]);
-    } else if (input.status) {
-      query.where("ct.status", input.status);
+    if (input.status?.length) {
+      query.whereIn("ct.status", input.status);
     }
 
     if (input.search?.trim()) {
@@ -673,6 +674,30 @@ export class CaseTaskService {
           .orWhereILike("cu.external_ref", q)
           .orWhereILike("c.last_message_preview", q);
       });
+    }
+
+    if (input.taskSearch?.trim()) {
+      const q = `%${input.taskSearch.trim()}%`;
+      query.where((builder) => {
+        builder
+          .whereILike("ct.title", q)
+          .orWhereILike("ct.description", q)
+          .orWhereILike("cc.title", q)
+          .orWhereILike("c.last_message_preview", q);
+      });
+    }
+
+    if (input.customerSearch?.trim()) {
+      const q = `%${input.customerSearch.trim()}%`;
+      query.where((builder) => {
+        builder
+          .whereILike("cu.display_name", q)
+          .orWhereILike("cu.external_ref", q);
+      });
+    }
+
+    if (input.createdFrom) {
+      query.where("ct.created_at", ">=", input.createdFrom);
     }
 
     const rows = await query

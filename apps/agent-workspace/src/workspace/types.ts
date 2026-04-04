@@ -161,7 +161,7 @@ export type AgentColleague = {
   status: string;
   lastSeenAt: string | null;
 };
-export type RightTab = "case" | "customer" | "copilot" | "skills" | "orders";
+export type RightTab = "case" | "customer" | "copilot" | "orders";
 
 export type PaginatedConversationsResponse = {
   conversations: ConversationItem[];
@@ -393,4 +393,47 @@ export type AiTrace = {
   handoffReason: string | null;
   error: string | null;
   createdAt: string;
+};
+
+export type ConversationPreviewDetail = {
+  conversation: {
+    conversationId: string;
+    caseId: string | null;
+    caseTitle: string | null;
+    caseSummary: string | null;
+    caseStatus: string | null;
+    caseOpenedAt: string | null;
+    caseLastActivityAt: string | null;
+    status: string;
+    queueStatus: string | null;
+    channelType: string;
+    currentHandlerType: string | null;
+    customerName: string | null;
+    customerRef: string | null;
+    customerTier: string | null;
+    customerLanguage: string | null;
+    currentOwnerType: string | null;
+    currentOwnerId: string | null;
+    currentOwnerName: string | null;
+    assignedAgentId: string | null;
+    assignedAgentName: string | null;
+    assignedAiAgentId: string | null;
+    assignedAiAgentName: string | null;
+    lastMessagePreview: string | null;
+    lastMessageAt: string | null;
+  };
+  messages: Array<{
+    messageId: string;
+    direction: string;
+    senderType: string | null;
+    senderName: string | null;
+    messageType: string;
+    content: MessageItem["content"];
+    preview: string;
+    replyToMessageId: string | null;
+    replyToPreview: string | null;
+    reactionTargetMessageId: string | null;
+    reactionEmoji: string | null;
+    createdAt: string;
+  }>;
 };
