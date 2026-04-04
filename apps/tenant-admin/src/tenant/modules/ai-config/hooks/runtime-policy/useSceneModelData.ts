@@ -45,7 +45,8 @@ export function useSceneModelData() {
       model_scene_config: policy?.model_scene_config ?? {
         aiSeatConfigId: null,
         agentAssistConfigId: null,
-        toolDefaultConfigId: null
+        toolDefaultConfigId: null,
+        qaReviewConfigId: null
       }
     });
     setEditing(true);
@@ -57,7 +58,8 @@ export function useSceneModelData() {
       model_scene_config: policy?.model_scene_config ?? {
         aiSeatConfigId: null,
         agentAssistConfigId: null,
-        toolDefaultConfigId: null
+        toolDefaultConfigId: null,
+        qaReviewConfigId: null
       }
     });
     setEditing(false);

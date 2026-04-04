@@ -46,6 +46,7 @@ import { cancelAssignmentAcceptTimeout, cancelFollowUpTimeout, scheduleAssignmen
 import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
 import { recordSkillExecutionAsTask } from "../tasks/ai-task-bridge.service.js";
 import { summarizeSkillResult } from "../ai/fact-layer.service.js";
+import { enqueueQaReviewForCase } from "../quality-admin/qa-v2.service.js";
 
 const copilotService = new CopilotService();
 const conversationCaseService = new ConversationCaseService();
@@ -1808,6 +1809,10 @@ export async function conversationRoutes(app: FastifyInstance) {
         customerId: resolvedCustomerId
       }
     }).catch(() => null);
+
+    if (resolvedCaseId) {
+      void enqueueQaReviewForCase(tenantId, resolvedCaseId).catch(() => null);
+    }
 
     return { success: true, resolvedAt };
   });

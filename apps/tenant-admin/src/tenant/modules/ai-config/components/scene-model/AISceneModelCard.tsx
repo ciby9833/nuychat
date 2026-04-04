@@ -1,5 +1,5 @@
 /**
- * 作用：提供场景模型独立维护卡片，只维护 AI 座席、人工辅助、工具默认三个模型场景。
+ * 作用：提供场景模型独立维护卡片，维护 AI 座席、人工辅助、工具默认、QA 质检四个模型场景。
  * 页面/菜单：租户管理端「AI 配置 > 场景模型」。
  */
 import { EditOutlined, UndoOutlined } from "@ant-design/icons";
@@ -62,6 +62,9 @@ export function AISceneModelCard() {
             <Descriptions.Item label={t("aiConfig.sceneModel.toolDefault")}>
               {resolveConfigLabel(data.policy?.model_scene_config.toolDefaultConfigId)}
             </Descriptions.Item>
+            <Descriptions.Item label={t("aiConfig.sceneModel.qaReview", { defaultValue: "QA质检" })}>
+              {resolveConfigLabel(data.policy?.model_scene_config.qaReviewConfigId)}
+            </Descriptions.Item>
           </Descriptions>
         ) : (
           <Form form={form} layout="vertical">
@@ -73,6 +76,16 @@ export function AISceneModelCard() {
             </Form.Item>
             <Form.Item label={t("aiConfig.sceneModel.toolDefault")} name={["model_scene_config", "toolDefaultConfigId"]}>
               <Select allowClear options={options} placeholder={t("aiConfig.sceneModel.toolDefaultPlaceholder")} />
+            </Form.Item>
+            <Form.Item
+              label={t("aiConfig.sceneModel.qaReview", { defaultValue: "QA质检" })}
+              name={["model_scene_config", "qaReviewConfigId"]}
+            >
+              <Select
+                allowClear
+                options={options}
+                placeholder={t("aiConfig.sceneModel.qaReviewPlaceholder", { defaultValue: "选择 QA 质检场景模型" })}
+              />
             </Form.Item>
           </Form>
         )}

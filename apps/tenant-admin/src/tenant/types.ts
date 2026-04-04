@@ -151,6 +151,7 @@ export type AIRuntimePolicy = {
     aiSeatConfigId: string | null;
     agentAssistConfigId: string | null;
     toolDefaultConfigId: string | null;
+    qaReviewConfigId: string | null;
   };
   created_at: string | null;
   updated_at: string | null;
@@ -637,52 +638,159 @@ export type SlaBreachListResponse = {
   items: SlaBreachItem[];
 };
 
-export type QaScoringRuleItem = {
-  ruleId: string;
-  code: string;
-  name: string;
-  weight: number;
-  isActive: boolean;
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
+export type QaDashboardData = {
+  todayQaCount: number;
+  autoPassRate: number;
+  riskCaseCount: number;
+  sampleCaseCount: number;
+  averageScore: number;
+  aiVsHumanDiff: number;
+  agentAverages: Array<{
+    agentId: string | null;
+    agentName: string;
+    averageScore: number;
+  }>;
 };
 
-export type QaConversationOption = {
-  conversationId: string;
-  caseId: string;
+export type QaGuideline = {
+  guidelineId: string;
+  name: string;
+  contentMd: string;
+  version: number;
+  isActive: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type QaTaskItem = {
+  qaTaskId: string;
+  source: string;
+  reviewMode: "ai_only" | "human_required" | "human_sampled";
+  queueType: "auto_pass" | "risk" | "sample" | null;
   status: string;
+  aiStatus: string;
+  riskLevel: string | null;
+  riskReasons: string[];
+  confidence: number | null;
+  recommendedAction: string | null;
+  createdAt: string;
+  caseId: string;
+  caseTitle: string;
+  caseStatus: string;
+  conversationId: string;
   channelType: string;
   customerName: string | null;
   customerRef: string | null;
-  agentName: string | null;
-  reviewed: boolean;
-  updatedAt: string;
+  resolvedByAgentId: string | null;
+  resolvedByAgentName: string | null;
+  aiScore: number | null;
+  aiCaseSummary: string | null;
+  humanScore: number | null;
+  humanVerdict: string | null;
+  humanStatus: string | null;
+  humanUpdatedAt: string | null;
+  scoreDiff: number | null;
+  segmentCount: number;
+  hasHumanSegments: boolean;
+  hasAiSegments: boolean;
 };
 
-export type QaReviewItem = {
-  reviewId: string;
-  conversationId: string;
-  caseId: string;
-  reviewerIdentityId: string | null;
-  reviewerEmail: string | null;
-  agentId: string | null;
-  agentName: string | null;
-  conversationStatus: string | null;
-  score: number;
-  dimensionScores: Record<string, number>;
-  tags: string[];
-  note: string | null;
-  status: "draft" | "published";
+export type QaCaseMessage = {
+  messageId: string;
+  segmentId: string | null;
+  direction: string;
+  senderType: string | null;
+  senderId: string | null;
+  senderName: string | null;
   createdAt: string;
-  updatedAt: string;
+  text: string;
 };
 
-export type QaReviewListResponse = {
-  page: number;
-  pageSize: number;
-  total: number;
-  items: QaReviewItem[];
+export type QaCaseSegment = {
+  segmentId: string;
+  ownerType: string;
+  ownerAgentId: string | null;
+  ownerAgentName: string | null;
+  ownerAiAgentId: string | null;
+  ownerAiAgentName: string | null;
+  status: string;
+  startedAt: string;
+  endedAt: string | null;
+  openedReason: string | null;
+  closedReason: string | null;
+  transferredFromSegmentId: string | null;
+  messageCount: number;
+};
+
+export type QaAiReview = {
+  qaAiReviewId: string;
+  score: number;
+  verdict: string;
+  confidence: number;
+  riskLevel: string | null;
+  riskReasons: string[];
+  manualReviewRecommended: boolean;
+  caseSummary: string | null;
+  segmentReviews: unknown;
+  evidence: unknown;
+  status: string;
+  createdAt: string | null;
+};
+
+export type QaCaseReview = {
+  qaCaseReviewId: string;
+  totalScore: number;
+  verdict: string;
+  tags: string[];
+  summary: string | null;
+  status: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type QaCaseDetail = {
+  case: {
+    caseId: string;
+    conversationId: string;
+    customerId: string;
+    customerName: string | null;
+    customerRef: string | null;
+    customerTier: string | null;
+    channelType: string;
+    title: string;
+    summary: string | null;
+    status: string;
+    openedAt: string | null;
+    resolvedAt: string | null;
+    closedAt: string | null;
+    lastActivityAt: string | null;
+    finalOwnerType: string | null;
+    finalOwnerId: string | null;
+    finalOwnerName: string | null;
+    resolvedByAgentId: string | null;
+    resolvedByAgentName: string | null;
+    segmentCount: number;
+    hasHumanSegments: boolean;
+    hasAiSegments: boolean;
+    reassignCount: number;
+    hasSlaBreach: boolean;
+  };
+  messages: QaCaseMessage[];
+  segments: QaCaseSegment[];
+  task: {
+    qaTaskId: string;
+    queueType: string | null;
+    status: string | null;
+    aiStatus: string | null;
+    reviewMode: string | null;
+    confidence: number | null;
+    recommendedAction: string | null;
+    riskLevel: string | null;
+    riskReasons: string[];
+    enteredBy: string[];
+  } | null;
+  aiReview: QaAiReview | null;
+  caseReview: QaCaseReview | null;
 };
 
 export type CsatSurveyItem = {

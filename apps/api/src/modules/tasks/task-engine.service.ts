@@ -13,6 +13,7 @@ import {
   encodeConversationMemories,
   encodeTaskOutcomeMemories
 } from "../memory/memory-encoder.service.js";
+import { runQaAiReviewTask } from "../quality-admin/qa-v2.service.js";
 
 type AsyncTaskRow = {
   task_id: string;
@@ -226,6 +227,35 @@ export async function executeLongTask(db: Knex, taskId: string) {
         artifactCount: 0,
         source: row.source,
         postprocess: true
+      }
+    };
+  }
+
+  if (row.task_type === "qa_ai_review_generate") {
+    const qaTaskId = typeof payload.qaTaskId === "string" ? payload.qaTaskId.trim() : "";
+    if (!qaTaskId) {
+      throw new Error(`Missing qaTaskId for async task: ${taskId}`);
+    }
+
+    const result = await runQaAiReviewTask(db, {
+      tenantId: row.tenant_id,
+      qaTaskId,
+      asyncTaskId: taskId,
+      payload
+    });
+
+    return {
+      row,
+      payload,
+      artifactDir: null,
+      resultSummary: result.skipped
+        ? `QA AI review skipped: ${String(result.reason ?? "unknown")}`
+        : `QA AI review completed (${String(result.queueType ?? "unknown")})`,
+      resultMeta: {
+        artifactCount: 0,
+        source: row.source,
+        qaTaskId,
+        qa: true
       }
     };
   }

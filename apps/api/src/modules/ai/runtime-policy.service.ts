@@ -2,12 +2,13 @@ import type { Knex } from "knex";
 import type { PreReplyCheckRef } from "./pre-reply-checks.js";
 
 export type PreReplyPolicyAction = "handoff" | "defer";
-export type AIModelScene = "ai_seat" | "agent_assist" | "tool_default";
+export type AIModelScene = "ai_seat" | "agent_assist" | "tool_default" | "qa_review";
 
 export type AIModelSceneConfig = {
   aiSeatConfigId: string | null;
   agentAssistConfigId: string | null;
   toolDefaultConfigId: string | null;
+  qaReviewConfigId: string | null;
 };
 
 export type PreReplyPolicyRule = {
@@ -44,7 +45,8 @@ const DEFAULT_PRE_REPLY_POLICY: PreReplyPolicySet = {
 const DEFAULT_MODEL_SCENE_CONFIG: AIModelSceneConfig = {
   aiSeatConfigId: null,
   agentAssistConfigId: null,
-  toolDefaultConfigId: null
+  toolDefaultConfigId: null,
+  qaReviewConfigId: null
 };
 
 export async function getTenantAIRuntimePolicy(
@@ -127,7 +129,8 @@ export function serializeModelSceneConfig(raw: unknown): AIModelSceneConfig {
   return {
     aiSeatConfigId: asNonEmptyString(parsed.aiSeatConfigId),
     agentAssistConfigId: asNonEmptyString(parsed.agentAssistConfigId),
-    toolDefaultConfigId: asNonEmptyString(parsed.toolDefaultConfigId)
+    toolDefaultConfigId: asNonEmptyString(parsed.toolDefaultConfigId),
+    qaReviewConfigId: asNonEmptyString(parsed.qaReviewConfigId)
   };
 }
 

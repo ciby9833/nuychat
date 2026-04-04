@@ -22,10 +22,10 @@ import type {
   PreReplyPolicySet,
   LoginResponse,
   PermissionPolicyResponse,
-  QaConversationOption,
-  QaReviewListResponse,
-  QaReviewItem,
-  QaScoringRuleItem,
+  QaCaseDetail,
+  QaDashboardData,
+  QaGuideline,
+  QaTaskItem,
   CustomerListResponse,
   CustomerSegmentItem,
   CustomerTagItem,
@@ -491,6 +491,7 @@ export function patchTenantAIRuntimePolicy(input: {
     aiSeatConfigId?: string | null;
     agentAssistConfigId?: string | null;
     toolDefaultConfigId?: string | null;
+    qaReviewConfigId?: string | null;
   };
 }) {
   return api<AIRuntimePolicy>("/api/admin/ai-runtime-policy", {
@@ -949,73 +950,78 @@ export function patchSlaBreachStatus(breachId: string, status: "open" | "acknowl
   });
 }
 
-export function listQaScoringRules() {
-  return api<QaScoringRuleItem[]>("/api/admin/qa/scoring-rules");
+export function getQaDashboard() {
+  return api<QaDashboardData>("/api/admin/qa/dashboard");
 }
 
-export function updateQaScoringRules(
-  rules: Array<{ code: string; name: string; weight: number; isActive?: boolean; sortOrder?: number }>
-) {
-  return api<{ updated: boolean; count: number }>("/api/admin/qa/scoring-rules", {
+export function getQaDashboardWithFilters(input?: {
+  dateFrom?: string;
+  dateTo?: string;
+  agentIds?: string[];
+}) {
+  const params = new URLSearchParams();
+  if (input?.dateFrom) params.set("dateFrom", input.dateFrom);
+  if (input?.dateTo) params.set("dateTo", input.dateTo);
+  if (input?.agentIds?.length) params.set("agentIds", input.agentIds.join(","));
+  const query = params.toString();
+  return api<QaDashboardData>(`/api/admin/qa/dashboard${query ? `?${query}` : ""}`);
+}
+
+export function getQaGuideline() {
+  return api<QaGuideline>("/api/admin/qa/guideline");
+}
+
+export function updateQaGuideline(input: { name?: string | null; contentMd: string }) {
+  return api<QaGuideline>("/api/admin/qa/guideline", {
     method: "PUT",
-    body: JSON.stringify({ rules })
-  });
-}
-
-export function listQaConversations(input?: { search?: string; limit?: number }) {
-  const params = new URLSearchParams();
-  if (input?.search) params.set("search", input.search);
-  if (input?.limit) params.set("limit", String(input.limit));
-  const query = params.toString();
-  return api<QaConversationOption[]>(`/api/admin/qa/conversations${query ? `?${query}` : ""}`);
-}
-
-export function listQaReviews(input?: {
-  agentId?: string;
-  tag?: string;
-  minScore?: number;
-  maxScore?: number;
-  page?: number;
-  pageSize?: number;
-}) {
-  const params = new URLSearchParams();
-  if (input?.agentId) params.set("agentId", input.agentId);
-  if (input?.tag) params.set("tag", input.tag);
-  if (input?.minScore !== undefined) params.set("minScore", String(input.minScore));
-  if (input?.maxScore !== undefined) params.set("maxScore", String(input.maxScore));
-  if (input?.page !== undefined) params.set("page", String(input.page));
-  if (input?.pageSize !== undefined) params.set("pageSize", String(input.pageSize));
-  const query = params.toString();
-  return api<QaReviewListResponse>(`/api/admin/qa/reviews${query ? `?${query}` : ""}`);
-}
-
-export function createQaReview(input: {
-  conversationId: string;
-  caseId?: string;
-  score: number;
-  dimensionScores?: Record<string, number>;
-  tags?: string[];
-  note?: string;
-  status?: "draft" | "published";
-}) {
-  return api<QaReviewItem>("/api/admin/qa/reviews", {
-    method: "POST",
     body: JSON.stringify(input)
   });
 }
 
-export function patchQaReview(
-  reviewId: string,
-  input: Partial<{
-    score: number;
-    dimensionScores: Record<string, number>;
-    tags: string[];
-    note: string;
-    status: "draft" | "published";
-  }>
+export function listQaTasks(input?: {
+  queueType?: "auto_pass" | "risk" | "sample";
+  status?: string;
+  search?: string;
+  limit?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  agentIds?: string[];
+}) {
+  const params = new URLSearchParams();
+  if (input?.queueType) params.set("queueType", input.queueType);
+  if (input?.status) params.set("status", input.status);
+  if (input?.search) params.set("search", input.search);
+  if (input?.limit !== undefined) params.set("limit", String(input.limit));
+  if (input?.dateFrom) params.set("dateFrom", input.dateFrom);
+  if (input?.dateTo) params.set("dateTo", input.dateTo);
+  if (input?.agentIds?.length) params.set("agentIds", input.agentIds.join(","));
+  const query = params.toString();
+  return api<{ items: QaTaskItem[] }>(`/api/admin/qa/tasks${query ? `?${query}` : ""}`);
+}
+
+export function getQaCaseDetail(caseId: string) {
+  return api<QaCaseDetail>(`/api/admin/qa/cases/${caseId}`);
+}
+
+export function submitQaCaseReview(
+  caseId: string,
+  input: {
+    action: "confirm" | "modify" | "reject";
+    totalScore?: number;
+    verdict?: string;
+    tags?: string[];
+    summary?: string | null;
+    segmentReviews?: Array<{
+      segmentId: string;
+      score: number;
+      tags?: string[];
+      comment?: string | null;
+      dimensionScores?: Record<string, number>;
+    }>;
+  }
 ) {
-  return api<QaReviewItem>(`/api/admin/qa/reviews/${reviewId}`, {
-    method: "PATCH",
+  return api<{ qaTaskId: string; qaCaseReviewId: string; status: string }>(`/api/admin/qa/cases/${caseId}/review`, {
+    method: "POST",
     body: JSON.stringify(input)
   });
 }

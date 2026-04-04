@@ -20,6 +20,7 @@ import {
   parseJsonValue,
   resolveDateRange
 } from "../admin-core/admin-route.shared.js";
+import { enqueueQaReviewForCase } from "../quality-admin/qa-v2.service.js";
 
 export async function supervisorAdminRoutes(app: FastifyInstance) {
   attachTenantAdminGuard(app);
@@ -651,7 +652,9 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
     const { conversationId } = req.params as { conversationId: string };
     const body = req.body as { note?: string };
 
-    return withTenantTransaction(tenantId, async (trx) => {
+    let closedCaseId: string | null = null;
+
+    const result = await withTenantTransaction(tenantId, async (trx) => {
       const conversation = await trx("conversations")
         .where({ tenant_id: tenantId, conversation_id: conversationId })
         .select("customer_id", "current_case_id", "current_segment_id", "status")
@@ -662,6 +665,7 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
           status: string;
         } | undefined>();
       if (!conversation) throw app.httpErrors.notFound("Conversation not found");
+      closedCaseId = conversation.current_case_id ?? null;
 
       if (conversation.current_case_id && conversation.current_segment_id) {
         await conversationSegmentService.closeCurrentSegment(trx, {
@@ -698,6 +702,12 @@ export async function supervisorAdminRoutes(app: FastifyInstance) {
 
       return { success: true, conversationId };
     });
+
+    if (closedCaseId) {
+      void enqueueQaReviewForCase(tenantId, closedCaseId).catch(() => null);
+    }
+
+    return result;
   });
 
   app.post("/api/admin/supervisor/broadcast", async (req) => {

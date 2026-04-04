@@ -70,7 +70,9 @@ export async function resolveTenantAISettingsForScene(
     ? policy.modelSceneConfig.aiSeatConfigId
     : scene === "agent_assist"
       ? policy.modelSceneConfig.agentAssistConfigId
-      : policy.modelSceneConfig.toolDefaultConfigId;
+      : scene === "qa_review"
+        ? policy.modelSceneConfig.qaReviewConfigId
+        : policy.modelSceneConfig.toolDefaultConfigId;
 
   if (sceneConfigId) {
     const sceneSettings = await resolveTenantAISettingsByConfigId(db, tenantId, sceneConfigId);
