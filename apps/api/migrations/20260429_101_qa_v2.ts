@@ -123,6 +123,18 @@ export async function up(knex: Knex): Promise<void> {
     t.index(["tenant_id", "segment_id"], "qa_segment_reviews_segment_idx");
   });
 
+  const tenants = await knex("tenants").select("tenant_id");
+  for (const tenant of tenants as Array<{ tenant_id: string }>) {
+    await knex("qa_guidelines").insert({
+      tenant_id: tenant.tenant_id,
+      name: "默认QA准则",
+      scope: "global",
+      content_md: DEFAULT_GUIDELINE,
+      is_active: true,
+      version: 1
+    });
+  }
+
   for (const table of TABLES) {
     await knex.raw(`
       ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;
@@ -140,18 +152,6 @@ export async function up(knex: Knex): Promise<void> {
       FOR EACH ROW
       EXECUTE FUNCTION set_updated_at();
     `);
-  }
-
-  const tenants = await knex("tenants").select("tenant_id");
-  for (const tenant of tenants as Array<{ tenant_id: string }>) {
-    await knex("qa_guidelines").insert({
-      tenant_id: tenant.tenant_id,
-      name: "默认QA准则",
-      scope: "global",
-      content_md: DEFAULT_GUIDELINE,
-      is_active: true,
-      version: 1
-    });
   }
 }
 
