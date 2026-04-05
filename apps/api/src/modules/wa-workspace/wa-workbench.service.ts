@@ -76,7 +76,7 @@ export async function createWorkbenchLoginTask(
   if (!account) {
     throw new Error("WA account not accessible");
   }
-  const provider = getWaProviderAdapter(account.providerKey);
+  const provider = getWaProviderAdapter();
   const ticket = await provider.createLoginTicket({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,

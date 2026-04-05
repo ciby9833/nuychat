@@ -92,8 +92,10 @@ export async function reconcileWaConversation(
     throw new Error("WA account not found");
   }
 
-  const provider = getWaProviderAdapter(account.provider_key);
+  const provider = getWaProviderAdapter();
   const providerResult = await provider.fetchHistory({
+    tenantId: input.tenantId,
+    waAccountId: conversation.waAccountId,
     instanceKey: account.instance_key,
     chatJid: conversation.chatJid,
     limit: 50
@@ -120,10 +122,10 @@ export async function reconcileWaConversation(
       waAccountId: conversation.waAccountId,
       waConversationId: input.waConversationId,
       providerMessageId: message.providerMessageId,
-      direction: "inbound",
+      direction: message.direction,
       senderJid: message.senderJid,
       participantJid: message.participantJid ?? null,
-      senderRole: message.conversationType === "group" ? "group_member" : "customer",
+      senderRole: message.senderRole,
       bodyText: message.bodyText ?? undefined,
       providerTs: message.providerTs,
       messageType: message.messageType,

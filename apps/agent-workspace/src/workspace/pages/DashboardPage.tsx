@@ -65,13 +65,15 @@ export function DashboardPage() {
 
   if (!vm.isLoggedIn || !vm.session) return null;
 
+  const waEnabled = vm.waSeatEnabled && vm.waRuntimeAvailable;
+
   return (
     <TooltipProvider>
       <WorkspaceShell
         section={section}
         unreadCount={vm.totalUnreadMessages}
         taskCount={vm.filteredMyTasks.length}
-        waEnabled={vm.waSeatEnabled}
+        waEnabled={waEnabled}
         onNavigate={(next) => navigate(`/dashboard/${next}`)}
         header={{
           tenantId: vm.tenantId,
@@ -88,7 +90,7 @@ export function DashboardPage() {
           <Routes>
             <Route
               index
-              element={<Navigate to={vm.waSeatEnabled && !vm.agentId ? "/dashboard/wa" : "/dashboard/home"} replace />}
+              element={<Navigate to={waEnabled && !vm.agentId ? "/dashboard/wa" : "/dashboard/home"} replace />}
             />
             <Route
               path="home"
@@ -120,7 +122,7 @@ export function DashboardPage() {
             />
             <Route
               path="wa"
-              element={vm.session?.waSeatEnabled ? <WaWorkspace session={vm.session} /> : <Navigate to="/dashboard/home" replace />}
+              element={waEnabled ? <WaWorkspace session={vm.session} /> : <Navigate to="/dashboard/home" replace />}
             />
             <Route path="*" element={<Navigate to="/dashboard/home" replace />} />
           </Routes>

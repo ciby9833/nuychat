@@ -14,7 +14,7 @@ function mapAccount(row: Record<string, unknown>) {
     instanceKey: String(row.instance_key),
     displayName: String(row.display_name),
     phoneE164: row.phone_e164 ? String(row.phone_e164) : null,
-    providerKey: String(row.provider_key) as "evolution",
+    providerKey: String(row.provider_key),
     accountStatus: String(row.account_status),
     riskLevel: String(row.risk_level),
     primaryOwnerMembershipId: row.primary_owner_membership_id ? String(row.primary_owner_membership_id) : null,
@@ -72,7 +72,7 @@ export async function insertWaAccount(
       display_name: input.displayName,
       phone_e164: input.phoneE164 ?? null,
       primary_owner_membership_id: input.primaryOwnerMembershipId ?? null,
-      provider_key: "evolution"
+      provider_key: "baileys"
     })
     .returning("*");
   return mapAccount(row as Record<string, unknown>);
@@ -108,6 +108,7 @@ export async function upsertWaAccountSession(
       .where({ session_id: existing.session_id })
       .update({
         session_ref: input.sessionRef,
+        session_provider: "baileys",
         login_mode: input.loginMode,
         connection_state: input.connectionState,
         last_qr_at: trx.fn.now(),
@@ -122,6 +123,7 @@ export async function upsertWaAccountSession(
     .insert({
       tenant_id: input.tenantId,
       wa_account_id: input.waAccountId,
+      session_provider: "baileys",
       session_ref: input.sessionRef,
       login_mode: input.loginMode,
       connection_state: input.connectionState,

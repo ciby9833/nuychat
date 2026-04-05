@@ -60,7 +60,8 @@ import type {
   TeamItem
   ,
   WaAccountHealth,
-  WaAccountListItem
+  WaAccountListItem,
+  WaRuntimeStatus
 } from "./types";
 
 const SESSION_KEY = "nuychat.authSession";
@@ -220,6 +221,10 @@ export function listChannelConfigs() {
 
 export function listTenantAIAgents() {
   return api<TenantAIAgentListResponse>("/api/admin/ai-agents");
+}
+
+export function getAdminWaRuntimeStatus() {
+  return api<WaRuntimeStatus>("/api/admin/wa/runtime");
 }
 
 export function listAIConversations(input?: {

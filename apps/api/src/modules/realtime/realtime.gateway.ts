@@ -58,7 +58,9 @@ export function createRealtimeGateway(app: FastifyInstance) {
     subscribe("message.received"),
     subscribe("message.sent"),
     subscribe("message.updated"),
-    subscribe("task.updated")
+    subscribe("task.updated"),
+    subscribe("wa.account.updated"),
+    subscribe("wa.message.updated")
   ];
 
   app.addHook("onClose", async () => {

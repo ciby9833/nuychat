@@ -116,7 +116,10 @@ export function WaChatPanel(props: WaChatPanelProps) {
                   ))}
                   <div className="mt-3 flex items-center justify-between gap-3 text-[11px] opacity-75">
                     <span>{new Date(message.createdAt).toLocaleString()}</span>
-                    <span>{message.deliveryStatus}</span>
+                    <span>
+                      {message.receiptSummary?.latestStatus ?? message.deliveryStatus}
+                      {message.receiptSummary?.totalReceipts ? ` · ${message.receiptSummary.totalReceipts}` : ""}
+                    </span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button type="button" className="text-[11px]" onClick={() => onReplyToMessage(message.providerMessageId || message.waMessageId, preview)}>引用</button>

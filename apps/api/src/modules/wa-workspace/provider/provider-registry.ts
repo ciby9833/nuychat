@@ -1,16 +1,18 @@
 /**
  * 作用:
- * - 管理 WA provider adapter 的注册与获取。
+ * - 暴露 WA 模块当前唯一的 Baileys adapter。
  *
  * 交互:
- * - 被 admin/workbench/webhook 服务按 providerKey 获取具体实现。
+ * - 被 admin/workbench/outbound/reconcile 服务直接调用。
+ *
+ * 说明:
+ * - WA 运行时已明确固定为内嵌 Baileys，不再保留多 provider 分发层。
  */
-import { EvolutionProviderAdapter } from "./evolution/evolution-provider.adapter.js";
+import { BaileysProviderAdapter } from "./baileys/baileys-provider.adapter.js";
 import type { WaProviderAdapter } from "./provider-contract.js";
 
-const evolution = new EvolutionProviderAdapter();
+export const waProviderAdapter: WaProviderAdapter = new BaileysProviderAdapter();
 
-export function getWaProviderAdapter(providerKey: string): WaProviderAdapter {
-  if (providerKey === "evolution") return evolution;
-  throw new Error(`Unsupported WA provider: ${providerKey}`);
+export function getWaProviderAdapter(): WaProviderAdapter {
+  return waProviderAdapter;
 }

@@ -27,6 +27,13 @@ export type Session = {
   memberships: MembershipSummary[];
 };
 
+export type WaRuntimeStatus = {
+  providerKey: "baileys";
+  available: boolean;
+  providerConfigured: boolean;
+  reason: "provider_disabled" | "missing_session_dir" | null;
+};
+
 export type ConversationItem = {
   conversationId: string;
   caseId?: string | null;

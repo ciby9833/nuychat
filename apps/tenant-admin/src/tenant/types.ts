@@ -42,6 +42,13 @@ export type LoginResponse = {
   memberships: MembershipSummary[];
 };
 
+export type WaRuntimeStatus = {
+  providerKey: "baileys";
+  available: boolean;
+  providerConfigured: boolean;
+  reason: "provider_disabled" | "missing_session_dir" | null;
+};
+
 export type OverviewData = {
   conversations: { total: number; byStatus: Record<string, number> };
   knowledgeBase: { activeEntries: number };

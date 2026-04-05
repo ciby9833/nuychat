@@ -5,6 +5,7 @@
  * 交互:
  * - 与 tenant admin guard 交互，复用现有后台权限体系。
  * - 调用 wa-admin.service 管理账号池、登录任务、成员绑定、WA 座席资格。
+ * - 调用 wa-runtime.service 输出 WA 基础设施可用性，避免未部署时继续暴露操作入口。
  */
 import type { FastifyInstance } from "fastify";
 
@@ -20,9 +21,12 @@ import {
   reconnectAdminWaAccount,
   updateAdminWaAccountOwner
 } from "./wa-admin.service.js";
+import { getWaRuntimeStatus } from "./wa-runtime.service.js";
 
 export async function waAdminRoutes(app: FastifyInstance) {
   attachTenantAdminGuard(app);
+
+  app.get("/api/admin/wa/runtime", async () => getWaRuntimeStatus());
 
   app.get("/api/admin/wa/accounts", async (req) => {
     const tenantId = req.tenant?.tenantId;
@@ -56,6 +60,10 @@ export async function waAdminRoutes(app: FastifyInstance) {
     const tenantId = req.tenant?.tenantId;
     const membershipId = req.auth?.membershipId;
     if (!tenantId || !membershipId) throw app.httpErrors.badRequest("Missing tenant context");
+    const runtime = getWaRuntimeStatus();
+    if (!runtime.available) {
+      throw app.httpErrors.serviceUnavailable("WhatsApp provider is not available");
+    }
     const { waAccountId } = req.params as { waAccountId: string };
     return withTenantTransaction(tenantId, async (trx) =>
       createAdminLoginTask(trx, { tenantId, waAccountId, membershipId, loginMode: "admin_scan" })
@@ -100,6 +108,10 @@ export async function waAdminRoutes(app: FastifyInstance) {
   app.post("/api/admin/wa/accounts/:waAccountId/reconnect", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const runtime = getWaRuntimeStatus();
+    if (!runtime.available) {
+      throw app.httpErrors.serviceUnavailable("WhatsApp provider is not available");
+    }
     const { waAccountId } = req.params as { waAccountId: string };
     return withTenantTransaction(tenantId, async (trx) => reconnectAdminWaAccount(trx, { tenantId, waAccountId }));
   });

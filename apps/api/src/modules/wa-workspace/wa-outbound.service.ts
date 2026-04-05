@@ -9,6 +9,7 @@
 import { withTenantTransaction } from "../../infra/db/client.js";
 import { waWorkspaceOutboundQueue, type WaWorkspaceOutboundJobPayload } from "../../infra/queue/queues.js";
 import { getWaProviderAdapter } from "./provider/provider-registry.js";
+import { emitWaMessageUpdated } from "./wa-realtime.service.js";
 
 export async function enqueueWaOutboundJob(payload: WaWorkspaceOutboundJobPayload) {
   await waWorkspaceOutboundQueue.add("wa.outbound.send_text", payload, {
@@ -44,10 +45,12 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
       .first<Record<string, unknown> | undefined>();
     if (!conversation) throw new Error("WA conversation not found");
 
-    const provider = getWaProviderAdapter(String(account.provider_key));
+    const provider = getWaProviderAdapter();
     const result =
       payload.jobType === "send_media"
         ? await provider.sendMedia({
+            tenantId: payload.tenantId,
+            waAccountId: payload.waAccountId,
             instanceKey: String(account.instance_key),
             to: String(conversation.chat_jid),
             mediaType: payload.mediaType ?? "document",
@@ -60,12 +63,16 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
           })
         : payload.jobType === "send_reaction"
           ? await provider.sendReaction({
+              tenantId: payload.tenantId,
+              waAccountId: payload.waAccountId,
               instanceKey: String(account.instance_key),
               remoteJid: payload.remoteJid ?? String(conversation.chat_jid),
               targetMessageId: payload.reactionTargetId ?? "",
               emoji: payload.emoji ?? ""
             })
           : await provider.sendText({
+              tenantId: payload.tenantId,
+              waAccountId: payload.waAccountId,
               instanceKey: String(account.instance_key),
               to: String(conversation.chat_jid),
               text: payload.text ?? "",
@@ -93,6 +100,14 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
         provider_payload: JSON.stringify(result.providerPayload),
         updated_at: trx.fn.now()
       });
+
+    emitWaMessageUpdated({
+      tenantId: payload.tenantId,
+      waConversationId: payload.waConversationId,
+      waMessageId: payload.waMessageId,
+      providerMessageId: result.providerMessageId,
+      deliveryStatus: result.deliveryStatus
+    });
 
     return { sent: true, providerMessageId: result.providerMessageId };
   });

@@ -17,8 +17,10 @@ import {
   message
 } from "antd";
 import { useEffect, useState } from "react";
+import { io } from "socket.io-client";
 
 import {
+  API_BASE,
   createWaAccount,
   createWaAccountLoginTask,
   getWaAccountHealth,
@@ -26,6 +28,7 @@ import {
   reconnectWaAccount,
   updateWaAccountOwner
 } from "../../../api";
+import { readTenantSession } from "../../../session";
 import type { MemberListItem, WaAccountHealth, WaAccountListItem } from "../../../types";
 
 type CreateWaAccountForm = {
@@ -102,75 +105,83 @@ export function WaAccountsPane({
   };
 
   useEffect(() => {
-    if (!loginTask) return;
+    const session = readTenantSession();
+    if (!session?.accessToken) return;
 
-    let cancelled = false;
-    let running = false;
-
-    const tick = async () => {
-      if (running || cancelled) return;
-      running = true;
-      try {
-        const healthState = await getWaAccountHealth(loginTask.waAccountId);
-        const connectionState = healthState.session?.connectionState?.toLowerCase() ?? "";
-        const accountStatus = healthState.accountStatus?.toLowerCase() ?? "";
-        const isConnected = accountStatus === "online" || connectionState === "open" || connectionState === "connected";
-
-        if (isConnected) {
-          if (!cancelled) {
-            setLoginTask(null);
-            void message.success(`WA账号 ${loginTask.accountName} 已连接成功`);
-            onReload();
-          }
-          return;
-        }
-
-        const latestQrCode = healthState.session?.qrCode?.trim();
-        if (latestQrCode && latestQrCode !== loginTask.qrCode) {
-          setLoginTask({
-            waAccountId: loginTask.waAccountId,
-            accountName: loginTask.accountName,
-            qrCode: latestQrCode,
-            expiresAt: loginTask.expiresAt
-          });
-        }
-
-        const expireAt = new Date(loginTask.expiresAt).getTime();
-        const shouldRefresh = Number.isFinite(expireAt) && expireAt - Date.now() <= 15_000;
-        if (shouldRefresh) {
-          setRefreshingLoginTask(true);
-          const nextTask = await createWaAccountLoginTask(loginTask.waAccountId);
-          if (!cancelled) {
-            setLoginTask({
-              waAccountId: loginTask.waAccountId,
-              accountName: loginTask.accountName,
-              qrCode: nextTask.qrCode,
-              expiresAt: nextTask.expiresAt
-            });
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          void message.error((err as Error).message);
-        }
-      } finally {
-        running = false;
-        if (!cancelled) {
-          setRefreshingLoginTask(false);
-        }
+    const socket = io(API_BASE, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      auth: {
+        token: session.accessToken
       }
-    };
+    });
 
-    void tick();
-    const timer = window.setInterval(() => {
-      void tick();
-    }, 5000);
+    socket.on("wa.account.updated", (event: {
+      waAccountId: string;
+      accountStatus: string;
+      connectionState: string;
+      qrCode: string | null;
+      heartbeatAt: string | null;
+      disconnectReason: string | null;
+      autoReconnectCount: number;
+      sessionRef: string | null;
+    }) => {
+      let connectedAccountName: string | null = null;
+
+      if (selectedAccount?.waAccountId === event.waAccountId) {
+        setHealth((current) => current && current.waAccountId === event.waAccountId
+          ? {
+              ...current,
+              accountStatus: event.accountStatus,
+              session: current.session
+                ? {
+                    ...current.session,
+                    connectionState: event.connectionState,
+                    heartbeatAt: event.heartbeatAt,
+                    disconnectReason: event.disconnectReason,
+                    autoReconnectCount: event.autoReconnectCount,
+                    sessionRef: event.sessionRef ?? current.session.sessionRef,
+                    qrCode: event.qrCode ?? current.session.qrCode
+                  }
+                : {
+                    connectionState: event.connectionState,
+                    sessionRef: event.sessionRef ?? "",
+                    loginMode: "admin_scan",
+                    heartbeatAt: event.heartbeatAt,
+                    disconnectReason: event.disconnectReason,
+                    autoReconnectCount: event.autoReconnectCount,
+                    qrCode: event.qrCode
+                  }
+            }
+          : current);
+      }
+
+      setLoginTask((current) => {
+        if (!current || current.waAccountId !== event.waAccountId) return current;
+        const isConnected = event.accountStatus === "online" || event.connectionState === "open";
+        if (isConnected) {
+          connectedAccountName = current.accountName;
+          return null;
+        }
+        if (event.qrCode && event.qrCode !== current.qrCode) {
+          return {
+            ...current,
+            qrCode: event.qrCode
+          };
+        }
+        return current;
+      });
+
+      if (connectedAccountName) {
+        void message.success(`WA账号 ${connectedAccountName} 已连接成功`);
+        onReload();
+      }
+    });
 
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+      socket.close();
     };
-  }, [loginTask, onReload]);
+  }, [onReload, selectedAccount?.waAccountId]);
 
   useEffect(() => {
     if (!loginTask) {
@@ -187,6 +198,39 @@ export function WaAccountsPane({
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
   }, [loginTask]);
+
+  useEffect(() => {
+    if (!loginTask || refreshingLoginTask || qrCountdownMs > 0) return;
+
+    let cancelled = false;
+    setRefreshingLoginTask(true);
+    void (async () => {
+      try {
+        const nextTask = await createWaAccountLoginTask(loginTask.waAccountId);
+        if (!cancelled) {
+          setLoginTask((current) => current && current.waAccountId === loginTask.waAccountId
+            ? {
+                ...current,
+                qrCode: nextTask.qrCode,
+                expiresAt: nextTask.expiresAt
+              }
+            : current);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          void message.error((err as Error).message);
+        }
+      } finally {
+        if (!cancelled) {
+          setRefreshingLoginTask(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loginTask, qrCountdownMs, refreshingLoginTask]);
 
   const countdownLabel = (() => {
     const totalSeconds = Math.ceil(qrCountdownMs / 1000);

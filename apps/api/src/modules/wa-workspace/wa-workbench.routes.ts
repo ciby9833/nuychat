@@ -5,6 +5,7 @@
  * 交互:
  * - 使用 wa-auth 强校验租户登录态与 WA 座席资格。
  * - 调用 wa-workbench.service 处理会话列表、接管、发送消息等业务。
+ * - 调用 wa-runtime.service 暴露 WA provider 可用性，避免未部署时进入 WA 工作台。
  */
 import type { FastifyInstance } from "fastify";
 
@@ -23,8 +24,14 @@ import {
   releaseWorkbenchConversation,
   takeOverWorkbenchConversation
 } from "./wa-workbench.service.js";
+import { getWaRuntimeStatus } from "./wa-runtime.service.js";
 
 export async function waWorkbenchRoutes(app: FastifyInstance) {
+  app.get("/api/wa/workbench/runtime", async (req) => {
+    void requireWaSeatAccess(app, req);
+    return getWaRuntimeStatus();
+  });
+
   app.get("/api/wa/workbench/accounts", async (req) => {
     const auth = requireWaSeatAccess(app, req);
     return withTenantTransaction(auth.tenantId, async (trx) => listWorkbenchAccounts(trx, auth));
@@ -32,6 +39,10 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
 
   app.post("/api/wa/workbench/accounts/:waAccountId/login-task", async (req) => {
     const auth = requireWaSeatAccess(app, req);
+    const runtime = getWaRuntimeStatus();
+    if (!runtime.available) {
+      throw app.httpErrors.serviceUnavailable("WhatsApp provider is not available");
+    }
     const { waAccountId } = req.params as { waAccountId: string };
     return withTenantTransaction(auth.tenantId, async (trx) =>
       createWorkbenchLoginTask(trx, { ...auth, waAccountId })

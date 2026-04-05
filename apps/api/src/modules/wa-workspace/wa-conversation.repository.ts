@@ -39,6 +39,18 @@ function mapGap(row: Record<string, unknown>) {
   };
 }
 
+function safeParseRecord(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
 export async function getWaConversationById(trx: Knex.Transaction, tenantId: string, waConversationId: string) {
   const row = await trx("wa_conversations as c")
     .leftJoin("tenant_memberships as tm", function joinReplier() {
@@ -120,6 +132,123 @@ export async function findWaMessageByProviderId(
   };
 }
 
+export async function updateWaMessageByProviderId(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waAccountId: string;
+    providerMessageId: string;
+    deliveryStatus?: string | null;
+    providerPayload?: Record<string, unknown>;
+    bodyText?: string | null;
+  }
+) {
+  const updates: Record<string, unknown> = {
+    updated_at: trx.fn.now()
+  };
+
+  if (typeof input.deliveryStatus === "string" && input.deliveryStatus.trim()) {
+    updates.delivery_status = input.deliveryStatus.trim();
+  }
+  if (input.bodyText !== undefined) {
+    updates.body_text = input.bodyText ?? null;
+  }
+  if (input.providerPayload) {
+    updates.provider_payload = JSON.stringify(input.providerPayload);
+  }
+
+  const [row] = await trx("wa_messages")
+    .where({
+      tenant_id: input.tenantId,
+      wa_account_id: input.waAccountId,
+      provider_message_id: input.providerMessageId
+    })
+    .update(updates)
+    .returning("*");
+
+  return row ?? null;
+}
+
+export async function upsertWaMessageReceipt(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waMessageId: string;
+    userJid: string;
+    receiptStatus: string;
+    receiptTs?: number | null;
+    readTs?: number | null;
+    playedTs?: number | null;
+    pendingDeviceJids?: string[];
+    deliveredDeviceJids?: string[];
+    providerPayload?: Record<string, unknown>;
+  }
+) {
+  const existing = await trx("wa_message_receipts")
+    .where({
+      tenant_id: input.tenantId,
+      wa_message_id: input.waMessageId,
+      user_jid: input.userJid
+    })
+    .first<Record<string, unknown> | undefined>();
+
+  const patch = {
+    receipt_status: input.receiptStatus,
+    receipt_ts: input.receiptTs ?? null,
+    read_ts: input.readTs ?? null,
+    played_ts: input.playedTs ?? null,
+    pending_device_jids: JSON.stringify(input.pendingDeviceJids ?? []),
+    delivered_device_jids: JSON.stringify(input.deliveredDeviceJids ?? []),
+    provider_payload: JSON.stringify(input.providerPayload ?? {}),
+    updated_at: trx.fn.now()
+  };
+
+  if (existing) {
+    const [row] = await trx("wa_message_receipts")
+      .where({ receipt_id: existing.receipt_id })
+      .update(patch)
+      .returning("*");
+    return row;
+  }
+
+  const [row] = await trx("wa_message_receipts")
+    .insert({
+      tenant_id: input.tenantId,
+      wa_message_id: input.waMessageId,
+      user_jid: input.userJid,
+      ...patch
+    })
+    .returning("*");
+  return row;
+}
+
+export async function getWaMessageReceiptSummary(
+  trx: Knex.Transaction,
+  input: { tenantId: string; waMessageId: string }
+) {
+  const rows = await trx("wa_message_receipts")
+    .where({ tenant_id: input.tenantId, wa_message_id: input.waMessageId })
+    .orderBy("updated_at", "asc");
+
+  const statusCounts: Record<string, number> = {};
+  let latestStatus: string | null = null;
+  let latestAt: string | null = null;
+
+  for (const row of rows) {
+    const status = String(row.receipt_status);
+    statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+    latestStatus = status;
+    latestAt = row.updated_at ? new Date(String(row.updated_at)).toISOString() : latestAt;
+  }
+
+  return {
+    totalReceipts: rows.length,
+    latestStatus,
+    latestAt,
+    statusCounts
+  };
+}
+
 export async function getConversationMessages(
   trx: Knex.Transaction,
   tenantId: string,
@@ -132,7 +261,7 @@ export async function getConversationMessages(
     .limit(limit);
 
   const waMessageIds = rows.map((row) => String(row.wa_message_id));
-  const [attachmentRows, reactionRows] = await Promise.all([
+  const [attachmentRows, reactionRows, receiptRows] = await Promise.all([
     waMessageIds.length === 0
       ? []
       : trx("wa_message_attachments")
@@ -146,7 +275,14 @@ export async function getConversationMessages(
           .where({ tenant_id: tenantId })
           .whereIn("wa_message_id", waMessageIds)
           .select("*")
-          .orderBy("created_at", "asc")
+          .orderBy("created_at", "asc"),
+    waMessageIds.length === 0
+      ? []
+      : trx("wa_message_receipts")
+          .where({ tenant_id: tenantId })
+          .whereIn("wa_message_id", waMessageIds)
+          .select("*")
+          .orderBy("updated_at", "asc")
   ]);
 
   const attachmentsByMessage = new Map<string, Array<Record<string, unknown>>>();
@@ -165,41 +301,74 @@ export async function getConversationMessages(
     reactionsByMessage.set(waMessageId, bucket);
   }
 
-  return rows.map((row) => ({
-    waMessageId: String(row.wa_message_id),
-    providerMessageId: row.provider_message_id ? String(row.provider_message_id) : null,
-    direction: String(row.direction),
-    messageType: String(row.message_type),
-    messageScene: String(row.message_scene),
-    senderJid: row.sender_jid ? String(row.sender_jid) : null,
-    senderMemberId: row.sender_member_id ? String(row.sender_member_id) : null,
-    senderRole: String(row.sender_role),
-    participantJid: row.participant_jid ? String(row.participant_jid) : null,
-    quotedMessageId: row.quoted_message_id ? String(row.quoted_message_id) : null,
-    bodyText: row.body_text ? String(row.body_text) : null,
-    logicalSeq: Number(row.logical_seq ?? 0),
-    deliveryStatus: String(row.delivery_status),
-    attachments: (attachmentsByMessage.get(String(row.wa_message_id)) ?? []).map((item) => ({
-      attachmentId: String(item.attachment_id),
-      attachmentType: String(item.attachment_type),
-      mimeType: item.mime_type ? String(item.mime_type) : null,
-      fileName: item.file_name ? String(item.file_name) : null,
-      fileSize: item.file_size ? Number(item.file_size) : null,
-      width: item.width ? Number(item.width) : null,
-      height: item.height ? Number(item.height) : null,
-      durationMs: item.duration_ms ? Number(item.duration_ms) : null,
-      storageUrl: item.storage_url ? String(item.storage_url) : null,
-      previewUrl: item.preview_url ? String(item.preview_url) : null
-    })),
-    reactions: (reactionsByMessage.get(String(row.wa_message_id)) ?? []).map((item) => ({
-      reactionId: String(item.reaction_id),
-      actorJid: item.actor_jid ? String(item.actor_jid) : null,
-      actorMemberId: item.actor_member_id ? String(item.actor_member_id) : null,
-      emoji: String(item.emoji),
-      createdAt: new Date(String(item.created_at)).toISOString()
-    })),
-    createdAt: new Date(String(row.created_at)).toISOString()
-  }));
+  const receiptsByMessage = new Map<string, Array<Record<string, unknown>>>();
+  for (const row of receiptRows) {
+    const waMessageId = String(row.wa_message_id);
+    const bucket = receiptsByMessage.get(waMessageId) ?? [];
+    bucket.push(row as Record<string, unknown>);
+    receiptsByMessage.set(waMessageId, bucket);
+  }
+
+  return rows.map((row) => {
+    const receiptItems = (receiptsByMessage.get(String(row.wa_message_id)) ?? []).map((item) => ({
+      receiptId: String(item.receipt_id),
+      userJid: String(item.user_jid),
+      receiptStatus: String(item.receipt_status),
+      receiptAt: item.receipt_ts ? new Date(Number(item.receipt_ts)).toISOString() : null,
+      readAt: item.read_ts ? new Date(Number(item.read_ts)).toISOString() : null,
+      playedAt: item.played_ts ? new Date(Number(item.played_ts)).toISOString() : null
+    }));
+    const latestReceipt = receiptItems[receiptItems.length - 1] ?? null;
+    const statusCounts = receiptItems.reduce<Record<string, number>>((acc, item) => {
+      acc[item.receiptStatus] = (acc[item.receiptStatus] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    return {
+      waMessageId: String(row.wa_message_id),
+      providerMessageId: row.provider_message_id ? String(row.provider_message_id) : null,
+      direction: String(row.direction),
+      messageType: String(row.message_type),
+      messageScene: String(row.message_scene),
+      senderJid: row.sender_jid ? String(row.sender_jid) : null,
+      senderMemberId: row.sender_member_id ? String(row.sender_member_id) : null,
+      senderRole: String(row.sender_role),
+      participantJid: row.participant_jid ? String(row.participant_jid) : null,
+      quotedMessageId: row.quoted_message_id ? String(row.quoted_message_id) : null,
+      bodyText: row.body_text ? String(row.body_text) : null,
+      logicalSeq: Number(row.logical_seq ?? 0),
+      deliveryStatus: String(row.delivery_status),
+      receiptSummary: receiptItems.length > 0
+        ? {
+            totalReceipts: receiptItems.length,
+            latestStatus: latestReceipt?.receiptStatus ?? null,
+            latestAt: latestReceipt?.playedAt ?? latestReceipt?.readAt ?? latestReceipt?.receiptAt ?? null,
+            statusCounts
+          }
+        : (safeParseRecord(row.provider_payload)?.receiptSummary ?? null),
+      receipts: receiptItems,
+      attachments: (attachmentsByMessage.get(String(row.wa_message_id)) ?? []).map((item) => ({
+        attachmentId: String(item.attachment_id),
+        attachmentType: String(item.attachment_type),
+        mimeType: item.mime_type ? String(item.mime_type) : null,
+        fileName: item.file_name ? String(item.file_name) : null,
+        fileSize: item.file_size ? Number(item.file_size) : null,
+        width: item.width ? Number(item.width) : null,
+        height: item.height ? Number(item.height) : null,
+        durationMs: item.duration_ms ? Number(item.duration_ms) : null,
+        storageUrl: item.storage_url ? String(item.storage_url) : null,
+        previewUrl: item.preview_url ? String(item.preview_url) : null
+      })),
+      reactions: (reactionsByMessage.get(String(row.wa_message_id)) ?? []).map((item) => ({
+        reactionId: String(item.reaction_id),
+        actorJid: item.actor_jid ? String(item.actor_jid) : null,
+        actorMemberId: item.actor_member_id ? String(item.actor_member_id) : null,
+        emoji: String(item.emoji),
+        createdAt: new Date(String(item.created_at)).toISOString()
+      })),
+      createdAt: new Date(String(row.created_at)).toISOString()
+    };
+  });
 }
 
 export async function getConversationMembers(

@@ -18,6 +18,7 @@ import {
   apiFetch,
   apiPut,
   apiPost,
+  getWaWorkbenchRuntime,
   getRealtimeReplay,
   markConversationRead,
   logoutSession,
@@ -105,6 +106,7 @@ export function useWorkspaceDashboard() {
   const tenantSlug = session?.tenantSlug ?? "";
   const agentId = session?.agentId ?? null;
   const waSeatEnabled = Boolean(session?.waSeatEnabled);
+  const [waRuntimeAvailable, setWaRuntimeAvailable] = useState(false);
   const memberships = session?.memberships ?? [];
   const workspaceMemberships = memberships.filter((membership) => membership.agentId || membership.waSeatEnabled);
 
@@ -175,6 +177,28 @@ export function useWorkspaceDashboard() {
   const [colleagues, setColleagues] = useState<AgentColleague[]>([]);
 
   const effectiveView: SideView = view === "mine" && !agentId ? "all" : view;
+
+  useEffect(() => {
+    if (!session?.waSeatEnabled) {
+      setWaRuntimeAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    void getWaWorkbenchRuntime(session)
+      .then((runtime) => {
+        if (!cancelled) {
+          setWaRuntimeAvailable(Boolean(runtime.available));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWaRuntimeAvailable(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   const loadConversations = useCallback(async () => {
     if (!session) return;
@@ -1187,6 +1211,7 @@ export function useWorkspaceDashboard() {
     tenantSlug,
     agentId,
     waSeatEnabled,
+    waRuntimeAvailable,
     memberships: workspaceMemberships,
     socketStatus,
     view,

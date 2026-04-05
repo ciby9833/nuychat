@@ -58,6 +58,7 @@ export function AgentsTab() {
             children: (
               <MembersPane
                 members={data.members}
+                waAvailable={Boolean(data.waRuntime?.available)}
                 loading={data.loading}
                 onReload={() => { void data.load(); }}
                 onCreate={() => setShowMemberModal(true)}
@@ -65,7 +66,7 @@ export function AgentsTab() {
               />
             )
           },
-          {
+          ...(data.waRuntime?.available ? [{
             key: "wa_accounts",
             label: (
               <Space>
@@ -82,7 +83,7 @@ export function AgentsTab() {
                 onReload={() => { void data.load(); }}
               />
             )
-          }
+          }] : [])
         ]}
       />
 

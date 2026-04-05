@@ -75,7 +75,7 @@ export function LoginPage() {
         memberships: data.memberships
       };
       writeSession(session);
-      navigate(data.user.waSeatEnabled && !data.user.agentId ? "/dashboard/wa" : "/dashboard");
+      navigate("/dashboard");
     } catch (err) {
       setError((err as Error).message);
     } finally {

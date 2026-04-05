@@ -7,8 +7,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { io } from "socket.io-client";
 
 import type { Session } from "../../types";
+import { API_BASE_URL } from "../../api";
 import {
   forceAssignWaConversation,
   getWaWorkbenchConversationDetail,
@@ -99,6 +101,67 @@ export function useWaWorkspace(session: Session | null) {
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  useEffect(() => {
+    if (!session?.accessToken || !session.waSeatEnabled) return;
+
+    const socket = io(API_BASE_URL, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      auth: {
+        token: session.accessToken
+      }
+    });
+
+    socket.on("wa.account.updated", (event: {
+      waAccountId: string;
+      accountStatus: string;
+      connectionState: string;
+    }) => {
+      setAccounts((current) => current.map((item) => (
+        item.waAccountId === event.waAccountId
+          ? {
+              ...item,
+              accountStatus: event.accountStatus
+            }
+          : item
+      )));
+    });
+
+    socket.on("wa.message.updated", (event: {
+      waConversationId: string;
+      waMessageId: string;
+      providerMessageId: string | null;
+      deliveryStatus: string;
+      receiptSummary: {
+        totalReceipts: number;
+        latestStatus: string | null;
+        latestAt: string | null;
+        statusCounts: Record<string, number>;
+      } | null;
+    }) => {
+      if (event.waConversationId !== selectedConversationId) return;
+      setDetail((current) => {
+        if (!current || current.conversation.waConversationId !== event.waConversationId) return current;
+        return {
+          ...current,
+          messages: current.messages.map((message) => (
+            message.waMessageId === event.waMessageId || message.providerMessageId === event.providerMessageId
+              ? {
+                  ...message,
+                  deliveryStatus: event.deliveryStatus,
+                  receiptSummary: event.receiptSummary ?? message.receiptSummary
+                }
+              : message
+          ))
+        };
+      });
+    });
+
+    return () => {
+      socket.close();
+    };
+  }, [selectedConversationId, session]);
 
   const selectedConversation = useMemo(
     () => conversations.find((item) => item.waConversationId === selectedConversationId) ?? null,

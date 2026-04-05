@@ -84,6 +84,29 @@ type TicketSlaBreachedEvent = RealtimeEventBase & {
   occurredAt: string;
 };
 
+type WaAccountUpdatedEvent = RealtimeEventBase & {
+  tenantId: string;
+  waAccountId: string;
+  accountStatus: string;
+  connectionState: string;
+  sessionRef: string | null;
+  heartbeatAt: string | null;
+  qrCode: string | null;
+  disconnectReason: string | null;
+  autoReconnectCount: number;
+  occurredAt: string;
+};
+
+type WaMessageUpdatedEvent = RealtimeEventBase & {
+  tenantId: string;
+  waConversationId: string;
+  waMessageId: string;
+  providerMessageId: string | null;
+  deliveryStatus: string;
+  receiptSummary: Record<string, unknown> | null;
+  occurredAt: string;
+};
+
 export type RealtimeEvents = {
   "conversation.created": ConversationCreatedEvent;
   "conversation.updated": ConversationUpdatedEvent;
@@ -91,6 +114,8 @@ export type RealtimeEvents = {
   "message.sent": MessageSentEvent;
   "message.updated": MessageUpdatedEvent;
   "task.updated": TaskUpdatedEvent;
+  "wa.account.updated": WaAccountUpdatedEvent;
+  "wa.message.updated": WaMessageUpdatedEvent;
 };
 
 class RealtimeEventBus extends EventEmitter {
@@ -233,6 +258,8 @@ export type {
   ConversationUpdatedEvent,
   MessageReceivedEvent,
   MessageSentEvent,
+  WaAccountUpdatedEvent,
+  WaMessageUpdatedEvent,
   TicketSlaWarningEvent,
   TicketSlaBreachedEvent,
   TaskUpdatedEvent

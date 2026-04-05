@@ -1,17 +1,11 @@
 /**
  * 作用:
- * - 定义 WA provider 适配层的统一契约。
+ * - 定义内嵌 Baileys 运行时对业务层暴露的最小契约。
  *
  * 交互:
- * - 由具体 provider adapter 实现。
- * - 业务层仅依赖这里的标准会话/消息能力，不直接依赖第三方 payload。
+ * - 由当前唯一的 Baileys adapter 实现。
+ * - 业务层只依赖这里的登录、发送、历史补偿能力。
  */
-export type WaProviderCapability =
-  | "session.login"
-  | "session.reconnect"
-  | "message.send_text"
-  | "message.receive_text"
-  | "history.sync";
 
 export type WaLoginSessionTicket = {
   sessionRef: string;
@@ -19,7 +13,7 @@ export type WaLoginSessionTicket = {
   expiresAt: string;
 };
 
-export type WaProviderInboundMessage = {
+export type WaNormalizedMessage = {
   providerMessageId: string;
   chatJid: string;
   senderJid: string | null;
@@ -27,7 +21,8 @@ export type WaProviderInboundMessage = {
   messageType: "text" | "image" | "video" | "audio" | "document" | "reaction";
   bodyText: string | null;
   providerTs: number;
-  direction: "inbound";
+  direction: "inbound" | "outbound";
+  senderRole: "customer" | "group_member" | "employee" | "wa_account";
   conversationType: "direct" | "group";
   subject?: string | null;
   contactJid?: string | null;
@@ -47,18 +42,6 @@ export type WaProviderInboundMessage = {
   } | null;
 };
 
-export type WaProviderWebhookResult = {
-  eventType: string;
-  sessionState?: string | null;
-  sessionQrCode?: string | null;
-  messages: WaProviderInboundMessage[];
-  groupParticipants: Array<{
-    chatJid: string;
-    participantJid: string;
-    action: "add" | "remove" | "promote" | "demote";
-  }>;
-};
-
 export type WaProviderSendTextResult = {
   providerMessageId: string;
   deliveryStatus: string;
@@ -69,17 +52,17 @@ export type WaProviderSendMediaResult = WaProviderSendTextResult;
 export type WaProviderSendReactionResult = WaProviderSendTextResult;
 
 export type WaProviderHistoryResult = {
-  messages: WaProviderInboundMessage[];
+  messages: WaNormalizedMessage[];
   nextCursor?: string | null;
 };
 
 export interface WaProviderAdapter {
-  readonly providerKey: string;
-  readonly capabilities: Set<WaProviderCapability>;
   createLoginTicket(input: { tenantId: string; waAccountId: string; instanceKey: string }): Promise<WaLoginSessionTicket>;
-  restartSession(input: { instanceKey: string }): Promise<{ connectionState: string }>;
+  restartSession(input: { instanceKey: string; tenantId?: string; waAccountId?: string }): Promise<{ connectionState: string }>;
   sendText(input: {
     instanceKey: string;
+    tenantId?: string;
+    waAccountId?: string;
     to: string;
     text: string;
     delayMs?: number;
@@ -87,6 +70,8 @@ export interface WaProviderAdapter {
   }): Promise<WaProviderSendTextResult>;
   sendMedia(input: {
     instanceKey: string;
+    tenantId?: string;
+    waAccountId?: string;
     to: string;
     mediaType: "image" | "video" | "audio" | "document";
     mimeType: string;
@@ -98,15 +83,18 @@ export interface WaProviderAdapter {
   }): Promise<WaProviderSendMediaResult>;
   sendReaction(input: {
     instanceKey: string;
+    tenantId?: string;
+    waAccountId?: string;
     remoteJid: string;
     targetMessageId: string;
     emoji: string;
   }): Promise<WaProviderSendReactionResult>;
   fetchHistory(input: {
+    tenantId?: string;
+    waAccountId?: string;
     instanceKey: string;
     chatJid: string;
     cursor?: string | null;
     limit?: number;
   }): Promise<WaProviderHistoryResult>;
-  parseWebhook(input: { body: Record<string, unknown> }): WaProviderWebhookResult;
 }

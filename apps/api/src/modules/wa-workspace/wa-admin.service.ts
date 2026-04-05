@@ -4,7 +4,7 @@
  *
  * 交互:
  * - 依赖 wa-account.repository 管理账号与登录任务。
- * - 依赖 provider-registry 获取 provider 登录 ticket。
+ * - 依赖 provider-registry 获取当前 WA 接入实现的登录/重连能力。
  */
 import type { Knex } from "knex";
 
@@ -51,7 +51,7 @@ export async function createAdminLoginTask(
     throw new Error("WA account not found");
   }
 
-  const provider = getWaProviderAdapter(account.providerKey);
+  const provider = getWaProviderAdapter();
   const ticket = await provider.createLoginTicket({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
@@ -115,22 +115,22 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
     session: session
       ? {
           connectionState: session.connection_state,
-        sessionRef: session.session_ref,
-        loginMode: session.login_mode,
-        heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
-        disconnectReason: session.disconnect_reason ?? null,
-        autoReconnectCount: Number(session.auto_reconnect_count ?? 0),
-        qrCode: (() => {
-          try {
-            const meta = typeof session.session_meta === "string"
-              ? JSON.parse(session.session_meta)
-              : (session.session_meta as Record<string, unknown> | null);
-            return typeof meta?.qrCode === "string" ? meta.qrCode : null;
-          } catch {
-            return null;
-          }
-        })()
-      }
+          sessionRef: session.session_ref,
+          loginMode: session.login_mode,
+          heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
+          disconnectReason: session.disconnect_reason ?? null,
+          autoReconnectCount: Number(session.auto_reconnect_count ?? 0),
+          qrCode: (() => {
+            try {
+              const meta = typeof session.session_meta === "string"
+                ? JSON.parse(session.session_meta)
+                : (session.session_meta as Record<string, unknown> | null);
+              return typeof meta?.qrCode === "string" ? meta.qrCode : null;
+            } catch {
+              return null;
+            }
+          })()
+        }
       : null
   };
 }
@@ -144,8 +144,12 @@ export async function reconnectAdminWaAccount(trx: Knex.Transaction, input: { te
     throw new Error("WA account has never connected. Please complete QR login first");
   }
 
-  const provider = getWaProviderAdapter(String(account.provider_key));
-  const result = await provider.restartSession({ instanceKey: String(account.instance_key) });
+  const provider = getWaProviderAdapter();
+  const result = await provider.restartSession({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    instanceKey: String(account.instance_key)
+  });
 
   await trx("wa_account_sessions")
     .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })

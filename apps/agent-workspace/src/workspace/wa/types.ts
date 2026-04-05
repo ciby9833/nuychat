@@ -69,6 +69,15 @@ export type WaReaction = {
   createdAt: string;
 };
 
+export type WaReceipt = {
+  receiptId: string;
+  userJid: string;
+  receiptStatus: string;
+  receiptAt: string | null;
+  readAt: string | null;
+  playedAt: string | null;
+};
+
 export type WaMessageItem = {
   waMessageId: string;
   providerMessageId: string | null;
@@ -83,6 +92,13 @@ export type WaMessageItem = {
   bodyText: string | null;
   logicalSeq: number;
   deliveryStatus: string;
+  receiptSummary: {
+    totalReceipts: number;
+    latestStatus: string | null;
+    latestAt: string | null;
+    statusCounts: Record<string, number>;
+  } | null;
+  receipts: WaReceipt[];
   attachments: WaAttachment[];
   reactions: WaReaction[];
   createdAt: string;

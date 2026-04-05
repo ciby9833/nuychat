@@ -18,12 +18,14 @@ import { ROLE_COLOR, getActionErrorMessage, roleLabel, roleOptions } from "../ty
 
 export function MembersPane({
   members,
+  waAvailable,
   loading,
   onReload,
   onCreate,
   onEnableAgent
 }: {
   members: MemberListItem[];
+  waAvailable: boolean;
   loading: boolean;
   onReload: () => void;
   onCreate: () => void;
@@ -111,27 +113,31 @@ export function MembersPane({
               title: "WhatsApp座席",
               width: 132,
               render: (_, row) => (
-                <Button
-                  size="small"
-                  type={row.waSeatEnabled ? "primary" : "default"}
-                  ghost={!row.waSeatEnabled}
-                  disabled={!!row.resignedAt}
-                  onClick={() => {
-                    void (async () => {
-                      try {
-                        await patchMember(row.membershipId, {
-                          waSeatEnabled: !row.waSeatEnabled
-                        });
-                        void message.success(`WhatsApp座席已${!row.waSeatEnabled ? "启用" : "关闭"}`);
-                        onReload();
-                      } catch (err) {
-                        void message.error((err as Error).message);
-                      }
-                    })();
-                  }}
-                >
-                  {row.waSeatEnabled ? "已启用" : "未启用"}
-                </Button>
+                waAvailable ? (
+                  <Button
+                    size="small"
+                    type={row.waSeatEnabled ? "primary" : "default"}
+                    ghost={!row.waSeatEnabled}
+                    disabled={!!row.resignedAt}
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          await patchMember(row.membershipId, {
+                            waSeatEnabled: !row.waSeatEnabled
+                          });
+                          void message.success(`WhatsApp座席已${!row.waSeatEnabled ? "启用" : "关闭"}`);
+                          onReload();
+                        } catch (err) {
+                          void message.error((err as Error).message);
+                        }
+                      })();
+                    }}
+                  >
+                    {row.waSeatEnabled ? "已启用" : "未启用"}
+                  </Button>
+                ) : (
+                  <Tag>{row.waSeatEnabled ? "已配置" : "未部署"}</Tag>
+                )
               )
             },
             {
@@ -236,10 +242,13 @@ export function MembersPane({
             ]} />
           </Form.Item>
           <Form.Item label="WhatsApp座席" name="waSeatEnabled">
-            <Select options={[
-              { value: true, label: "启用" },
-              { value: false, label: "关闭" }
-            ]} />
+            <Select
+              disabled={!waAvailable}
+              options={[
+                { value: true, label: "启用" },
+                { value: false, label: "关闭" }
+              ]}
+            />
           </Form.Item>
         </Form>
       </Modal>

@@ -15,7 +15,14 @@
  */
 
 import { apiHeaders, writeSession } from "./session";
-import type { ConversationPreviewDetail, ConversationViewSummaries, MessageAttachment, RealtimeReplayEvent, Session } from "./types";
+import type {
+  ConversationPreviewDetail,
+  ConversationViewSummaries,
+  MessageAttachment,
+  RealtimeReplayEvent,
+  Session,
+  WaRuntimeStatus
+} from "./types";
 
 export const API_BASE_URL = readRequiredEnv("VITE_API_BASE_URL");
 
@@ -105,6 +112,10 @@ export async function apiFetch<T>(path: string, session: Session): Promise<T> {
 
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json() as Promise<T>;
+}
+
+export function getWaWorkbenchRuntime(session: Session) {
+  return apiFetch<WaRuntimeStatus>("/api/wa/workbench/runtime", session);
 }
 
 export async function apiPost(
