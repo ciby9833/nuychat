@@ -27,6 +27,10 @@ export function readRequiredBaseUrlEnv(name: string): string {
   return readRequiredEnv(name).replace(/\/$/, "");
 }
 
+export function readOptionalBaseUrlEnv(name: string): string | undefined {
+  return readOptionalEnv(name)?.replace(/\/$/, "");
+}
+
 export function readCorsOriginEnv(): string | string[] {
   const value = readRequiredEnv("CORS_ORIGIN");
   if (value === "*") return value;

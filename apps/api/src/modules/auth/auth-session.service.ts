@@ -9,6 +9,7 @@ export type AccessPayload = {
   tenantId: string;
   membershipId: string;
   role: string;
+  waSeatEnabled?: boolean;
   agentId?: string | null;
   sessionId: string;
   type: "access";
@@ -20,6 +21,7 @@ export type RefreshPayload = {
   tenantId: string;
   membershipId: string;
   role: string;
+  waSeatEnabled?: boolean;
   agentId?: string | null;
   sessionId: string;
   jti: string;
@@ -56,6 +58,7 @@ type MembershipRow = {
   membership_id: string;
   tenant_id: string;
   role: string;
+  wa_seat_enabled: boolean;
   tenant_slug: string;
   tenant_name: string;
   is_default: boolean;
@@ -248,6 +251,7 @@ export async function getIdentityMemberships(identityId: string): Promise<Member
       "tm.membership_id",
       "tm.tenant_id",
       "tm.role",
+      "tm.wa_seat_enabled",
       "tm.is_default",
       "t.slug as tenant_slug",
       "t.name as tenant_name"

@@ -1,0 +1,181 @@
+/**
+ * 作用:
+ * - 封装 WA 账号、session、成员绑定、登录任务相关数据库访问。
+ *
+ * 交互:
+ * - 被 wa-admin.service 与 wa-workbench.service 调用。
+ * - 仅处理持久化，不做权限与业务编排。
+ */
+import type { Knex } from "knex";
+
+function mapAccount(row: Record<string, unknown>) {
+  return {
+    waAccountId: String(row.wa_account_id),
+    instanceKey: String(row.instance_key),
+    displayName: String(row.display_name),
+    phoneE164: row.phone_e164 ? String(row.phone_e164) : null,
+    providerKey: String(row.provider_key) as "evolution",
+    accountStatus: String(row.account_status),
+    riskLevel: String(row.risk_level),
+    primaryOwnerMembershipId: row.primary_owner_membership_id ? String(row.primary_owner_membership_id) : null,
+    lastConnectedAt: row.last_connected_at ? new Date(String(row.last_connected_at)).toISOString() : null,
+    lastDisconnectedAt: row.last_disconnected_at ? new Date(String(row.last_disconnected_at)).toISOString() : null
+  };
+}
+
+export async function insertWaAccount(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    instanceKey: string;
+    displayName: string;
+    phoneE164?: string | null;
+    primaryOwnerMembershipId?: string | null;
+  }
+) {
+  const [row] = await trx("wa_accounts")
+    .insert({
+      tenant_id: input.tenantId,
+      instance_key: input.instanceKey,
+      display_name: input.displayName,
+      phone_e164: input.phoneE164 ?? null,
+      primary_owner_membership_id: input.primaryOwnerMembershipId ?? null,
+      provider_key: "evolution"
+    })
+    .returning("*");
+  return mapAccount(row as Record<string, unknown>);
+}
+
+export async function listWaAccounts(trx: Knex.Transaction, tenantId: string) {
+  const rows = await trx("wa_accounts").where({ tenant_id: tenantId }).orderBy("created_at", "desc");
+  return rows.map((row) => mapAccount(row as Record<string, unknown>));
+}
+
+export async function getWaAccountById(trx: Knex.Transaction, tenantId: string, waAccountId: string) {
+  const row = await trx("wa_accounts").where({ tenant_id: tenantId, wa_account_id: waAccountId }).first();
+  return row ? mapAccount(row as Record<string, unknown>) : null;
+}
+
+export async function upsertWaAccountSession(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waAccountId: string;
+    sessionRef: string;
+    loginMode: string;
+    connectionState: string;
+    qrCode?: string | null;
+  }
+) {
+  const existing = await trx("wa_account_sessions")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .orderBy("created_at", "desc")
+    .first<Record<string, unknown> | undefined>();
+
+  if (existing) {
+    const [row] = await trx("wa_account_sessions")
+      .where({ session_id: existing.session_id })
+      .update({
+        session_ref: input.sessionRef,
+        login_mode: input.loginMode,
+        connection_state: input.connectionState,
+        last_qr_at: trx.fn.now(),
+        session_meta: JSON.stringify({ qrCode: input.qrCode ?? null }),
+        updated_at: trx.fn.now()
+      })
+      .returning("*");
+    return row;
+  }
+
+  const [row] = await trx("wa_account_sessions")
+    .insert({
+      tenant_id: input.tenantId,
+      wa_account_id: input.waAccountId,
+      session_ref: input.sessionRef,
+      login_mode: input.loginMode,
+      connection_state: input.connectionState,
+      last_qr_at: trx.fn.now(),
+      session_meta: JSON.stringify({ qrCode: input.qrCode ?? null })
+    })
+    .returning("*");
+  return row;
+}
+
+export async function createWaLoginTask(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waAccountId: string;
+    requestedByMembershipId: string;
+    loginMode: string;
+    sessionRef: string;
+    qrCode: string;
+    expiresAt: string;
+  }
+) {
+  const [row] = await trx("wa_login_tasks")
+    .insert({
+      tenant_id: input.tenantId,
+      wa_account_id: input.waAccountId,
+      requested_by_membership_id: input.requestedByMembershipId,
+      login_mode: input.loginMode,
+      task_status: "pending",
+      session_ref: input.sessionRef,
+      qr_code: input.qrCode,
+      expires_at: input.expiresAt
+    })
+    .returning("*");
+  return row;
+}
+
+export async function replaceWaAccountMembers(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waAccountId: string;
+    memberIds: string[];
+  }
+) {
+  await trx("wa_account_members").where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId }).del();
+  if (input.memberIds.length === 0) return [];
+  const rows = input.memberIds.map((membershipId) => ({
+    tenant_id: input.tenantId,
+    wa_account_id: input.waAccountId,
+    membership_id: membershipId
+  }));
+  return trx("wa_account_members").insert(rows).returning("*");
+}
+
+export async function updateWaAccountOwner(
+  trx: Knex.Transaction,
+  input: { tenantId: string; waAccountId: string; primaryOwnerMembershipId: string | null }
+) {
+  const [row] = await trx("wa_accounts")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .update({
+      primary_owner_membership_id: input.primaryOwnerMembershipId,
+      updated_at: trx.fn.now()
+    })
+    .returning("*");
+  return row ? mapAccount(row as Record<string, unknown>) : null;
+}
+
+export async function listAccessibleWaAccounts(
+  trx: Knex.Transaction,
+  input: { tenantId: string; membershipId: string; includeAllForAdmins: boolean }
+) {
+  if (input.includeAllForAdmins) {
+    return listWaAccounts(trx, input.tenantId);
+  }
+
+  const rows = await trx("wa_accounts as a")
+    .join("wa_account_members as m", function joinMembers() {
+      this.on("m.wa_account_id", "=", "a.wa_account_id").andOn("m.tenant_id", "=", "a.tenant_id");
+    })
+    .where("a.tenant_id", input.tenantId)
+    .andWhere("m.membership_id", input.membershipId)
+    .select("a.*")
+    .orderBy("a.created_at", "desc");
+
+  return rows.map((row) => mapAccount(row as Record<string, unknown>));
+}

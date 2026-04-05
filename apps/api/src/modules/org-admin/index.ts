@@ -31,6 +31,7 @@ export async function orgAdminRoutes(app: FastifyInstance) {
           "tm.role",
           "tm.status",
           "tm.is_default",
+          "tm.wa_seat_enabled",
           "tm.created_at",
           "tm.display_name",
           "tm.employee_no",
@@ -51,6 +52,7 @@ export async function orgAdminRoutes(app: FastifyInstance) {
         role: r.role as string,
         status: r.status as string,
         isDefault: r.is_default as boolean,
+        waSeatEnabled: Boolean(r.wa_seat_enabled),
         createdAt: r.created_at as string,
         displayName: (r.display_name as string | null) ?? (r.agent_display_name as string | null) ?? null,
         employeeNo: (r.employee_no as string | null) ?? null,
@@ -74,6 +76,7 @@ export async function orgAdminRoutes(app: FastifyInstance) {
       employeeNo?: string | null;
       phone?: string | null;
       idNumber?: string | null;
+      waSeatEnabled?: boolean;
       role?: string;
       status?: string;
     };
@@ -133,7 +136,8 @@ export async function orgAdminRoutes(app: FastifyInstance) {
             display_name: displayName,
             employee_no: employeeNo,
             phone,
-            id_number: idNumber
+            id_number: idNumber,
+            wa_seat_enabled: body.waSeatEnabled ?? false
           })
           .returning(["membership_id"]);
 
@@ -164,6 +168,7 @@ export async function orgAdminRoutes(app: FastifyInstance) {
       employeeNo?: string | null;
       phone?: string | null;
       idNumber?: string | null;
+      waSeatEnabled?: boolean;
     };
 
     try {
@@ -189,6 +194,7 @@ export async function orgAdminRoutes(app: FastifyInstance) {
         if (body.employeeNo !== undefined) updates.employee_no = body.employeeNo?.trim() || null;
         if (body.phone !== undefined) updates.phone = body.phone?.trim() || null;
         if (body.idNumber !== undefined) updates.id_number = body.idNumber?.trim() || null;
+        if (typeof body.waSeatEnabled === "boolean") updates.wa_seat_enabled = body.waSeatEnabled;
 
         await trx("tenant_memberships").where({ membership_id: membershipId, tenant_id: tenantId }).update(updates);
         return { updated: true, membershipId };

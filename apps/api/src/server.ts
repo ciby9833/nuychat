@@ -11,6 +11,7 @@ import {
 } from "./workers/task-engine.worker.js";
 import { createCustomerProfileRefreshWorker } from "./workers/customer-profile-refresh.worker.js";
 import { createConversationTimeoutWorker } from "./workers/conversation-timeout.worker.js";
+import { createWaOutboundWorker } from "./workers/wa-outbound.worker.js";
 import { initClickhouseTables } from "./infra/clickhouse/client.js";
 import { customerProfileRefreshQueue } from "./infra/queue/queues.js";
 import { recoverOverdueAssignmentAcceptTimeouts } from "./modules/sla/conversation-sla.service.js";
@@ -27,6 +28,7 @@ const taskBackgroundWorker = createTaskBackgroundWorker();
 const taskScriptWorker = createTaskScriptWorker();
 const customerProfileRefreshWorker = createCustomerProfileRefreshWorker();
 const conversationTimeoutWorker = createConversationTimeoutWorker();
+const waOutboundWorker = createWaOutboundWorker();
 createRealtimeGateway(app);
 
 // Fire-and-forget: initialise ClickHouse tables (no-ops if CH unavailable)
@@ -61,6 +63,7 @@ try {
   await taskScriptWorker.close();
   await customerProfileRefreshWorker.close();
   await conversationTimeoutWorker.close();
+  await waOutboundWorker.close();
   process.exit(1);
 }
 
@@ -72,6 +75,7 @@ const shutdown = async () => {
   await taskScriptWorker.close();
   await customerProfileRefreshWorker.close();
   await conversationTimeoutWorker.close();
+  await waOutboundWorker.close();
   await app.close();
   process.exit(0);
 };

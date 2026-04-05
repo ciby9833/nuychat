@@ -13,6 +13,7 @@ export const taskBackgroundQueue = new Queue("task-background", { connection: co
 export const taskScriptQueue = new Queue("task-script", { connection: conn });
 export const customerProfileRefreshQueue = new Queue("customer-profile-refresh", { connection: conn });
 export const conversationTimeoutQueue = new Queue("conversation-timeout", { connection: conn });
+export const waWorkspaceOutboundQueue = new Queue("wa-workspace-outbound", { connection: conn });
 
 export type InboundJobPayload = {
   tenantId: string;
@@ -113,4 +114,23 @@ export type ConversationTimeoutJobPayload = {
   closeMode?: "semantic" | "waiting_customer";
   /** Epoch ms when this job was scheduled — used to skip if activity occurred after scheduling */
   scheduledAt: number;
+};
+
+export type WaWorkspaceOutboundJobPayload = {
+  jobId: string;
+  tenantId: string;
+  waAccountId: string;
+  waConversationId: string;
+  waMessageId: string;
+  jobType: "send_text" | "send_media" | "send_reaction";
+  text?: string;
+  mediaType?: "image" | "video" | "audio" | "document";
+  mimeType?: string;
+  fileName?: string;
+  mediaUrl?: string;
+  emoji?: string;
+  reactionTargetId?: string;
+  remoteJid?: string;
+  quotedMessageId?: string | null;
+  delayMs?: number;
 };

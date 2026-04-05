@@ -31,6 +31,7 @@ import { supervisorAdminRoutes } from "./modules/supervisor-admin/index.js";
 import { taskAdminRoutes } from "./modules/task-admin/index.js";
 import { tenantContextPlugin } from "./modules/tenant/tenant.middleware.js";
 import { uploadRoutes } from "./modules/upload/upload.routes.js";
+import { waWorkspaceRoutes } from "./modules/wa-workspace/index.js";
 import { webchatRoutes } from "./modules/webchat/webchat.routes.js";
 
 type CrossOriginResourcePolicyValue = "same-origin" | "same-site" | "cross-origin";
@@ -98,6 +99,7 @@ export async function buildApp() {
   await app.register(realtimeRoutes);
   await app.register(webchatRoutes);
   await app.register(uploadRoutes);
+  await app.register(waWorkspaceRoutes);
   await app.register(conversationRoutes);
   await app.register(agentRoutes);
   await app.register(channelAdminRoutes);

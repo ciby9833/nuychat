@@ -56,6 +56,7 @@ type Membership = {
   membership_id: string;
   tenant_id: string;
   role: string;
+  wa_seat_enabled: boolean;
   tenant_slug: string;
   tenant_name: string;
   is_default: boolean;
@@ -137,6 +138,7 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
         tenantId: membership.tenant_id,
         membershipId: membership.membership_id,
         role: membership.role,
+        waSeatEnabled: Boolean(membership.wa_seat_enabled),
         agentId,
         sessionId: payload.sessionId,
         type: "access"
@@ -150,6 +152,7 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
         tenantId: membership.tenant_id,
         membershipId: membership.membership_id,
         role: membership.role,
+        waSeatEnabled: Boolean(membership.wa_seat_enabled),
         agentId,
         sessionId: payload.sessionId,
         jti: nextRefreshJti,
@@ -292,6 +295,7 @@ export const authRoutes: FastifyPluginAsync = fp(async (app) => {
         tenantName: m.tenant_name,
         role: m.role,
         isDefault: m.is_default,
+        waSeatEnabled: Boolean(m.wa_seat_enabled),
         agentId: agentIdByMembership.get(m.membership_id) ?? null
       }))
     };
@@ -381,6 +385,7 @@ async function issueTokensForMembership(
       tenantId: activeMembership.tenant_id,
       membershipId: activeMembership.membership_id,
       role: activeMembership.role,
+      waSeatEnabled: Boolean(activeMembership.wa_seat_enabled),
       agentId,
       sessionId,
       type: "access"
@@ -394,6 +399,7 @@ async function issueTokensForMembership(
       tenantId: activeMembership.tenant_id,
       membershipId: activeMembership.membership_id,
       role: activeMembership.role,
+      waSeatEnabled: Boolean(activeMembership.wa_seat_enabled),
       agentId,
       sessionId,
       jti: refreshJti,
@@ -412,6 +418,7 @@ async function issueTokensForMembership(
       tenantId: activeMembership.tenant_id,
       tenantSlug: activeMembership.tenant_slug,
       membershipId: activeMembership.membership_id,
+      waSeatEnabled: Boolean(activeMembership.wa_seat_enabled),
       agentId
     },
     memberships: memberships.map((row) => ({
@@ -421,6 +428,7 @@ async function issueTokensForMembership(
       tenantName: row.tenant_name,
       role: row.role,
       isDefault: row.is_default,
+      waSeatEnabled: Boolean(row.wa_seat_enabled),
       agentId: agentIdByMembership.get(row.membership_id) ?? null
     }))
   };
