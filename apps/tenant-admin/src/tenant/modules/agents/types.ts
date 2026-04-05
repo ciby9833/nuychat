@@ -1,3 +1,7 @@
+// 作用: 坐席与成员管理模块共享表单与展示类型。
+// 菜单路径: 系统设置 -> 坐席与成员管理。
+// 交互: 被 AgentsTab 及其子组件复用，统一成员/坐席/WA Seat 的前端字段处理。
+
 import i18next from "i18next";
 import { TenantApiError } from "../../api";
 
@@ -25,6 +29,7 @@ export type EditMemberForm = {
   employeeNo?: string;
   phone?: string;
   idNumber?: string;
+  waSeatEnabled?: boolean;
 };
 
 export const STATUS_COLOR: Record<string, string> = {

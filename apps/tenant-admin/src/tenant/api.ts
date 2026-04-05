@@ -1,3 +1,7 @@
+// 作用: 租户管理端 API 封装，统一处理认证、刷新令牌和业务请求。
+// 菜单路径: 覆盖系统设置、坐席与成员管理、WA 账号管理等后台页面。
+// 交互: 被各 tenant modules 调用，对接 apps/api 的租户后台接口。
+
 import { clearTenantSession, readTenantSession } from "./session";
 import type {
   AgentPresenceResponse,
@@ -54,6 +58,9 @@ import type {
   ShiftScheduleItem,
   RoutingRule,
   TeamItem
+  ,
+  WaAccountHealth,
+  WaAccountListItem
 } from "./types";
 
 const SESSION_KEY = "nuychat.authSession";
@@ -749,6 +756,7 @@ export function patchMember(membershipId: string, input: {
   employeeNo?: string | null;
   phone?: string | null;
   idNumber?: string | null;
+  waSeatEnabled?: boolean;
 }) {
   return api<{ updated: boolean; membershipId: string }>(`/api/admin/members/${membershipId}`, {
     method: "PATCH",
@@ -806,6 +814,65 @@ export function patchAgent(agentId: string, input: Partial<{
 export function removeAgent(agentId: string) {
   return api<{ removed: boolean; agentId: string }>(`/api/admin/agents/${agentId}`, {
     method: "DELETE"
+  });
+}
+
+export function listWaAccounts() {
+  return api<WaAccountListItem[]>("/api/admin/wa/accounts");
+}
+
+export function createWaAccount(input: {
+  displayName: string;
+  phoneE164?: string | null;
+  primaryOwnerMembershipId?: string | null;
+}) {
+  return api<WaAccountListItem>("/api/admin/wa/accounts", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function createWaAccountLoginTask(waAccountId: string) {
+  return api<{
+    loginTaskId: string;
+    sessionRef: string;
+    qrCode: string;
+    expiresAt: string;
+  }>(`/api/admin/wa/accounts/${waAccountId}/login-task`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function assignWaAccountMembers(waAccountId: string, memberIds: string[]) {
+  return api<{ updated: boolean; memberIds: string[] }>(`/api/admin/wa/accounts/${waAccountId}/assign-members`, {
+    method: "POST",
+    body: JSON.stringify({ memberIds })
+  });
+}
+
+export function updateWaAccountOwner(waAccountId: string, primaryOwnerMembershipId: string | null) {
+  return api<WaAccountListItem>(`/api/admin/wa/accounts/${waAccountId}/owner`, {
+    method: "PATCH",
+    body: JSON.stringify({ primaryOwnerMembershipId })
+  });
+}
+
+export function getWaAccountHealth(waAccountId: string) {
+  return api<WaAccountHealth>(`/api/admin/wa/accounts/${waAccountId}/health`);
+}
+
+export function reconnectWaAccount(waAccountId: string) {
+  return api<{ accepted: boolean; connectionState: string }>(`/api/admin/wa/accounts/${waAccountId}/reconnect`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function patchWaSeat(membershipId: string, enabled: boolean) {
+  return api<{ membershipId: string; waSeatEnabled: boolean }>(`/api/admin/wa/members/${membershipId}/seat`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled })
   });
 }
 

@@ -115,6 +115,7 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
       clientMessageId?: string;
       text?: string;
       type?: string;
+      quotedMessageId?: string;
       attachment?: { url?: string; mimeType?: string; fileName?: string };
     };
     if (typeof body.clientMessageId !== "string" || !body.clientMessageId.trim()) {
@@ -132,7 +133,8 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
           role: auth.role,
           waConversationId,
           clientMessageId: body.clientMessageId.trim(),
-          text: body.text.trim()
+          text: body.text.trim(),
+          quotedMessageId: typeof body.quotedMessageId === "string" ? body.quotedMessageId.trim() || null : null
         });
       }
 
@@ -152,7 +154,8 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
         mimeType: body.attachment.mimeType,
         fileName: body.attachment.fileName,
         mediaUrl: body.attachment.url,
-        caption: typeof body.text === "string" ? body.text.trim() : null
+        caption: typeof body.text === "string" ? body.text.trim() : null,
+        quotedMessageId: typeof body.quotedMessageId === "string" ? body.quotedMessageId.trim() || null : null
       });
     });
     await enqueueWaOutboundJob(result.queuePayload);

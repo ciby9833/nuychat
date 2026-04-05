@@ -8,7 +8,8 @@ export default {
   nav: {
     home: "Beranda",
     messages: "Pesan",
-    tasks: "Tugas"
+    tasks: "Tugas",
+    whatsapp: "WA"
   },
   home: {
     title: "Ringkasan Workspace",
@@ -34,7 +35,7 @@ export default {
     passwordPlaceholder: "Masukkan kata sandi",
     loading: "Masuk…",
     submit: "Masuk ke Workspace",
-    noAgentAccess: "Akun tidak memiliki akses agen"
+    noAgentAccess: "Akun tidak memiliki akses workspace agen atau WhatsApp"
   },
   header: {
     title: "NuyChat Workspace",

@@ -10,7 +10,8 @@ export type WaProviderCapability =
   | "session.login"
   | "session.reconnect"
   | "message.send_text"
-  | "message.receive_text";
+  | "message.receive_text"
+  | "history.sync";
 
 export type WaLoginSessionTicket = {
   sessionRef: string;
@@ -49,6 +50,7 @@ export type WaProviderInboundMessage = {
 export type WaProviderWebhookResult = {
   eventType: string;
   sessionState?: string | null;
+  sessionQrCode?: string | null;
   messages: WaProviderInboundMessage[];
   groupParticipants: Array<{
     chatJid: string;
@@ -65,6 +67,11 @@ export type WaProviderSendTextResult = {
 
 export type WaProviderSendMediaResult = WaProviderSendTextResult;
 export type WaProviderSendReactionResult = WaProviderSendTextResult;
+
+export type WaProviderHistoryResult = {
+  messages: WaProviderInboundMessage[];
+  nextCursor?: string | null;
+};
 
 export interface WaProviderAdapter {
   readonly providerKey: string;
@@ -95,5 +102,11 @@ export interface WaProviderAdapter {
     targetMessageId: string;
     emoji: string;
   }): Promise<WaProviderSendReactionResult>;
+  fetchHistory(input: {
+    instanceKey: string;
+    chatJid: string;
+    cursor?: string | null;
+    limit?: number;
+  }): Promise<WaProviderHistoryResult>;
   parseWebhook(input: { body: Record<string, unknown> }): WaProviderWebhookResult;
 }

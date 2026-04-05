@@ -115,12 +115,22 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
     session: session
       ? {
           connectionState: session.connection_state,
-          sessionRef: session.session_ref,
-          loginMode: session.login_mode,
-          heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
-          disconnectReason: session.disconnect_reason ?? null,
-          autoReconnectCount: Number(session.auto_reconnect_count ?? 0)
-        }
+        sessionRef: session.session_ref,
+        loginMode: session.login_mode,
+        heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
+        disconnectReason: session.disconnect_reason ?? null,
+        autoReconnectCount: Number(session.auto_reconnect_count ?? 0),
+        qrCode: (() => {
+          try {
+            const meta = typeof session.session_meta === "string"
+              ? JSON.parse(session.session_meta)
+              : (session.session_meta as Record<string, unknown> | null);
+            return typeof meta?.qrCode === "string" ? meta.qrCode : null;
+          } catch {
+            return null;
+          }
+        })()
+      }
       : null
   };
 }
@@ -130,6 +140,9 @@ export async function reconnectAdminWaAccount(trx: Knex.Transaction, input: { te
     .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
     .first<Record<string, unknown> | undefined>();
   if (!account) throw new Error("WA account not found");
+  if (!account.last_connected_at) {
+    throw new Error("WA account has never connected. Please complete QR login first");
+  }
 
   const provider = getWaProviderAdapter(String(account.provider_key));
   const result = await provider.restartSession({ instanceKey: String(account.instance_key) });

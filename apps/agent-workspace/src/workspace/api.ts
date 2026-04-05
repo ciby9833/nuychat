@@ -324,6 +324,7 @@ export async function switchTenantSession(
       tenantSlug: string;
       membershipId: string;
       agentId?: string | null;
+      waSeatEnabled?: boolean;
     };
     memberships: Session["memberships"];
   };
@@ -338,6 +339,7 @@ export async function switchTenantSession(
     tenantSlug: data.user.tenantSlug,
     membershipId: data.user.membershipId,
     agentId: data.user.agentId ?? null,
+    waSeatEnabled: data.user.waSeatEnabled ?? false,
     memberships: data.memberships
   };
 }

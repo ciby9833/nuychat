@@ -18,9 +18,41 @@ function mapAccount(row: Record<string, unknown>) {
     accountStatus: String(row.account_status),
     riskLevel: String(row.risk_level),
     primaryOwnerMembershipId: row.primary_owner_membership_id ? String(row.primary_owner_membership_id) : null,
+    primaryOwnerName: row.primary_owner_name ? String(row.primary_owner_name) : null,
+    memberIds: Array.isArray(row.member_ids) ? row.member_ids.map((item) => String(item)) : [],
+    memberCount: Number(row.member_count ?? 0),
     lastConnectedAt: row.last_connected_at ? new Date(String(row.last_connected_at)).toISOString() : null,
     lastDisconnectedAt: row.last_disconnected_at ? new Date(String(row.last_disconnected_at)).toISOString() : null
   };
+}
+
+async function loadWaAccounts(
+  trx: Knex.Transaction,
+  input: { tenantId: string; accountIds?: string[] }
+) {
+  const query = trx("wa_accounts as a")
+    .leftJoin("tenant_memberships as owner", function joinOwner() {
+      this.on("owner.membership_id", "=", "a.primary_owner_membership_id").andOn("owner.tenant_id", "=", "a.tenant_id");
+    })
+    .leftJoin("wa_account_members as wam", function joinMembers() {
+      this.on("wam.wa_account_id", "=", "a.wa_account_id").andOn("wam.tenant_id", "=", "a.tenant_id");
+    })
+    .where("a.tenant_id", input.tenantId)
+    .groupBy("a.wa_account_id", "owner.display_name")
+    .select(
+      "a.*",
+      trx.raw("owner.display_name as primary_owner_name"),
+      trx.raw("coalesce(json_agg(distinct wam.membership_id) filter (where wam.membership_id is not null), '[]'::json) as member_ids"),
+      trx.raw("count(distinct wam.membership_id) as member_count")
+    )
+    .orderBy("a.created_at", "desc");
+
+  if (input.accountIds && input.accountIds.length > 0) {
+    query.whereIn("a.wa_account_id", input.accountIds);
+  }
+
+  const rows = await query;
+  return rows.map((row) => mapAccount(row as Record<string, unknown>));
 }
 
 export async function insertWaAccount(
@@ -47,8 +79,7 @@ export async function insertWaAccount(
 }
 
 export async function listWaAccounts(trx: Knex.Transaction, tenantId: string) {
-  const rows = await trx("wa_accounts").where({ tenant_id: tenantId }).orderBy("created_at", "desc");
-  return rows.map((row) => mapAccount(row as Record<string, unknown>));
+  return loadWaAccounts(trx, { tenantId });
 }
 
 export async function getWaAccountById(trx: Knex.Transaction, tenantId: string, waAccountId: string) {
@@ -174,8 +205,9 @@ export async function listAccessibleWaAccounts(
     })
     .where("a.tenant_id", input.tenantId)
     .andWhere("m.membership_id", input.membershipId)
-    .select("a.*")
-    .orderBy("a.created_at", "desc");
+    .select("a.wa_account_id");
 
-  return rows.map((row) => mapAccount(row as Record<string, unknown>));
+  const accountIds = rows.map((row) => String(row.wa_account_id));
+  if (accountIds.length === 0) return [];
+  return loadWaAccounts(trx, { tenantId: input.tenantId, accountIds });
 }

@@ -1,3 +1,7 @@
+// 作用: 座席工作台与 WA 工作台共享的前端类型定义。
+// 菜单路径: 客服工作台 / WA工作台。
+// 交互: 被登录页、workspace API、消息工作台和 WA 模块复用。
+
 export type MembershipSummary = {
   membershipId: string;
   tenantId: string;
@@ -6,6 +10,7 @@ export type MembershipSummary = {
   role: string;
   isDefault: boolean;
   agentId?: string | null;
+  waSeatEnabled?: boolean;
 };
 
 export type Session = {
@@ -18,6 +23,7 @@ export type Session = {
   tenantSlug: string;
   membershipId: string;
   agentId?: string | null;
+  waSeatEnabled?: boolean;
   memberships: MembershipSummary[];
 };
 

@@ -11,6 +11,7 @@ import type { Knex } from "knex";
 import { getWaProviderAdapter } from "./provider/provider-registry.js";
 import { getWaAccountById } from "./wa-account.repository.js";
 import {
+  findWaMessageByProviderId,
   insertRawEvent,
   insertWaMessage,
   insertWaMessageAttachment,
@@ -18,6 +19,10 @@ import {
   upsertWaConversation,
   upsertWaConversationMember
 } from "./wa-conversation.repository.js";
+import {
+  createMissingReferenceGap,
+  resolveGapsForArrivedMessage
+} from "./wa-reconcile.service.js";
 
 export async function ingestEvolutionWebhook(
   trx: Knex.Transaction,
@@ -29,22 +34,36 @@ export async function ingestEvolutionWebhook(
   const provider = getWaProviderAdapter(account.providerKey);
   const parsed = provider.parseWebhook({ body: input.body });
 
-  if (parsed.sessionState) {
+  if (parsed.sessionState || parsed.sessionQrCode) {
+    const sessionMetaUpdates: Record<string, unknown> = {};
+    if (parsed.sessionQrCode) {
+      sessionMetaUpdates.qrCode = parsed.sessionQrCode;
+    }
     await trx("wa_account_sessions")
       .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
       .update({
-        connection_state: parsed.sessionState,
+        ...(parsed.sessionState ? { connection_state: parsed.sessionState } : {}),
         heartbeat_at: trx.fn.now(),
+        ...(parsed.sessionQrCode
+          ? {
+              session_meta: trx.raw(
+                "coalesce(session_meta, '{}'::jsonb) || ?::jsonb",
+                [JSON.stringify(sessionMetaUpdates)]
+              )
+            }
+          : {}),
         updated_at: trx.fn.now()
       });
-    await trx("wa_accounts")
-      .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
-      .update({
-        account_status: parsed.sessionState === "open" ? "online" : "offline",
-        last_connected_at: parsed.sessionState === "open" ? trx.fn.now() : trx.raw("last_connected_at"),
-        last_disconnected_at: parsed.sessionState === "open" ? trx.raw("last_disconnected_at") : trx.fn.now(),
-        updated_at: trx.fn.now()
-      });
+    if (parsed.sessionState) {
+      await trx("wa_accounts")
+        .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+        .update({
+          account_status: parsed.sessionState === "open" ? "online" : "offline",
+          last_connected_at: parsed.sessionState === "open" ? trx.fn.now() : trx.raw("last_connected_at"),
+          last_disconnected_at: parsed.sessionState === "open" ? trx.raw("last_disconnected_at") : trx.fn.now(),
+          updated_at: trx.fn.now()
+        });
+    }
   }
 
   let inserted = 0;
@@ -85,6 +104,12 @@ export async function ingestEvolutionWebhook(
       providerPayload: input.body
     });
 
+    await resolveGapsForArrivedMessage(trx, {
+      tenantId: input.tenantId,
+      waConversationId: conversation.waConversationId,
+      providerMessageId: message.providerMessageId
+    });
+
     if (message.conversationType === "group" && message.participantJid) {
       await upsertWaConversationMember(trx, {
         tenantId: input.tenantId,
@@ -113,15 +138,12 @@ export async function ingestEvolutionWebhook(
     if (message.messageType === "reaction" && message.reactionEmoji) {
       let targetMessageId: string | null = null;
       if (message.reactionTargetId) {
-        const target = await trx("wa_messages")
-          .where({
-            tenant_id: input.tenantId,
-            wa_account_id: input.waAccountId,
-            provider_message_id: message.reactionTargetId
-          })
-          .select("wa_message_id")
-          .first<{ wa_message_id: string } | undefined>();
-        targetMessageId = target?.wa_message_id ?? null;
+        const target = await findWaMessageByProviderId(trx, {
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          providerMessageId: message.reactionTargetId
+        });
+        targetMessageId = target?.waMessageId ?? null;
       }
       if (targetMessageId) {
         await insertWaMessageReaction(trx, {
@@ -130,6 +152,33 @@ export async function ingestEvolutionWebhook(
           actorJid: message.senderJid,
           emoji: message.reactionEmoji,
           providerTs: message.providerTs
+        });
+      } else if (message.reactionTargetId) {
+        await createMissingReferenceGap(trx, {
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          waConversationId: conversation.waConversationId,
+          gapReason: "missing_reaction_target",
+          targetProviderMessageId: message.reactionTargetId,
+          sourceProviderMessageId: message.providerMessageId
+        });
+      }
+    }
+
+    if (message.quotedMessageId) {
+      const quotedTarget = await findWaMessageByProviderId(trx, {
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        providerMessageId: message.quotedMessageId
+      });
+      if (!quotedTarget) {
+        await createMissingReferenceGap(trx, {
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          waConversationId: conversation.waConversationId,
+          gapReason: "missing_quoted_message",
+          targetProviderMessageId: message.quotedMessageId,
+          sourceProviderMessageId: message.providerMessageId
         });
       }
     }

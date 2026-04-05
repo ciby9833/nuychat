@@ -36,27 +36,28 @@ export function LoginPage() {
           tenantSlug: string;
           membershipId: string;
           agentId?: string | null;
+          waSeatEnabled?: boolean;
         };
         memberships: MembershipSummary[];
       };
 
-      if (!data.user.agentId) {
-        const agentMembership = data.memberships.find((membership) => membership.agentId);
-        if (agentMembership && agentMembership.membershipId !== data.user.membershipId) {
+      if (!data.user.agentId && !data.user.waSeatEnabled) {
+        const workspaceMembership = data.memberships.find((membership) => membership.agentId || membership.waSeatEnabled);
+        if (workspaceMembership && workspaceMembership.membershipId !== data.user.membershipId) {
           const switchRes = await fetch(`${API_BASE_URL}/api/auth/switch-tenant`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${data.accessToken}`
             },
-            body: JSON.stringify({ membershipId: agentMembership.membershipId })
+            body: JSON.stringify({ membershipId: workspaceMembership.membershipId })
           });
           if (!switchRes.ok) throw new Error(`${switchRes.status} ${switchRes.statusText}`);
           data = (await switchRes.json()) as typeof data;
         }
       }
 
-      if (!data.user.agentId) {
+      if (!data.user.agentId && !data.user.waSeatEnabled) {
         throw new Error(t("login.noAgentAccess"));
       }
 
@@ -70,10 +71,11 @@ export function LoginPage() {
         tenantSlug: data.user.tenantSlug,
         membershipId: data.user.membershipId,
         agentId: data.user.agentId ?? null,
+        waSeatEnabled: data.user.waSeatEnabled ?? false,
         memberships: data.memberships
       };
       writeSession(session);
-      navigate("/dashboard");
+      navigate(data.user.waSeatEnabled && !data.user.agentId ? "/dashboard/wa" : "/dashboard");
     } catch (err) {
       setError((err as Error).message);
     } finally {

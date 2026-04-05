@@ -1,3 +1,7 @@
+// 作用: 展示已启用客服坐席的账号列表和详情。
+// 菜单路径: 系统设置 -> 坐席与成员管理 -> 坐席管理。
+// 交互: 调用坐席 API，联动启用坐席弹窗与坐席详情抽屉。
+
 import { PlusOutlined, UserOutlined } from "@ant-design/icons";
 import { Badge, Button, Space, Table, Tag, Typography, message } from "antd";
 import { useEffect, useState } from "react";

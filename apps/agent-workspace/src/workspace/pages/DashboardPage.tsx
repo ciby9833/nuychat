@@ -9,6 +9,7 @@ import { TooltipProvider } from "../../components/ui/tooltip";
 const HomeOverview = lazy(() => import("../components/home/HomeOverview").then((module) => ({ default: module.HomeOverview })));
 const MessagesWorkspace = lazy(() => import("../components/messages/MessagesWorkspace").then((module) => ({ default: module.MessagesWorkspace })));
 const TasksWorkspace = lazy(() => import("../components/tasks/TasksWorkspace").then((module) => ({ default: module.TasksWorkspace })));
+const WaWorkspace = lazy(() => import("../wa/components/WaWorkspace").then((module) => ({ default: module.WaWorkspace })));
 
 export function DashboardPage() {
   const vm = useWorkspaceDashboard();
@@ -17,6 +18,7 @@ export function DashboardPage() {
   const [rightWidth, setRightWidth] = useState(300);
 
   const section = useMemo<WorkspaceSection>(() => {
+    if (location.pathname.endsWith("/wa")) return "wa";
     if (location.pathname.endsWith("/tasks")) return "tasks";
     if (location.pathname.endsWith("/messages")) return "messages";
     return "home";
@@ -31,6 +33,9 @@ export function DashboardPage() {
     }
     if (section === "messages") {
       vm.setLeftPanelMode("conversations");
+      return;
+    }
+    if (section === "wa") {
       return;
     }
     void vm.loadMyTasks();
@@ -66,6 +71,7 @@ export function DashboardPage() {
         section={section}
         unreadCount={vm.totalUnreadMessages}
         taskCount={vm.filteredMyTasks.length}
+        waEnabled={vm.waSeatEnabled}
         onNavigate={(next) => navigate(`/dashboard/${next}`)}
         header={{
           tenantId: vm.tenantId,
@@ -82,7 +88,7 @@ export function DashboardPage() {
           <Routes>
             <Route
               index
-              element={<Navigate to="/dashboard/home" replace />}
+              element={<Navigate to={vm.waSeatEnabled && !vm.agentId ? "/dashboard/wa" : "/dashboard/home"} replace />}
             />
             <Route
               path="home"
@@ -111,6 +117,10 @@ export function DashboardPage() {
             <Route
               path="tasks"
               element={<TasksWorkspace vm={vm} />}
+            />
+            <Route
+              path="wa"
+              element={vm.session?.waSeatEnabled ? <WaWorkspace session={vm.session} /> : <Navigate to="/dashboard/home" replace />}
             />
             <Route path="*" element={<Navigate to="/dashboard/home" replace />} />
           </Routes>

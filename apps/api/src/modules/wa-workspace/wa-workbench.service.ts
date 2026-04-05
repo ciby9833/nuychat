@@ -12,6 +12,7 @@ import { getWaProviderAdapter } from "./provider/provider-registry.js";
 import { assertCanReplyToWaConversation, releaseWaConversation, takeOverWaConversation } from "./wa-assignment.service.js";
 import { createWaLoginTask, listAccessibleWaAccounts, upsertWaAccountSession } from "./wa-account.repository.js";
 import {
+  getConversationMembers,
   getConversationMessages,
   getWaConversationById,
   insertWaMessage,
@@ -42,6 +43,17 @@ async function assertConversationAccessible(
   if (!accounts.some((item) => item.waAccountId === String(conversation.wa_account_id))) {
     throw new Error("Conversation not accessible");
   }
+}
+
+async function getConversationRow(
+  trx: Knex.Transaction,
+  input: { tenantId: string; waConversationId: string }
+) {
+  const conversation = await trx("wa_conversations")
+    .where({ tenant_id: input.tenantId, wa_conversation_id: input.waConversationId })
+    .first<Record<string, unknown> | undefined>();
+  if (!conversation) throw new Error("Conversation not found");
+  return conversation;
 }
 
 export async function listWorkbenchAccounts(
@@ -127,8 +139,21 @@ export async function getWorkbenchConversationDetail(
   if (!conversation) throw new Error("Conversation not found");
   await assertConversationAccessible(trx, input);
 
-  const messages = await getConversationMessages(trx, input.tenantId, input.waConversationId);
-  return { conversation, messages };
+  const [messages, members] = await Promise.all([
+    getConversationMessages(trx, input.tenantId, input.waConversationId),
+    getConversationMembers(trx, input.tenantId, input.waConversationId)
+  ]);
+  return {
+    conversation,
+    messages,
+    members,
+    permissions: {
+      canReply:
+        !conversation.currentReplierMembershipId ||
+        conversation.currentReplierMembershipId === input.membershipId,
+      canForceAssign: ["tenant_admin", "admin", "supervisor"].includes(input.role)
+    }
+  };
 }
 
 export async function takeOverWorkbenchConversation(
@@ -190,6 +215,7 @@ export async function enqueueWorkbenchTextMessage(
     waConversationId: string;
     clientMessageId: string;
     text: string;
+    quotedMessageId?: string | null;
   }
 ) {
   await assertConversationAccessible(trx, input);
@@ -199,10 +225,7 @@ export async function enqueueWorkbenchTextMessage(
     membershipId: input.membershipId
   });
 
-  const conversation = await trx("wa_conversations")
-    .where({ tenant_id: input.tenantId, wa_conversation_id: input.waConversationId })
-    .first<Record<string, unknown> | undefined>();
-  if (!conversation) throw new Error("Conversation not found");
+  const conversation = await getConversationRow(trx, input);
 
   const [job] = await trx("wa_outbound_jobs")
     .insert({
@@ -213,7 +236,10 @@ export async function enqueueWorkbenchTextMessage(
       client_message_id: input.clientMessageId,
       job_type: "send_text",
       send_status: "queued",
-      payload: JSON.stringify({ text: input.text })
+      payload: JSON.stringify({
+        text: input.text,
+        quotedMessageId: input.quotedMessageId ?? null
+      })
     })
     .returning("*");
 
@@ -227,6 +253,7 @@ export async function enqueueWorkbenchTextMessage(
     bodyText: input.text,
     messageType: "text",
     messageScene: "external_chat",
+    quotedMessageId: input.quotedMessageId ?? null,
     deliveryStatus: "pending"
   });
 
@@ -240,7 +267,8 @@ export async function enqueueWorkbenchTextMessage(
       waConversationId: input.waConversationId,
       waMessageId: String(message.wa_message_id),
       jobType: "send_text",
-      text: input.text
+      text: input.text,
+      quotedMessageId: input.quotedMessageId ?? null
     }
   };
 }
@@ -258,6 +286,7 @@ export async function enqueueWorkbenchMediaMessage(
     fileName: string;
     mediaUrl: string;
     caption?: string | null;
+    quotedMessageId?: string | null;
   }
 ) {
   await assertConversationAccessible(trx, input);
@@ -267,10 +296,7 @@ export async function enqueueWorkbenchMediaMessage(
     membershipId: input.membershipId
   });
 
-  const conversation = await trx("wa_conversations")
-    .where({ tenant_id: input.tenantId, wa_conversation_id: input.waConversationId })
-    .first<Record<string, unknown> | undefined>();
-  if (!conversation) throw new Error("Conversation not found");
+  const conversation = await getConversationRow(trx, input);
 
   const [job] = await trx("wa_outbound_jobs")
     .insert({
@@ -286,7 +312,8 @@ export async function enqueueWorkbenchMediaMessage(
         mimeType: input.mimeType,
         fileName: input.fileName,
         mediaUrl: input.mediaUrl,
-        caption: input.caption ?? null
+        caption: input.caption ?? null,
+        quotedMessageId: input.quotedMessageId ?? null
       })
     })
     .returning("*");
@@ -301,6 +328,7 @@ export async function enqueueWorkbenchMediaMessage(
     bodyText: input.caption ?? null,
     messageType: input.mediaType,
     messageScene: "external_chat",
+    quotedMessageId: input.quotedMessageId ?? null,
     deliveryStatus: "pending"
   });
 
@@ -327,7 +355,8 @@ export async function enqueueWorkbenchMediaMessage(
       mediaType: input.mediaType,
       mimeType: input.mimeType,
       fileName: input.fileName,
-      mediaUrl: input.mediaUrl
+      mediaUrl: input.mediaUrl,
+      quotedMessageId: input.quotedMessageId ?? null
     }
   };
 }
@@ -350,10 +379,7 @@ export async function enqueueWorkbenchReaction(
     membershipId: input.membershipId
   });
 
-  const conversation = await trx("wa_conversations")
-    .where({ tenant_id: input.tenantId, wa_conversation_id: input.waConversationId })
-    .first<Record<string, unknown> | undefined>();
-  if (!conversation) throw new Error("Conversation not found");
+  const conversation = await getConversationRow(trx, input);
 
   const target = await trx("wa_messages")
     .where({ tenant_id: input.tenantId, wa_message_id: input.targetWaMessageId })

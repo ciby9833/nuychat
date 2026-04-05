@@ -104,8 +104,9 @@ export function useWorkspaceDashboard() {
   const tenantId = session?.tenantId ?? "";
   const tenantSlug = session?.tenantSlug ?? "";
   const agentId = session?.agentId ?? null;
+  const waSeatEnabled = Boolean(session?.waSeatEnabled);
   const memberships = session?.memberships ?? [];
-  const workspaceMemberships = memberships.filter((membership) => membership.agentId);
+  const workspaceMemberships = memberships.filter((membership) => membership.agentId || membership.waSeatEnabled);
 
   // ── selectedIdRef: always reflects latest selectedId without forcing socket teardown ──
   const selectedIdRef = useRef<string | null>(null);
@@ -1022,8 +1023,8 @@ export function useWorkspaceDashboard() {
   const onSwitchTenant = useCallback(async (membershipId: string) => {
     if (!session || membershipId === session.membershipId) return;
     const next = await switchTenantSession(session, membershipId);
-    if (!next.agentId) {
-      setViewHint("未开通接待资格，无法进入客服工作台。");
+    if (!next.agentId && !next.waSeatEnabled) {
+      setViewHint("当前租户未开通客服或WhatsApp工作台权限。");
       window.setTimeout(() => setViewHint(""), 3000);
       return;
     }
@@ -1058,7 +1059,7 @@ export function useWorkspaceDashboard() {
       navigate("/", { replace: true });
       return;
     }
-    if (session && !session.agentId) {
+    if (session && !session.agentId && !session.waSeatEnabled) {
       localStorage.removeItem("nuychat.authSession");
       navigate("/", { replace: true });
     }
@@ -1185,6 +1186,7 @@ export function useWorkspaceDashboard() {
     tenantId,
     tenantSlug,
     agentId,
+    waSeatEnabled,
     memberships: workspaceMemberships,
     socketStatus,
     view,

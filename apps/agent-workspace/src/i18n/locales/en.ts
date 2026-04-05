@@ -8,7 +8,8 @@ export default {
   nav: {
     home: "Home",
     messages: "Messages",
-    tasks: "Tasks"
+    tasks: "Tasks",
+    whatsapp: "WA"
   },
   home: {
     title: "Workspace Overview",
@@ -34,7 +35,7 @@ export default {
     passwordPlaceholder: "Enter your password",
     loading: "Signing in…",
     submit: "Enter Workspace",
-    noAgentAccess: "Account has no agent access"
+    noAgentAccess: "Account has no customer-service or WhatsApp workspace access"
   },
   header: {
     title: "NuyChat Workspace",

@@ -1,3 +1,7 @@
+// 作用: 管理租户成员账号，并维护客服坐席与 WA Seat 的准入权限。
+// 菜单路径: 系统设置 -> 坐席与成员管理 -> 成员账号。
+// 交互: 调用成员 API 更新基础资料、密码、离职状态和 WA Seat 权限。
+
 import { LockOutlined, PlusOutlined, UserOutlined } from "@ant-design/icons";
 import {
   Button, Form, Input, Modal, Popconfirm,
@@ -40,7 +44,8 @@ export function MembersPane({
       displayName: member.displayName ?? "",
       employeeNo:  member.employeeNo ?? undefined,
       phone:       member.phone ?? undefined,
-      idNumber:    member.idNumber ?? undefined
+      idNumber:    member.idNumber ?? undefined,
+      waSeatEnabled: member.waSeatEnabled
     });
   };
 
@@ -103,6 +108,33 @@ export function MembersPane({
                 : <Tag>{t("agents.member.agentDisabled")}</Tag>
             },
             {
+              title: "WhatsApp座席",
+              width: 132,
+              render: (_, row) => (
+                <Button
+                  size="small"
+                  type={row.waSeatEnabled ? "primary" : "default"}
+                  ghost={!row.waSeatEnabled}
+                  disabled={!!row.resignedAt}
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await patchMember(row.membershipId, {
+                          waSeatEnabled: !row.waSeatEnabled
+                        });
+                        void message.success(`WhatsApp座席已${!row.waSeatEnabled ? "启用" : "关闭"}`);
+                        onReload();
+                      } catch (err) {
+                        void message.error((err as Error).message);
+                      }
+                    })();
+                  }}
+                >
+                  {row.waSeatEnabled ? "已启用" : "未启用"}
+                </Button>
+              )
+            },
+            {
               title: t("common.action"),
               width: 280,
               render: (_, row) => (
@@ -161,7 +193,8 @@ export function MembersPane({
                 displayName: values.displayName.trim(),
                 employeeNo:  values.employeeNo?.trim() || null,
                 phone:       values.phone?.trim() || null,
-                idNumber:    values.idNumber?.trim() || null
+                idNumber:    values.idNumber?.trim() || null,
+                waSeatEnabled: Boolean(values.waSeatEnabled)
               });
               void message.success(t("agents.member.infoUpdated"));
               setEditMember(null);
@@ -200,6 +233,12 @@ export function MembersPane({
               { value: "active",    label: t("common.active") },
               { value: "inactive",  label: t("common.inactive") },
               { value: "suspended", label: t("agents.member.suspended") }
+            ]} />
+          </Form.Item>
+          <Form.Item label="WhatsApp座席" name="waSeatEnabled">
+            <Select options={[
+              { value: true, label: "启用" },
+              { value: false, label: "关闭" }
             ]} />
           </Form.Item>
         </Form>

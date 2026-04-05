@@ -8,7 +8,8 @@ export default {
   nav: {
     home: "首页",
     messages: "消息",
-    tasks: "任务"
+    tasks: "任务",
+    whatsapp: "WA"
   },
   home: {
     title: "工作总览",
@@ -34,7 +35,7 @@ export default {
     passwordPlaceholder: "请输入密码",
     loading: "登录中…",
     submit: "进入工作台",
-    noAgentAccess: "当前账号未开通接待资格"
+    noAgentAccess: "当前账号未开通客服或WhatsApp工作台资格"
   },
   header: {
     title: "NuyChat 工作台",

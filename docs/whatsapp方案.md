@@ -4,6 +4,13 @@
 
 | 版本 | 日期 | 作者 | 变更 |
 | --- | --- | --- | --- |
+| v0.11 | 2026-04-05 | Codex | 补充 Evolution 环境变量落地说明：生产部署、本地 `.env` 示例、变量来源与回调地址要求 |
+| v0.10 | 2026-04-05 | Codex | 移除未配置 Evolution 时的占位二维码回退，改为明确报错；避免前端继续展示非 WhatsApp 的伪登录码 |
+| v0.9 | 2026-04-05 | Codex | 修正 Evolution 登录回调链路：每次登录显式重设 webhook，改为统一回调地址并通过 query 传租户，内部同时兼容事件后缀路径，避免扫码阶段的 `QRCODE_UPDATED` / `CONNECTION_UPDATE` 被打丢 |
+| v0.8 | 2026-04-05 | Codex | 修正扫码实现：登录二维码优先使用 provider 返回的可扫描图像数据（如 `qrOrCode` / base64），避免把非扫码文本误渲染成二维码 |
+| v0.7 | 2026-04-05 | Codex | 补充实际实现：管理端扫码登录弹窗已支持二维码渲染、连接状态轮询、二维码自动刷新、连接成功自动关闭并刷新账号状态 |
+| v0.6 | 2026-04-05 | Codex | 补充实际进度：agent-workspace 已接入 WA 工作台路由与页面骨架，Evolution webhook 解析增强为兼容 event/data/key/message 结构，历史补拉尝试对接 `findMessages` |
+| v0.5 | 2026-04-05 | Codex | 补充实际开发进度：webhook 缺口记录与 reconcile 骨架、管理端入口并入坐席与成员管理、成员 WA Seat 与 WA 账号池联动维护 |
 | v0.4 | 2026-04-05 | Codex | 补充 Phase 2 已推进项：富媒体发送、reaction、群成员同步、WA 上传入口、Phase 2 表结构 |
 | v0.3 | 2026-04-05 | Codex | 按实际实现补充：WA Seat 权限标记、Phase 1 已落地范围、独立 WA 出站队列/worker、Evolution 命令接入约束 |
 | v0.2 | 2026-04-05 | Codex | 补充 provider 抽象层、富媒体消息模型、消息存储分层、短期/长期记忆、QA/SLA/任务准备设计 |
@@ -181,7 +188,7 @@ Phase 1 已落地的后端范围：
 
 尚未完成：
 - 富媒体摘要、媒体 QA 与 AI 理解
-- 缺口补偿与历史拉取
+- Evolution 历史拉取真实字段对齐
 - 摘要、记忆、QA、SLA、任务模块
 
 Phase 2 已推进的后端范围：
@@ -195,6 +202,20 @@ Phase 2 已推进的后端范围：
 - 工作台 reaction 接口骨架
 - Evolution `sendMedia` / `sendReaction` 适配
 - webhook 入站媒体/群成员/reaction 标准化骨架
+- 缺口记录：引用目标缺失、reaction 目标缺失时写入 `wa_message_gaps`
+- 会话级补偿入口 `/internal/wa/reconcile/:waConversationId`
+- reconcile 服务已具备缺口关闭与历史补拉骨架，Evolution `fetchHistory` 待真实 payload 对齐
+
+Phase 2 已推进的管理端前端范围：
+
+- 入口仍在 `系统设置 -> 坐席与成员管理`
+- 成员列表内可直接维护 `WA Seat`
+- 新增同区域 Tab：`WA账号管理`
+- 可执行 WA 账号创建、扫码登录、负责人设置、协同成员分配、健康查看、重连
+- 管理端扫码弹窗已支持二维码渲染、5 秒轮询连接状态、过期前自动刷新二维码、连接成功自动关闭
+- Evolution 登录链路已改为每次登录时显式调用 webhook 设置接口，统一使用单一 webhook 回调并在 URL 传递 `tenantId`
+- 内部 webhook 入口同时兼容统一路径与事件后缀路径，避免 provider 不同配置模式导致二维码和连接状态事件丢失
+- 当 Evolution 基础配置缺失时，后端直接返回配置错误，不再生成内部占位二维码
 
 ## 4. 详细设计
 
@@ -657,7 +678,7 @@ sequenceDiagram
 | 路径 | 方法 | 请求 | 响应 | 备注 |
 | --- | --- | --- | --- | --- |
 | `/internal/wa/evolution/:accountId/webhook` | POST | 原始事件 | `ok=true` | Evolution 统一入口 |
-| `/internal/wa/reconcile/:conversationId` | POST | `reason` | `accepted=true` | 触发补偿 |
+| `/internal/wa/reconcile/:conversationId` | POST | `tenantId`, `reason` | `accepted=true` | 触发补偿 |
 | `/internal/wa/memory/upsert` | POST | `conversationId`, `summary`, `facts` | `ok=true` | 记忆桥接 |
 | `/internal/wa/risk/evaluate` | POST | `conversationId`, `messageId` | 风险结果 | 风险异步 |
 
@@ -669,11 +690,48 @@ sequenceDiagram
 | `WA_EVOLUTION_API_KEY` | Evolution API apikey |
 | `WA_EVOLUTION_WEBHOOK_BASE_URL` | 本系统对外可访问的 webhook 基础地址 |
 
+变量来源说明：
+
+| 变量 | 来源 | 示例 |
+| --- | --- | --- |
+| `WA_EVOLUTION_BASE_URL` | Evolution 服务自身地址 | `http://localhost:8080` / `http://evolution-api:8080` / `https://wa-gateway.company.com` |
+| `WA_EVOLUTION_API_KEY` | Evolution 部署时配置的 `AUTHENTICATION_API_KEY` | `your_evolution_api_key_here` |
+| `WA_EVOLUTION_WEBHOOK_BASE_URL` | 当前 `apps/api` 对外可访问地址 | `http://localhost:3001` / `https://api.company.com` |
+
+本地开发示例：
+
+```env
+WA_EVOLUTION_BASE_URL=http://localhost:8080
+WA_EVOLUTION_API_KEY=your_evolution_api_key_here
+WA_EVOLUTION_WEBHOOK_BASE_URL=http://localhost:3001
+```
+
+生产部署示例：
+
+```env
+WA_EVOLUTION_BASE_URL=https://wa-gateway.company.com
+WA_EVOLUTION_API_KEY=${EVOLUTION_AUTHENTICATION_API_KEY}
+WA_EVOLUTION_WEBHOOK_BASE_URL=https://api.company.com
+```
+
+要求：
+
+- `WA_EVOLUTION_BASE_URL` 必须是当前后端机器可访问的 Evolution 地址
+- `WA_EVOLUTION_WEBHOOK_BASE_URL` 必须是 Evolution 机器可回调到的 API 地址
+- 如果 Evolution 与 `apps/api` 不在同一台机器或同一 docker network，不能把 webhook 地址写成本机 `localhost`
+- 修改环境变量后，需要重启 `apps/api` 进程
+
 ### 4.6 前端 / UI 变化
 
 #### 4.6.1 租户管理端
 
-新增菜单：`WA账号管理`
+不新增独立后台菜单。
+
+实现方式：
+
+- 仍放在 `系统设置 -> 坐席与成员管理`
+- 在原有 Tabs 内增加 `WA账号管理`
+- `成员账号` Tab 内直接维护 `WA Seat`
 
 页面分区：
 

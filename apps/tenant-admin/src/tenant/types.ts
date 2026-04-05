@@ -1,3 +1,7 @@
+// 作用: 租户管理端共享类型定义，覆盖登录态、成员管理、WA 账号管理等模块。
+// 菜单路径: 系统设置 -> 坐席与成员管理 等租户后台页面。
+// 交互: 被 tenant/api 与各管理端页面组件复用，保持前后端字段契约一致。
+
 export type AdminSession = {
   accessToken: string;
   refreshToken: string;
@@ -8,6 +12,7 @@ export type AdminSession = {
   tenantSlug: string;
   membershipId: string;
   agentId?: string | null;
+  waSeatEnabled?: boolean;
   memberships: MembershipSummary[];
 };
 
@@ -18,6 +23,7 @@ export type MembershipSummary = {
   tenantName: string;
   role: string;
   isDefault: boolean;
+  waSeatEnabled?: boolean;
 };
 
 export type LoginResponse = {
@@ -31,6 +37,7 @@ export type LoginResponse = {
     tenantSlug: string;
     membershipId: string;
     agentId?: string | null;
+    waSeatEnabled?: boolean;
   };
   memberships: MembershipSummary[];
 };
@@ -453,6 +460,7 @@ export type MemberListItem = {
   role: string;
   status: string;
   isDefault: boolean;
+  waSeatEnabled: boolean;
   createdAt: string;
   displayName: string | null;
   employeeNo: string | null;
@@ -463,6 +471,39 @@ export type MemberListItem = {
   agentId: string | null;
   /** null if this member has no agent_profile */
   agentDisplayName: string | null;
+};
+
+export type WaAccountListItem = {
+  waAccountId: string;
+  instanceKey: string;
+  displayName: string;
+  phoneE164: string | null;
+  providerKey: string;
+  accountStatus: string;
+  riskLevel: string;
+  primaryOwnerMembershipId: string | null;
+  primaryOwnerName: string | null;
+  memberIds: string[];
+  memberCount: number;
+  lastConnectedAt: string | null;
+  lastDisconnectedAt: string | null;
+};
+
+export type WaAccountHealth = {
+  waAccountId: string;
+  accountStatus: string;
+  providerKey: string;
+  lastConnectedAt: string | null;
+  lastDisconnectedAt: string | null;
+  session: {
+    connectionState: string;
+    sessionRef: string;
+    loginMode: string;
+    heartbeatAt: string | null;
+    disconnectReason: string | null;
+    autoReconnectCount: number;
+    qrCode: string | null;
+  } | null;
 };
 
 export type AgentProfile = {
