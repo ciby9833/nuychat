@@ -170,7 +170,7 @@ async function buildSocket(input: {
 
   const socket = makeWASocket({
     version: version.version,
-    auth: authState.state,
+    auth: authState.authState,
     markOnlineOnConnect: false,
     syncFullHistory: false,
     shouldIgnoreJid: () => false,
@@ -191,7 +191,7 @@ async function buildSocket(input: {
   };
 
   socket.ev.on("creds.update", async (_creds: Partial<AuthenticationCreds>) => {
-    await authState.state.saveCreds();
+    await authState.saveCreds();
     await persistBaileysAuthSnapshot(input.tenantId, input.waAccountId, authState.sessionPath);
     await touchCredsUpdate(input.tenantId, input.waAccountId);
   });

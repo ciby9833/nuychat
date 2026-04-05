@@ -9,7 +9,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { useMultiFileAuthState } from "@whiskeysockets/baileys";
+import { useMultiFileAuthState, type AuthenticationState } from "@whiskeysockets/baileys";
 
 import { withTenantTransaction } from "../../../infra/db/client.js";
 import { getBaileysRuntimeConfig } from "./baileys-config.js";
@@ -23,10 +23,11 @@ export async function createBaileysAuthState(tenantId: string, waAccountId: stri
   const sessionPath = getSessionPath(tenantId, waAccountId);
   await restoreBaileysAuthSnapshot(tenantId, waAccountId, sessionPath);
   await fs.mkdir(sessionPath, { recursive: true });
-  const state = await useMultiFileAuthState(sessionPath);
+  const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
   return {
     sessionPath,
-    state
+    authState: state as AuthenticationState,
+    saveCreds
   };
 }
 
