@@ -122,6 +122,7 @@ export type WaWorkspaceOutboundJobPayload = {
   waAccountId: string;
   waConversationId: string;
   waMessageId: string;
+  createdByMembershipId: string | null;
   jobType: "send_text" | "send_media" | "send_reaction";
   text?: string;
   mediaType?: "image" | "video" | "audio" | "document";

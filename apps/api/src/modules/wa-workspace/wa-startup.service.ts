@@ -9,7 +9,8 @@
  */
 import { db } from "../../infra/db/client.js";
 import { ensureBaileysRuntime } from "./runtime/baileys-runtime.manager.js";
-import { enqueueWaOutboundJob, type WaWorkspaceOutboundJobPayload } from "../../infra/queue/queues.js";
+import { enqueueWaOutboundJob } from "./wa-outbound.service.js";
+import type { WaWorkspaceOutboundJobPayload } from "../../infra/queue/queues.js";
 
 /**
  * 恢复所有拥有 auth 快照的 WA 账号的 Baileys 运行时连接。

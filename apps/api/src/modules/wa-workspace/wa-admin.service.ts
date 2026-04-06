@@ -4,13 +4,13 @@
  *
  * 交互:
  * - 依赖 wa-account.repository 管理账号与登录任务。
- * - 依赖 provider-registry 获取当前 WA 接入实现的登录/重连能力。
+ * - 依赖当前唯一的 Baileys adapter 处理登录与重连。
  */
 import type { Knex } from "knex";
 
 import { normalizeNonEmptyString } from "../tenant/tenant-admin.shared.js";
-import { getWaProviderAdapter } from "./provider/provider-registry.js";
-import { deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
+import { waProviderAdapter } from "./provider/provider-registry.js";
+import { deriveWaAccountStatus, deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
 import {
   createWaLoginTask,
   getWaAccountById,
@@ -64,12 +64,11 @@ export async function createAdminLoginTask(
   }
   const latestSession = await trx("wa_account_sessions")
     .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
-    .orderBy("created_at", "desc")
+    .orderByRaw("coalesce(updated_at, heartbeat_at, created_at) desc, created_at desc")
     .first<Record<string, unknown> | undefined>();
   const forceFresh = String(latestSession?.disconnect_reason ?? "") === "401";
 
-  const provider = getWaProviderAdapter();
-  const ticket = await provider.createLoginTicket({
+  const ticket = await waProviderAdapter.createLoginTicket({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     instanceKey: account.instanceKey,
@@ -152,43 +151,56 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
   if (!account) throw new Error("WA account not found");
   const session = await trx("wa_account_sessions")
     .where({ tenant_id: tenantId, wa_account_id: waAccountId })
-    .orderBy("created_at", "desc")
+    .orderByRaw("coalesce(updated_at, heartbeat_at, created_at) desc, created_at desc")
     .first();
+  const meta = session ? parseSessionMeta(session.session_meta) : null;
+  const rawSessionSummary = session
+    ? {
+        connectionState: String(session.connection_state),
+        loginPhase: typeof meta?.loginPhase === "string" ? meta.loginPhase : null,
+        disconnectReason: session.disconnect_reason ? String(session.disconnect_reason) : null,
+        qrCodeAvailable: typeof meta?.qrCode === "string" && meta.qrCode.length > 0,
+        historySyncedAt: typeof meta?.historySyncedAt === "string" ? meta.historySyncedAt : null,
+        chatsSyncedAt: typeof meta?.chatsSyncedAt === "string" ? meta.chatsSyncedAt : null,
+        groupsSyncedAt: typeof meta?.groupsSyncedAt === "string" ? meta.groupsSyncedAt : null,
+        hasGroupChats: typeof meta?.hasGroupChats === "boolean" ? meta.hasGroupChats : null
+      }
+    : null;
+  const sessionSummary = normalizeWaSessionSnapshot(rawSessionSummary);
+  const sessionView = session
+    ? {
+        ...(meta ?? {}),
+        connectionState: session.connection_state,
+        sessionRef: session.session_ref,
+        loginMode: session.login_mode,
+        loginPhase: sessionSummary?.loginPhase ?? (typeof meta?.loginPhase === "string" ? meta.loginPhase : null),
+        heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
+        disconnectReason: session.disconnect_reason ?? null,
+        autoReconnectCount: Number(session.auto_reconnect_count ?? 0),
+        qrCode: typeof meta?.qrCode === "string" ? meta.qrCode : null,
+        isOnline: typeof meta?.isOnline === "boolean" ? meta.isOnline : sessionSummary?.connectionState === "open",
+        phoneConnected: typeof meta?.phoneConnected === "boolean"
+          ? meta.phoneConnected
+          : (sessionSummary?.connectionState === "open" ? true : null),
+        receivedPendingNotifications: typeof meta?.receivedPendingNotifications === "boolean"
+          ? meta.receivedPendingNotifications
+          : (sessionSummary?.loginPhase === "connected" ? true : null)
+      }
+    : null;
+  const lastConnectedAt = account.last_connected_at ? new Date(account.last_connected_at).toISOString() : null;
+  const effectiveAccountStatus = deriveWaAccountStatus({
+    storedAccountStatus: String(account.account_status ?? "offline"),
+    session: sessionSummary
+  });
   return {
     waAccountId,
-    accountStatus: account.account_status,
+    accountStatus: effectiveAccountStatus,
     providerKey: account.provider_key,
     lastConnectedAt: account.last_connected_at ? new Date(account.last_connected_at).toISOString() : null,
     lastDisconnectedAt: account.last_disconnected_at ? new Date(account.last_disconnected_at).toISOString() : null,
     ...(function buildUi() {
-      const meta = session ? parseSessionMeta(session.session_meta) : null;
-      const sessionView = session
-        ? {
-            ...(meta ?? {}),
-            connectionState: session.connection_state,
-            sessionRef: session.session_ref,
-            loginMode: session.login_mode,
-            heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
-            disconnectReason: session.disconnect_reason ?? null,
-            autoReconnectCount: Number(session.auto_reconnect_count ?? 0),
-            qrCode: typeof meta?.qrCode === "string" ? meta.qrCode : null
-          }
-        : null;
-      const sessionSummary = session
-        ? {
-            connectionState: String(session.connection_state),
-            loginPhase: typeof meta?.loginPhase === "string" ? meta.loginPhase : null,
-            disconnectReason: session.disconnect_reason ? String(session.disconnect_reason) : null,
-            qrCodeAvailable: typeof meta?.qrCode === "string" && meta.qrCode.length > 0,
-            historySyncedAt: typeof meta?.historySyncedAt === "string" ? meta.historySyncedAt : null,
-            chatsSyncedAt: typeof meta?.chatsSyncedAt === "string" ? meta.chatsSyncedAt : null,
-            groupsSyncedAt: typeof meta?.groupsSyncedAt === "string" ? meta.groupsSyncedAt : null,
-            hasGroupChats: typeof meta?.hasGroupChats === "boolean" ? meta.hasGroupChats : null
-          }
-        : null;
-      const lastConnectedAt = account.last_connected_at ? new Date(account.last_connected_at).toISOString() : null;
       const uiStatus = deriveWaUiStatus({
-        accountStatus: String(account.account_status),
+        accountStatus: effectiveAccountStatus,
         session: sessionSummary
       });
       return {
@@ -216,8 +228,7 @@ export async function reconnectAdminWaAccount(trx: Knex.Transaction, input: { te
     throw new Error("WA account has never connected. Please complete QR login first");
   }
 
-  const provider = getWaProviderAdapter();
-  const result = await provider.restartSession({
+  const result = await waProviderAdapter.restartSession({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     instanceKey: String(account.instance_key)
@@ -239,4 +250,19 @@ export async function reconnectAdminWaAccount(trx: Knex.Transaction, input: { te
     });
 
   return { accepted: true, connectionState: result.connectionState };
+}
+
+export async function logoutAdminWaAccount(trx: Knex.Transaction, input: { tenantId: string; waAccountId: string }) {
+  const account = await trx("wa_accounts")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .first<Record<string, unknown> | undefined>();
+  if (!account) throw new Error("WA account not found");
+
+  await waProviderAdapter.logoutSession({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    instanceKey: String(account.instance_key)
+  });
+
+  return { accepted: true };
 }

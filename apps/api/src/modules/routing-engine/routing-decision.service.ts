@@ -20,7 +20,22 @@ const humanDispatchService = new HumanDispatchService();
 const routingDefaultTargetService = new RoutingDefaultTargetService();
 
 export class RoutingDecisionService {
-  async createPlan(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingPlan> {
+  async createPlan(
+    db: Knex | Knex.Transaction,
+    context: RoutingContext,
+    input?: {
+      triggerType?: RoutingPlan["triggerType"];
+    }
+  ): Promise<RoutingPlan> {
+    const triggerType = input?.triggerType ?? "inbound_message";
+
+    if (triggerType === "agent_handoff") {
+      return this.createAgentHandoffPlanInternal(db, context);
+    }
+    if (triggerType === "ai_handoff") {
+      return this.createAiHandoffHumanPlanInternal(db, context);
+    }
+
     if (context.preserveHumanOwner) {
       return buildPreservedHumanPlan(context);
     }
@@ -80,8 +95,8 @@ export class RoutingDecisionService {
     const queueMode = resolveQueueMode(action, selectedOwnerType);
     const queuePosition = selectedOwnerType === "human" ? humanDecision.queuePosition : null;
     const estimatedWaitSec = selectedOwnerType === "human" ? humanDecision.estimatedWaitSec : null;
-    const lockedHumanSide = serviceRequestMode === "human_requested";
     const aiFallbackAllowed = serviceRequestMode === "human_requested";
+    const lockedHumanSide = serviceRequestMode === "human_requested" && selectedOwnerType === "human";
     const decisionReason = describeDecisionReason({
       mode,
       selectedOwnerType,
@@ -96,7 +111,7 @@ export class RoutingDecisionService {
       customerId: context.customerId,
       caseId: context.caseId,
       segmentId: context.segmentId,
-      triggerType: "inbound_message",
+      triggerType,
       mode,
       action,
       currentOwner: {
@@ -162,7 +177,7 @@ export class RoutingDecisionService {
     };
   }
 
-  async createAgentHandoffPlan(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingPlan> {
+  private async createAgentHandoffPlanInternal(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingPlan> {
     const matchedRule = await findMatchedRule(db, context);
     const policy = await resolvePolicy(db, context, matchedRule);
 
@@ -268,7 +283,7 @@ export class RoutingDecisionService {
     };
   }
 
-  async createAiHandoffHumanPlan(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingPlan> {
+  private async createAiHandoffHumanPlanInternal(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingPlan> {
     const matchedRule = await findMatchedRule(db, context);
     const policy = await resolvePolicy(db, context, matchedRule);
 
@@ -378,7 +393,10 @@ function resolveServiceRequestMode(
   context: RoutingContext,
   overrideReason: string | null
 ): "normal" | "human_requested" {
-  if (context.existingAssignment?.lockedHumanSide || context.existingAssignment?.handoffRequired) {
+  if (
+    context.existingAssignment?.serviceRequestMode === "human_requested" &&
+    context.existingAssignment?.lockedHumanSide
+  ) {
     return "human_requested";
   }
   if (overrideReason === "human_handoff_queue_active" || overrideReason === "customer_requested_human") {
@@ -452,7 +470,10 @@ function resolvePolicyMode(tenantOperatingMode: string, executionMode: RoutingPl
 }
 
 function resolveOverride(context: RoutingContext): { ownerType: RoutingOwnerSide | null; reason: string | null } {
-  if (context.existingAssignment?.handoffRequired) {
+  if (
+    context.existingAssignment?.serviceRequestMode === "human_requested" &&
+    context.existingAssignment?.lockedHumanSide
+  ) {
     return {
       ownerType: "human",
       reason: "human_handoff_queue_active"
@@ -479,7 +500,11 @@ function resolveOwnerSide(
     aiAvailableAgents: number;
   }
 ): RoutingOwnerSide {
-  if (override.ownerType === "human") return "human";
+  if (override.ownerType === "human") {
+    if (capacity.humanAvailableAgents > 0) return "human";
+    if (capacity.aiAvailableAgents > 0) return "ai";
+    return "human";
+  }
 
   if (mode === "human_only") return "human";
   if (mode === "ai_only") return "ai";
@@ -579,7 +604,15 @@ function describeDecisionReason(input: {
   humanDecisionReason: string;
   aiSelectionReason: string;
 }): string {
-  if (input.overrideReason) return input.overrideReason;
+  if (input.overrideReason) {
+    if (input.overrideReason === "customer_requested_human" && input.selectedOwnerType === "ai") {
+      return "customer_requested_human:fallback_ai_no_serviceable_human";
+    }
+    if (input.overrideReason === "human_handoff_queue_active" && input.selectedOwnerType === "ai") {
+      return "human_handoff_queue_active:fallback_ai_no_serviceable_human";
+    }
+    return input.overrideReason;
+  }
   return input.selectedOwnerType === "human"
     ? `${input.mode}:${input.humanDecisionReason}`
     : `${input.mode}:${input.aiSelectionReason}`;

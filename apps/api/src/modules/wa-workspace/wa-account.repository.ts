@@ -7,7 +7,7 @@
  * - 仅处理持久化，不做权限与业务编排。
  */
 import type { Knex } from "knex";
-import { deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
+import { deriveWaAccountStatus, deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
 
 function parseSessionMeta(value: unknown): Record<string, unknown> | null {
   try {
@@ -19,6 +19,8 @@ function parseSessionMeta(value: unknown): Record<string, unknown> | null {
     return null;
   }
 }
+
+const LATEST_SESSION_ORDER_SQL = "coalesce(s.updated_at, s.heartbeat_at, s.created_at) desc, s.created_at desc";
 
 function mapAccount(row: Record<string, unknown>) {
   const sessionMeta = parseSessionMeta(row.session_meta);
@@ -36,13 +38,18 @@ function mapAccount(row: Record<string, unknown>) {
         hasGroupChats: typeof sessionMeta?.hasGroupChats === "boolean" ? sessionMeta.hasGroupChats : null
       }
     : null;
+  const normalizedSession = normalizeWaSessionSnapshot(session);
+  const accountStatus = deriveWaAccountStatus({
+    storedAccountStatus: String(row.account_status ?? "offline"),
+    session: normalizedSession
+  });
   const uiStatus = deriveWaUiStatus({
-    accountStatus: String(row.account_status),
-    session
+    accountStatus,
+    session: normalizedSession
   });
   const syncStatus = deriveWaSyncStatus({
     uiStatusCode: uiStatus.code,
-    session
+    session: normalizedSession
   });
   const lastConnectedAt = row.last_connected_at ? new Date(String(row.last_connected_at)).toISOString() : null;
   return {
@@ -51,7 +58,7 @@ function mapAccount(row: Record<string, unknown>) {
     displayName: String(row.display_name),
     phoneE164: row.phone_e164 ? String(row.phone_e164) : null,
     providerKey: String(row.provider_key),
-    accountStatus: String(row.account_status),
+    accountStatus,
     riskLevel: String(row.risk_level),
     primaryOwnerMembershipId: row.primary_owner_membership_id ? String(row.primary_owner_membership_id) : null,
     primaryOwnerName: row.primary_owner_name ? String(row.primary_owner_name) : null,
@@ -59,10 +66,10 @@ function mapAccount(row: Record<string, unknown>) {
     memberCount: Number(row.member_count ?? 0),
     lastConnectedAt,
     lastDisconnectedAt: row.last_disconnected_at ? new Date(String(row.last_disconnected_at)).toISOString() : null,
-    session,
+    session: normalizedSession,
     uiStatus,
     syncStatus,
-    actions: deriveWaActions({ lastConnectedAt, session })
+    actions: deriveWaActions({ lastConnectedAt, session: normalizedSession })
   };
 }
 
@@ -87,7 +94,7 @@ async function loadWaAccounts(
         from wa_account_sessions s
         where s.tenant_id = a.tenant_id
           and s.wa_account_id = a.wa_account_id
-        order by s.created_at desc
+        order by ${LATEST_SESSION_ORDER_SQL}
         limit 1
       ) as session_ref`),
       trx.raw(`(
@@ -95,7 +102,7 @@ async function loadWaAccounts(
         from wa_account_sessions s
         where s.tenant_id = a.tenant_id
           and s.wa_account_id = a.wa_account_id
-        order by s.created_at desc
+        order by ${LATEST_SESSION_ORDER_SQL}
         limit 1
       ) as session_connection_state`),
       trx.raw(`(
@@ -103,7 +110,7 @@ async function loadWaAccounts(
         from wa_account_sessions s
         where s.tenant_id = a.tenant_id
           and s.wa_account_id = a.wa_account_id
-        order by s.created_at desc
+        order by ${LATEST_SESSION_ORDER_SQL}
         limit 1
       ) as login_mode`),
       trx.raw(`(
@@ -111,7 +118,7 @@ async function loadWaAccounts(
         from wa_account_sessions s
         where s.tenant_id = a.tenant_id
           and s.wa_account_id = a.wa_account_id
-        order by s.created_at desc
+        order by ${LATEST_SESSION_ORDER_SQL}
         limit 1
       ) as session_disconnect_reason`),
       trx.raw(`(
@@ -119,7 +126,7 @@ async function loadWaAccounts(
         from wa_account_sessions s
         where s.tenant_id = a.tenant_id
           and s.wa_account_id = a.wa_account_id
-        order by s.created_at desc
+        order by ${LATEST_SESSION_ORDER_SQL}
         limit 1
       ) as session_meta`),
       trx.raw("coalesce(json_agg(distinct wam.membership_id) filter (where wam.membership_id is not null), '[]'::json) as member_ids"),
@@ -181,7 +188,7 @@ export async function upsertWaAccountSession(
 ) {
   const existing = await trx("wa_account_sessions")
     .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
-    .orderBy("created_at", "desc")
+    .orderByRaw("coalesce(updated_at, heartbeat_at, created_at) desc, created_at desc")
     .first<Record<string, unknown> | undefined>();
 
   if (existing) {

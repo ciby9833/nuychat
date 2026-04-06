@@ -8,7 +8,7 @@
 
 import { API_BASE_URL, apiFetch, apiPostJson } from "../api";
 import type { Session } from "../types";
-import type { WaAccountItem, WaConversationDetail, WaConversationItem } from "./types";
+import type { WaAccountItem, WaContactItem, WaConversationDetail, WaConversationItem } from "./types";
 
 export function listWaWorkbenchAccounts(session: Session) {
   return apiFetch<WaAccountItem[]>("/api/wa/workbench/accounts", session);
@@ -103,6 +103,15 @@ export function sendWaReaction(
     input,
     session
   );
+}
+
+export function listWaWorkbenchContacts(
+  session: Session,
+  input: { accountId: string; search?: string | null }
+) {
+  const params = new URLSearchParams({ accountId: input.accountId });
+  if (input.search) params.set("search", input.search);
+  return apiFetch<WaContactItem[]>(`/api/wa/workbench/contacts?${params}`, session);
 }
 
 export async function uploadWaAttachment(session: Session, file: File) {

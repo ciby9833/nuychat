@@ -1126,7 +1126,9 @@ export async function conversationRoutes(app: FastifyInstance) {
         channelType: before.channel_type,
         channelId: before.channel_id
       });
-      const routingPlan = await unifiedRoutingEngineService.createAgentHandoffPlan(trx, routingContext);
+      const routingPlan = await unifiedRoutingEngineService.createPlan(trx, routingContext, {
+        triggerType: "agent_handoff"
+      });
       const planId = await routingPlanRepository.create(trx, routingPlan);
       await routingPlanStepService.record(trx, {
         tenantId,

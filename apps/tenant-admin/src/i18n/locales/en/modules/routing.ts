@@ -13,6 +13,9 @@ export default {
       skillAndStrategy: "Skill Group / Strategy"
     },
     description: "The platform now uses smart default assignment based on channel instance, department or team scope, online human agents, AI seats, schedules, and live load. Only a small number of exception rules should be configured here.",
+    smartDefaultEnabled: "Smart default assignment enabled",
+    exceptionRulesHint: "Only add exception rules when the default smart assignment cannot satisfy a real business requirement.",
+    exceptionRule: "Exception Rule",
     form: {
       editRule: "Edit Routing Rule",
       createRule: "New Routing Rule",

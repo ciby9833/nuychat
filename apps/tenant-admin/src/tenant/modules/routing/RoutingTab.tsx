@@ -51,6 +51,7 @@ export function RoutingTab() {
       {data.error && <Tag color="red" style={{ marginBottom: 12 }}>{data.error}</Tag>}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <Space>
+          <Tag color="purple">{t("routing.smartDefaultEnabled")}</Tag>
           <Tag color="blue" icon={<ApartmentOutlined />}>{t("routing.rulesCount", { count: data.rules.length })}</Tag>
           <Tag color="green">{t("routing.enabledCount", { count: activeCount })}</Tag>
         </Space>
@@ -66,6 +67,9 @@ export function RoutingTab() {
 
       <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
         {t("routing.description")}
+      </Typography.Text>
+      <Typography.Text type="secondary" style={{ display: "block", marginBottom: 16, fontSize: 12 }}>
+        {t("routing.exceptionRulesHint")}
       </Typography.Text>
 
       <RuleTable

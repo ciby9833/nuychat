@@ -22,7 +22,8 @@ import {
   listWorkbenchAccounts,
   listWorkbenchConversations,
   releaseWorkbenchConversation,
-  takeOverWorkbenchConversation
+  takeOverWorkbenchConversation,
+  listWorkbenchContacts
 } from "./wa-workbench.service.js";
 import { getWaRuntimeStatus } from "./wa-runtime.service.js";
 
@@ -223,5 +224,19 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     }
     const result = await saveUploadedFile(buffer, file.filename, mimeType);
     return reply.code(201).send(result);
+  });
+
+  // ─── Contacts (好友列表) ─────────────────────────────────────────────────────
+  // Returns all WA contacts synced from the account's phone book via contacts.upsert events.
+  // Only contacts with at least one matching contact_jid are returned.
+  app.get("/api/wa/workbench/contacts", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { accountId, search } = req.query as { accountId?: string; search?: string };
+    if (!accountId) {
+      throw app.httpErrors.badRequest("accountId is required");
+    }
+    return withTenantTransaction(auth.tenantId, async (trx) =>
+      listWorkbenchContacts(trx, { ...auth, waAccountId: accountId, search: search ?? null })
+    );
   });
 }

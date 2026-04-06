@@ -56,6 +56,9 @@ export function RuleTable({
               <Typography.Text strong>{row.name}</Typography.Text>
               <Space size={4}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t("routing.summary.priority", { count: row.priority })}</Typography.Text>
+                <Tag color="gold" style={{ fontSize: 11 }}>
+                  {t("routing.exceptionRule")}
+                </Tag>
                 <Tag color={executionModeColor[row.actions.executionMode ?? "hybrid"] ?? "default"} style={{ fontSize: 11 }}>
                   {getExecutionModeLabel((row.actions.executionMode as "ai_first" | "human_first" | "hybrid" | undefined) ?? "hybrid")}
                 </Tag>

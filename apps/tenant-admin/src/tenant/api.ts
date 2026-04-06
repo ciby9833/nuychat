@@ -882,6 +882,13 @@ export function reconnectWaAccount(waAccountId: string) {
   });
 }
 
+export function logoutWaAccount(waAccountId: string) {
+  return api<{ accepted: boolean }>(`/api/admin/wa/accounts/${waAccountId}/logout`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
 export function patchWaSeat(membershipId: string, enabled: boolean) {
   return api<{ membershipId: string; waSeatEnabled: boolean }>(`/api/admin/wa/members/${membershipId}/seat`, {
     method: "PATCH",

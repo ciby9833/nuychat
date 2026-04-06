@@ -15,6 +15,7 @@ import { createWaOutboundWorker } from "./workers/wa-outbound.worker.js";
 import { initClickhouseTables } from "./infra/clickhouse/client.js";
 import { customerProfileRefreshQueue } from "./infra/queue/queues.js";
 import { recoverOverdueAssignmentAcceptTimeouts, recoverOverdueFollowUpTimeouts } from "./modules/sla/conversation-sla.service.js";
+import { runWaStartup } from "./modules/wa-workspace/wa-startup.service.js";
 
 const port = readRequiredIntEnv("PORT");
 const host = readRequiredEnv("HOST");
@@ -61,6 +62,8 @@ void customerProfileRefreshQueue.add(
 try {
   await app.listen({ port, host });
   app.log.info({ db: dbSummary }, `API running at http://${host}:${port}`);
+  // Restore WA Baileys runtimes and re-enqueue any stuck outbound jobs after startup.
+  void runWaStartup();
 } catch (error) {
   app.log.error(error);
   await inboundWorker.close();

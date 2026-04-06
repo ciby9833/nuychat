@@ -33,9 +33,12 @@ export default {
       channel: "Channel",
       currentResponsible: "Current Owner",
       reservedResponsible: "Reserved Owner",
+      queueState: "Request / Queue State",
       lastCustomerMessage: "Last Customer Message",
       waitingDuration: "Waiting Duration",
       minutes: "{{count}} min",
+      queueAhead: "{{count}} customers ahead",
+      etaMinutes: "ETA {{count}} min",
       firstResponse: "First Response",
       replied: "Replied",
       notReplied: "Not Replied",
@@ -49,7 +52,11 @@ export default {
       viewTooltip: "Open Human Conversations to view details and actions.",
       handleTooltip: "Supervisor workbench is for finding issues. Intervention, transfer, and closing should be done in Human Conversations.",
       empty: "-",
-      aiSuffix: " (AI)"
+      aiSuffix: " (AI)",
+      humanRequested: "Human Requested",
+      assignedWaiting: "Assigned Waiting",
+      pendingUnavailable: "No serviceable human",
+      aiFallbackAllowed: "AI fallback allowed"
     },
     agents: {
       title: "Agent Status",

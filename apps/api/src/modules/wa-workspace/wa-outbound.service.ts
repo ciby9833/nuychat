@@ -4,11 +4,11 @@
  *
  * 交互:
  * - 被 wa-workbench.service 写入队列任务。
- * - 被 wa-outbound.worker 消费，调用 provider adapter 实际发送消息，并回写出站结果。
+ * - 被 wa-outbound.worker 消费，调用当前唯一的 Baileys adapter 实际发送消息，并回写出站结果。
  */
-import { withTenantTransaction } from "../../infra/db/client.js";
+import { db, withTenantTransaction } from "../../infra/db/client.js";
 import { waWorkspaceOutboundQueue, type WaWorkspaceOutboundJobPayload } from "../../infra/queue/queues.js";
-import { getWaProviderAdapter } from "./provider/provider-registry.js";
+import { waProviderAdapter } from "./provider/provider-registry.js";
 import { emitWaMessageUpdated } from "./wa-realtime.service.js";
 
 export async function enqueueWaOutboundJob(payload: WaWorkspaceOutboundJobPayload) {
@@ -20,12 +20,13 @@ export async function enqueueWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
 }
 
 export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayload) {
-  return withTenantTransaction(payload.tenantId, async (trx) => {
-    const jobRow = await trx("wa_outbound_jobs")
+  const existingJob = await withTenantTransaction(payload.tenantId, async (trx) => {
+    const row = await trx("wa_outbound_jobs")
       .where({ tenant_id: payload.tenantId, job_id: payload.jobId })
+      .select("job_id", "payload", "send_status", "created_by_membership_id")
       .first<Record<string, unknown> | undefined>();
-    if (!jobRow) throw new Error("WA outbound job not found");
-    if (String(jobRow.send_status) === "sent") return { skipped: true };
+    if (!row) throw new Error("WA outbound job not found");
+    if (String(row.send_status) === "sent") return null;
 
     await trx("wa_outbound_jobs")
       .where({ job_id: payload.jobId })
@@ -35,52 +36,56 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
         updated_at: trx.fn.now()
       });
 
-    const account = await trx("wa_accounts")
-      .where({ tenant_id: payload.tenantId, wa_account_id: payload.waAccountId })
-      .first<Record<string, unknown> | undefined>();
-    if (!account) throw new Error("WA account not found");
+    return row;
+  });
+  if (!existingJob) return { skipped: true };
 
-    const conversation = await trx("wa_conversations")
-      .where({ tenant_id: payload.tenantId, wa_conversation_id: payload.waConversationId })
-      .first<Record<string, unknown> | undefined>();
-    if (!conversation) throw new Error("WA conversation not found");
+  const account = await db("wa_accounts")
+    .where({ tenant_id: payload.tenantId, wa_account_id: payload.waAccountId })
+    .first<Record<string, unknown> | undefined>();
+  if (!account) throw new Error("WA account not found");
 
-    try {
-      const provider = getWaProviderAdapter();
-      const result =
-        payload.jobType === "send_media"
-          ? await provider.sendMedia({
+  const conversation = await db("wa_conversations")
+    .where({ tenant_id: payload.tenantId, wa_conversation_id: payload.waConversationId })
+    .first<Record<string, unknown> | undefined>();
+  if (!conversation) throw new Error("WA conversation not found");
+
+  try {
+    const result =
+      payload.jobType === "send_media"
+        ? await waProviderAdapter.sendMedia({
+            tenantId: payload.tenantId,
+            waAccountId: payload.waAccountId,
+            instanceKey: String(account.instance_key),
+            to: String(conversation.chat_jid),
+            mediaType: payload.mediaType ?? "document",
+            mimeType: payload.mimeType ?? "application/octet-stream",
+            fileName: payload.fileName ?? "attachment",
+            mediaUrl: payload.mediaUrl ?? "",
+            caption: payload.text ?? null,
+            quotedMessageId: payload.quotedMessageId ?? null,
+            delayMs: payload.delayMs ?? 0
+          })
+        : payload.jobType === "send_reaction"
+          ? await waProviderAdapter.sendReaction({
+              tenantId: payload.tenantId,
+              waAccountId: payload.waAccountId,
+              instanceKey: String(account.instance_key),
+              remoteJid: payload.remoteJid ?? String(conversation.chat_jid),
+              targetMessageId: payload.reactionTargetId ?? "",
+              emoji: payload.emoji ?? ""
+            })
+          : await waProviderAdapter.sendText({
               tenantId: payload.tenantId,
               waAccountId: payload.waAccountId,
               instanceKey: String(account.instance_key),
               to: String(conversation.chat_jid),
-              mediaType: payload.mediaType ?? "document",
-              mimeType: payload.mimeType ?? "application/octet-stream",
-              fileName: payload.fileName ?? "attachment",
-              mediaUrl: payload.mediaUrl ?? "",
-              caption: payload.text ?? null,
+              text: payload.text ?? "",
               quotedMessageId: payload.quotedMessageId ?? null,
               delayMs: payload.delayMs ?? 0
-            })
-          : payload.jobType === "send_reaction"
-            ? await provider.sendReaction({
-                tenantId: payload.tenantId,
-                waAccountId: payload.waAccountId,
-                instanceKey: String(account.instance_key),
-                remoteJid: payload.remoteJid ?? String(conversation.chat_jid),
-                targetMessageId: payload.reactionTargetId ?? "",
-                emoji: payload.emoji ?? ""
-              })
-            : await provider.sendText({
-                tenantId: payload.tenantId,
-                waAccountId: payload.waAccountId,
-                instanceKey: String(account.instance_key),
-                to: String(conversation.chat_jid),
-                text: payload.text ?? "",
-                quotedMessageId: payload.quotedMessageId ?? null,
-                delayMs: payload.delayMs ?? 0
-              });
+            });
 
+    await withTenantTransaction(payload.tenantId, async (trx) => {
       await trx("wa_outbound_jobs")
         .where({ job_id: payload.jobId })
         .update({
@@ -88,7 +93,7 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
           last_error: null,
           updated_at: trx.fn.now(),
           payload: JSON.stringify({
-            ...(typeof jobRow.payload === "string" ? JSON.parse(jobRow.payload) : (jobRow.payload as Record<string, unknown> ?? {})),
+            ...(typeof existingJob.payload === "string" ? JSON.parse(existingJob.payload) : (existingJob.payload as Record<string, unknown> ?? {})),
             sendResult: result
           })
         });
@@ -99,20 +104,23 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
           provider_message_id: result.providerMessageId,
           delivery_status: result.deliveryStatus,
           provider_payload: JSON.stringify(result.providerPayload),
+          sender_member_id: payload.createdByMembershipId ?? existingJob.created_by_membership_id ?? null,
           updated_at: trx.fn.now()
         });
+    });
 
-      emitWaMessageUpdated({
-        tenantId: payload.tenantId,
-        waConversationId: payload.waConversationId,
-        waMessageId: payload.waMessageId,
-        providerMessageId: result.providerMessageId,
-        deliveryStatus: result.deliveryStatus
-      });
+    emitWaMessageUpdated({
+      tenantId: payload.tenantId,
+      waConversationId: payload.waConversationId,
+      waMessageId: payload.waMessageId,
+      providerMessageId: result.providerMessageId,
+      deliveryStatus: result.deliveryStatus
+    });
 
-      return { sent: true, providerMessageId: result.providerMessageId };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    return { sent: true, providerMessageId: result.providerMessageId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await withTenantTransaction(payload.tenantId, async (trx) => {
       await trx("wa_outbound_jobs")
         .where({ job_id: payload.jobId })
         .update({
@@ -126,14 +134,14 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
           delivery_status: "failed",
           updated_at: trx.fn.now()
         });
-      emitWaMessageUpdated({
-        tenantId: payload.tenantId,
-        waConversationId: payload.waConversationId,
-        waMessageId: payload.waMessageId,
-        providerMessageId: null,
-        deliveryStatus: "failed"
-      });
-      throw error;
-    }
-  });
+    });
+    emitWaMessageUpdated({
+      tenantId: payload.tenantId,
+      waConversationId: payload.waConversationId,
+      waMessageId: payload.waMessageId,
+      providerMessageId: null,
+      deliveryStatus: "failed"
+    });
+    throw error;
+  }
 }

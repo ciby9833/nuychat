@@ -727,6 +727,12 @@ export async function buildSupervisorConversationWorkbenchRows(
       "qa.status as queue_status",
       "qa.handoff_required",
       "qa.handoff_reason",
+      "qa.service_request_mode",
+      "qa.queue_mode",
+      "qa.queue_position",
+      "qa.estimated_wait_sec",
+      "qa.ai_fallback_allowed",
+      "qa.locked_human_side",
       "qa.assigned_agent_id",
       "qa.assigned_ai_agent_id",
       "qa.department_id",
@@ -784,6 +790,8 @@ function mapSupervisorConversationWorkbenchRow(row: Record<string, unknown>) {
   const currentExceptionReason = deriveSupervisorExceptionReason({
     handoffRequired: Boolean(row.handoff_required),
     handoffReason: readNullableString(row.handoff_reason),
+    serviceRequestMode: readNullableString(row.service_request_mode),
+    queueMode: readNullableString(row.queue_mode),
     latestCustomerMessageAt,
     latestServiceMessageAt,
     currentResponsibleType: currentResponsible.ownerType,
@@ -797,6 +805,12 @@ function mapSupervisorConversationWorkbenchRow(row: Record<string, unknown>) {
     caseTitle: readNullableString(row.case_title),
     conversationStatus: readNullableString(row.conversation_status),
     queueStatus: readNullableString(row.queue_status),
+    serviceRequestMode: readNullableString(row.service_request_mode),
+    queueMode: readNullableString(row.queue_mode),
+    queuePosition: row.queue_position === null || row.queue_position === undefined ? null : Number(row.queue_position),
+    estimatedWaitSec: row.estimated_wait_sec === null || row.estimated_wait_sec === undefined ? null : Number(row.estimated_wait_sec),
+    aiFallbackAllowed: Boolean(row.ai_fallback_allowed),
+    lockedHumanSide: Boolean(row.locked_human_side),
     channelType: readNullableString(row.channel_type),
     customerName: readNullableString(row.customer_name),
     customerRef: readNullableString(row.customer_ref),
@@ -893,6 +907,8 @@ function resolveSupervisorReservedResponsible(row: Record<string, unknown>) {
 function deriveSupervisorExceptionReason(input: {
   handoffRequired: boolean;
   handoffReason: string | null;
+  serviceRequestMode: string | null;
+  queueMode: string | null;
   latestCustomerMessageAt: string | null;
   latestServiceMessageAt: string | null;
   currentResponsibleType: string | null;
@@ -905,6 +921,9 @@ function deriveSupervisorExceptionReason(input: {
     || input.currentResponsibleType === "agent";
 
   if (input.handoffReason === "unanswered_auto_closed") return "unanswered_auto_closed";
+  if (input.serviceRequestMode === "human_requested" && input.queueMode === "pending_unavailable") {
+    return input.handoffReason ?? "human_queue_unavailable";
+  }
   if (!input.latestCustomerMessageAt) return null;
   if (!input.latestServiceMessageAt) {
     if (input.handoffRequired) return input.handoffReason ?? "handoff_pending";

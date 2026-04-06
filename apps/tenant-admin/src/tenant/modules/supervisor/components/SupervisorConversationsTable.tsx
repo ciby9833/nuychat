@@ -28,6 +28,36 @@ export function SupervisorConversationsTable({
 }: SupervisorConversationsTableProps) {
   const { t } = useTranslation();
 
+  const renderQueueState = (row: SupervisorConversationWorkbenchItem) => {
+    const etaMinutes =
+      typeof row.estimatedWaitSec === "number" && row.estimatedWaitSec > 0
+        ? Math.max(1, Math.ceil(row.estimatedWaitSec / 60))
+        : null;
+
+    return (
+      <Space direction="vertical" size={2}>
+        <Space size={4} wrap>
+          {row.serviceRequestMode === "human_requested" ? (
+            <Tag color="gold">{t("supervisorModule.conversations.humanRequested")}</Tag>
+          ) : null}
+          {row.queueMode === "assigned_waiting" ? (
+            <Tag color="blue">{t("supervisorModule.conversations.assignedWaiting")}</Tag>
+          ) : null}
+          {row.queueMode === "pending_unavailable" ? (
+            <Tag color="orange">{t("supervisorModule.conversations.pendingUnavailable")}</Tag>
+          ) : null}
+          {row.aiFallbackAllowed ? <Tag color="purple">{t("supervisorModule.conversations.aiFallbackAllowed")}</Tag> : null}
+        </Space>
+        {typeof row.queuePosition === "number" ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t("supervisorModule.conversations.queueAhead", { count: row.queuePosition })}
+            {etaMinutes ? ` · ${t("supervisorModule.conversations.etaMinutes", { count: etaMinutes })}` : ""}
+          </Typography.Text>
+        ) : null}
+      </Space>
+    );
+  };
+
   const columns = useMemo(
     () => [
       {
@@ -59,6 +89,10 @@ export function SupervisorConversationsTable({
             : t("supervisorModule.conversations.empty")
       },
       {
+        title: t("supervisorModule.conversations.queueState"),
+        render: (_: unknown, row: SupervisorConversationWorkbenchItem) => renderQueueState(row)
+      },
+      {
         title: t("supervisorModule.conversations.lastCustomerMessage"),
         dataIndex: "lastCustomerMessageAt",
         render: (value: string | null) => (value ? new Date(value).toLocaleString() : t("supervisorModule.conversations.empty"))
@@ -84,7 +118,13 @@ export function SupervisorConversationsTable({
       {
         title: t("supervisorModule.conversations.exceptionReason"),
         dataIndex: "currentExceptionReason",
-        render: (value: string | null) => (value ? <Tag color="orange">{value}</Tag> : t("supervisorModule.conversations.empty"))
+        render: (value: string | null) => {
+          if (!value) return t("supervisorModule.conversations.empty");
+          if (value === "human_queue_unavailable") {
+            return <Tag color="orange">{t("supervisorModule.conversations.pendingUnavailable")}</Tag>;
+          }
+          return <Tag color="orange">{value}</Tag>;
+        }
       },
       {
         title: t("supervisorModule.conversations.organization"),

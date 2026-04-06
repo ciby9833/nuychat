@@ -8,7 +8,7 @@
  */
 import type { Knex } from "knex";
 
-import { getWaProviderAdapter } from "./provider/provider-registry.js";
+import { waProviderAdapter } from "./provider/provider-registry.js";
 import {
   createWaMessageGap,
   findWaMessageByProviderId,
@@ -95,8 +95,7 @@ export async function reconcileWaConversation(
     throw new Error("WA account not found");
   }
 
-  const provider = getWaProviderAdapter();
-  const providerResult = await provider.fetchHistory({
+  const providerResult = await waProviderAdapter.fetchHistory({
     tenantId: input.tenantId,
     waAccountId: conversation.waAccountId,
     instanceKey: account.instance_key,

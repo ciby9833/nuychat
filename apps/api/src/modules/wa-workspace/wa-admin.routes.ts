@@ -18,6 +18,7 @@ import {
   createAdminWaAccount,
   getAdminWaAccountHealth,
   listAdminWaAccounts,
+  logoutAdminWaAccount,
   reconnectAdminWaAccount,
   updateAdminWaAccountOwner
 } from "./wa-admin.service.js";
@@ -114,6 +115,17 @@ export async function waAdminRoutes(app: FastifyInstance) {
     }
     const { waAccountId } = req.params as { waAccountId: string };
     return withTenantTransaction(tenantId, async (trx) => reconnectAdminWaAccount(trx, { tenantId, waAccountId }));
+  });
+
+  app.post("/api/admin/wa/accounts/:waAccountId/logout", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const runtime = getWaRuntimeStatus();
+    if (!runtime.available) {
+      throw app.httpErrors.serviceUnavailable("WhatsApp provider is not available");
+    }
+    const { waAccountId } = req.params as { waAccountId: string };
+    return withTenantTransaction(tenantId, async (trx) => logoutAdminWaAccount(trx, { tenantId, waAccountId }));
   });
 
   app.patch("/api/admin/wa/members/:membershipId/seat", async (req) => {

@@ -60,18 +60,10 @@ export type WaProviderHistoryResult = {
   nextCursor?: string | null;
 };
 
-export type WaProviderGroupMetadataResult = {
-  subject: string | null;
-  participants: Array<{
-    jid: string;
-    displayName?: string | null;
-    isAdmin?: boolean;
-  }>;
-};
-
 export interface WaProviderAdapter {
   createLoginTicket(input: { tenantId: string; waAccountId: string; instanceKey: string; forceFresh?: boolean }): Promise<WaLoginSessionTicket>;
   restartSession(input: { instanceKey: string; tenantId?: string; waAccountId?: string }): Promise<{ connectionState: string }>;
+  logoutSession(input: { instanceKey: string; tenantId?: string; waAccountId?: string }): Promise<{ ok: true }>;
   markConversationRead(input: {
     tenantId?: string;
     waAccountId?: string;
@@ -121,10 +113,4 @@ export interface WaProviderAdapter {
     cursor?: string | null;
     limit?: number;
   }): Promise<WaProviderHistoryResult>;
-  fetchGroupMetadata(input: {
-    tenantId?: string;
-    waAccountId?: string;
-    instanceKey: string;
-    chatJid: string;
-  }): Promise<WaProviderGroupMetadataResult | null>;
 }

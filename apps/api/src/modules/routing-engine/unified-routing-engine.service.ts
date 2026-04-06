@@ -8,22 +8,11 @@ const routingDecisionService = new RoutingDecisionService();
 export class UnifiedRoutingEngineService {
   async createPlan(
     db: Knex | Knex.Transaction,
-    context: RoutingContext
+    context: RoutingContext,
+    input?: {
+      triggerType?: RoutingPlan["triggerType"];
+    }
   ): Promise<RoutingPlan> {
-    return routingDecisionService.createPlan(db, context);
-  }
-
-  async createAgentHandoffPlan(
-    db: Knex | Knex.Transaction,
-    context: RoutingContext
-  ): Promise<RoutingPlan> {
-    return routingDecisionService.createAgentHandoffPlan(db, context);
-  }
-
-  async createAiHandoffHumanPlan(
-    db: Knex | Knex.Transaction,
-    context: RoutingContext
-  ): Promise<RoutingPlan> {
-    return routingDecisionService.createAiHandoffHumanPlan(db, context);
+    return routingDecisionService.createPlan(db, context, input);
   }
 }

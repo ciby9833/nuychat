@@ -446,6 +446,8 @@ type ReservedHumanTarget = {
   priority: number;
   status: "pending" | "assigned";
   reason: string;
+  queuePosition: number | null;
+  estimatedWaitSec: number | null;
 };
 
 type RoutingConversationRow = {
@@ -483,7 +485,9 @@ async function releaseConversationToHumanQueue(input: {
           channelType: input.channelType,
           channelId: input.conversation.channel_id as string
         });
-        const handoffPlan = await unifiedRoutingEngineService.createAiHandoffHumanPlan(trx, routingContext);
+        const handoffPlan = await unifiedRoutingEngineService.createPlan(trx, routingContext, {
+          triggerType: "ai_handoff"
+        });
         const handoffPlanId = await routingPlanRepository.create(trx, handoffPlan);
         await routingPlanStepService.record(trx, {
           tenantId: input.tenantId,
@@ -503,7 +507,9 @@ async function releaseConversationToHumanQueue(input: {
           strategy: handoffPlan.target.strategy,
           priority: handoffPlan.target.priority,
           status: handoffPlan.statusPlan.queueStatus,
-          reason: handoffPlan.trace.decision.reason
+          reason: handoffPlan.trace.decision.reason,
+          queuePosition: handoffPlan.statusPlan.queuePosition,
+          estimatedWaitSec: handoffPlan.statusPlan.estimatedWaitSec
         };
       });
 
@@ -562,8 +568,8 @@ async function releaseConversationToHumanQueue(input: {
         handoff_reason: input.reason,
         service_request_mode: "human_requested",
         queue_mode: resolvedHandoffTarget.assignedAgentId ? "assigned_waiting" : "pending_unavailable",
-        queue_position: null,
-        estimated_wait_sec: null,
+        queue_position: resolvedHandoffTarget.queuePosition,
+        estimated_wait_sec: resolvedHandoffTarget.estimatedWaitSec,
         ai_fallback_allowed: true,
         locked_human_side: true,
         updated_at: trx.fn.now()
@@ -608,7 +614,9 @@ async function resolveReservedHumanTarget(
       strategy: input.plannedTarget.strategy,
       priority: input.plannedTarget.priority,
       status: "assigned",
-      reason: "planned_reserved_agent"
+      reason: "planned_reserved_agent",
+      queuePosition: null,
+      estimatedWaitSec: null
     };
   }
   return {
@@ -618,6 +626,8 @@ async function resolveReservedHumanTarget(
     strategy: input.plannedTarget.strategy,
     priority: input.plannedTarget.priority,
     status: "pending",
-    reason: "planned_fallback_scope_without_reserved_agent"
+    reason: "planned_fallback_scope_without_reserved_agent",
+    queuePosition: null,
+    estimatedWaitSec: null
   };
 }

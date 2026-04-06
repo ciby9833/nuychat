@@ -27,6 +27,7 @@ type AgentCandidateRow = {
   unreadCustomerConversations: number;
   todayNewCaseCount: number;
   lastAssignedAt: string | null;
+  avgHandleSec: number | null;
 };
 
 type AgentCandidateEvaluation = AgentCandidateRow & {
@@ -91,6 +92,10 @@ export type HumanDispatchTarget = {
 };
 
 const presenceService = new PresenceService();
+const ETA_LOOKBACK_DAYS = 30;
+const DEFAULT_HANDLE_SEC = 300;
+const MIN_HANDLE_SEC = 60;
+const MAX_HANDLE_SEC = 4 * 60 * 60;
 
 export class HumanDispatchService {
   async inspectAgentAvailability(
@@ -370,7 +375,7 @@ async function assignWithinScope(
     status: selected ? "assigned" : "pending",
     reason: selected ? input.fallbackReason : "no-eligible-agent",
     queuePosition: selected ? selected.unreadCustomerConversations : null,
-    estimatedWaitSec: null,
+    estimatedWaitSec: selected ? computeEstimatedWaitSec(selected) : null,
     audit: {
       routingRuleId: input.auditSource.ruleId,
       routingRuleName: input.auditSource.ruleName,
@@ -400,6 +405,7 @@ async function assignWithinScope(
             activeAssignments: candidate.activeAssignments,
             reservedAssignments: candidate.reservedAssignments,
             unreadCustomerConversations: candidate.unreadCustomerConversations,
+            avgHandleSec: candidate.avgHandleSec,
             todayNewCaseCount: candidate.todayNewCaseCount,
             maxConcurrency: candidate.maxConcurrency,
             lastAssignedAt: candidate.lastAssignedAt
@@ -476,7 +482,7 @@ async function loadCandidateEvaluations(
 
   const agentIds = [...new Set(currentDayRows.map((row) => String(row.agent_id)))];
   const jakartaDate = formatLocalDate(now, "Asia/Jakarta");
-  const [loadRows, reservedRows, lastAssignedRows, todayNewCaseRows, unreadRows] = await Promise.all([
+  const [loadRows, reservedRows, lastAssignedRows, todayNewCaseRows, unreadRows, handleDurationSnapshot] = await Promise.all([
     db("conversations")
       .where({ tenant_id: tenantId, status: "human_active", current_handler_type: "human" })
       .whereIn("current_handler_id", agentIds)
@@ -518,7 +524,8 @@ async function loadCandidateEvaluations(
       .whereIn("c.status", ["open", "queued", "human_active", "bot_active"])
       .groupBy("c.assigned_agent_id")
       .select("c.assigned_agent_id")
-      .countDistinct<{ assigned_agent_id: string; unread_count: string }[]>("m.conversation_id as unread_count")
+      .countDistinct<{ assigned_agent_id: string; unread_count: string }[]>("m.conversation_id as unread_count"),
+    loadHandleDurationSnapshot(db, tenantId, agentIds)
   ]);
 
   const loadByAgent = new Map(loadRows.map((row) => [row.current_handler_id, Number(row.active_count ?? 0)]));
@@ -526,6 +533,8 @@ async function loadCandidateEvaluations(
   const lastAssignedByAgent = new Map(lastAssignedRows.map((row) => [row.assigned_agent_id, row.last_assigned_at ?? null]));
   const todayNewCasesByAgent = new Map(todayNewCaseRows.map((row) => [row.agent_id, Number(row.today_new_case_count ?? 0)]));
   const unreadByAgent = new Map(unreadRows.map((row) => [row.assigned_agent_id, Number(row.unread_count ?? 0)]));
+  const avgHandleByAgent = new Map(handleDurationSnapshot.byAgent.map((row) => [row.agentId, row.avgHandleSec]));
+  const tenantAvgHandleSec = handleDurationSnapshot.tenantAvgHandleSec;
 
   return dedupeCandidateRows(
     currentDayRows
@@ -552,7 +561,8 @@ async function loadCandidateEvaluations(
       reservedAssignments: reservedByAgent.get(String(row.agent_id)) ?? 0,
       unreadCustomerConversations: unreadByAgent.get(String(row.agent_id)) ?? 0,
       todayNewCaseCount: todayNewCasesByAgent.get(String(row.agent_id)) ?? 0,
-      lastAssignedAt: lastAssignedByAgent.get(String(row.agent_id)) ?? null
+      lastAssignedAt: lastAssignedByAgent.get(String(row.agent_id)) ?? null,
+      avgHandleSec: avgHandleByAgent.get(String(row.agent_id)) ?? tenantAvgHandleSec
     }))
     .map((candidate) => ({
       ...candidate,
@@ -623,6 +633,69 @@ function chooseBestTeam(candidates: AgentCandidateRow[]): string | null {
   });
 
   return sorted[0]?.[0] ?? null;
+}
+
+async function loadHandleDurationSnapshot(
+  db: Knex | Knex.Transaction,
+  tenantId: string,
+  agentIds: string[]
+): Promise<{
+  byAgent: Array<{ agentId: string; avgHandleSec: number }>;
+  tenantAvgHandleSec: number;
+}> {
+  const cutoff = new Date(Date.now() - ETA_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const [agentRows, tenantRow] = await Promise.all([
+    agentIds.length === 0
+      ? Promise.resolve([] as Array<{ resolved_by_agent_id: string; avg_handle_sec: string | number | null }>)
+      : db("conversation_cases")
+          .where({
+            tenant_id: tenantId
+          })
+          .whereNotNull("resolved_by_agent_id")
+          .whereNotNull("resolved_at")
+          .where("resolved_at", ">=", cutoff)
+          .whereIn("resolved_by_agent_id", agentIds)
+          .whereRaw("resolved_at > created_at")
+          .groupBy("resolved_by_agent_id")
+          .select("resolved_by_agent_id")
+          .avg<{ resolved_by_agent_id: string; avg_handle_sec: string | number | null }[]>(
+            db.raw("EXTRACT(EPOCH FROM (resolved_at - created_at)) as avg_handle_sec")
+          ),
+    db("conversation_cases")
+      .where({
+        tenant_id: tenantId
+      })
+      .whereNotNull("resolved_at")
+      .where("resolved_at", ">=", cutoff)
+      .whereRaw("resolved_at > created_at")
+      .avg<{ avg_handle_sec: string | number | null }[]>(
+        db.raw("EXTRACT(EPOCH FROM (resolved_at - created_at)) as avg_handle_sec")
+      )
+      .first()
+  ]);
+
+  return {
+    byAgent: agentRows
+      .map((row) => ({
+        agentId: row.resolved_by_agent_id,
+        avgHandleSec: normalizeHandleSec(row.avg_handle_sec)
+      }))
+      .filter((row) => Boolean(row.agentId)),
+    tenantAvgHandleSec: normalizeHandleSec(tenantRow?.avg_handle_sec ?? null)
+  };
+}
+
+function normalizeHandleSec(raw: string | number | null | undefined): number {
+  const numeric = Number(raw ?? DEFAULT_HANDLE_SEC);
+  if (!Number.isFinite(numeric) || numeric <= 0) return DEFAULT_HANDLE_SEC;
+  return Math.max(MIN_HANDLE_SEC, Math.min(MAX_HANDLE_SEC, Math.round(numeric)));
+}
+
+function computeEstimatedWaitSec(candidate: Pick<AgentCandidateRow, "unreadCustomerConversations" | "avgHandleSec">): number {
+  const queuePosition = Math.max(candidate.unreadCustomerConversations, 0);
+  if (queuePosition <= 0) return 0;
+  return queuePosition * normalizeHandleSec(candidate.avgHandleSec);
 }
 
 function buildTeamAuditCandidates(

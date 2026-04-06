@@ -146,3 +146,15 @@ export type WaConversationDetail = {
     canForceAssign: boolean;
   };
 };
+
+export type WaContactItem = {
+  contactId: string;
+  waAccountId: string;
+  contactJid: string;
+  phoneE164: string | null;
+  displayName: string | null;
+  notifyName: string | null;
+  verifiedName: string | null;
+  createdAt: string;
+  updatedAt: string;
+};

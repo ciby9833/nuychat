@@ -27,6 +27,9 @@ function normalizePhoneE164(value: string | null) {
 
 function derivePhoneE164FromJid(jid: string | null) {
   if (!jid) return null;
+  // Only individual WA JIDs (@s.whatsapp.net) carry a phone number.
+  // Group JIDs (@g.us) and privacy-preserving LID JIDs (@lid) must not produce phone numbers.
+  if (!jid.endsWith("@s.whatsapp.net")) return null;
   const local = jid.split("@")[0] ?? "";
   return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
 }

@@ -33,9 +33,12 @@ export default {
       channel: "渠道",
       currentResponsible: "当前负责对象",
       reservedResponsible: "预分配对象",
+      queueState: "请求/排队状态",
       lastCustomerMessage: "最后客户消息",
       waitingDuration: "等待时长",
       minutes: "{{count}} 分钟",
+      queueAhead: "前面还有 {{count}} 位客户",
+      etaMinutes: "预计 {{count}} 分钟",
       firstResponse: "已首响",
       replied: "已回复",
       notReplied: "未回复",
@@ -49,7 +52,11 @@ export default {
       viewTooltip: "打开人工会话页查看详情与处理动作",
       handleTooltip: "主管工作台用于发现问题，具体介入/转接/关闭请在人工会话页处理",
       empty: "-",
-      aiSuffix: " (AI)"
+      aiSuffix: " (AI)",
+      humanRequested: "人工请求",
+      assignedWaiting: "已分配等待",
+      pendingUnavailable: "当前无人可服务",
+      aiFallbackAllowed: "允许回退AI"
     },
     agents: {
       title: "坐席状态",

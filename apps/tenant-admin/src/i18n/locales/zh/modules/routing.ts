@@ -13,6 +13,9 @@ export default {
       skillAndStrategy: "技能组 / 策略"
     },
     description: "平台现在会按渠道实例、部门/团队范围、在线人工、AI 座席、排班和实时负载做默认智能分配。这里仅保留少量例外规则。",
+    smartDefaultEnabled: "默认智能分配已启用",
+    exceptionRulesHint: "只有在默认智能分配不满足业务要求时，才需要新增例外规则。",
+    exceptionRule: "例外规则",
     form: {
       editRule: "编辑调度规则",
       createRule: "新增调度规则",

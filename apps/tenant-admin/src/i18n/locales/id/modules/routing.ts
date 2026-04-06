@@ -13,6 +13,9 @@ export default {
       skillAndStrategy: "Grup skill / Strategi"
     },
     description: "Platform kini menggunakan pembagian cerdas bawaan berdasarkan instance kanal, cakupan departemen atau tim, agen manusia yang online, seat AI, jadwal kerja, dan beban real-time. Aturan di sini hanya untuk beberapa pengecualian.",
+    smartDefaultEnabled: "Pembagian cerdas bawaan aktif",
+    exceptionRulesHint: "Tambahkan aturan pengecualian hanya bila pembagian cerdas bawaan benar-benar tidak memenuhi kebutuhan bisnis.",
+    exceptionRule: "Aturan Pengecualian",
     form: {
       editRule: "Edit aturan dispatch",
       createRule: "Aturan dispatch baru",

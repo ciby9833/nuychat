@@ -17,18 +17,39 @@ import {
 } from "./runtime/baileys-message.mapper.js";
 import {
   findWaMessageByProviderId,
-  getWaConversationListItem,
   incrementWaConversationUnread,
   insertRawEvent,
   insertWaMessage,
   insertWaMessageAttachment,
   insertWaMessageReaction,
+  patchWaConversationContactProfile,
+  patchWaConversationMemberProfile,
   updateWaMessageByProviderId,
   upsertWaConversation,
   upsertWaConversationMember
 } from "./wa-conversation.repository.js";
+import { emitWaConversationProjection } from "./wa-conversation-projection.service.js";
 import { createMissingReferenceGap, resolveGapsForArrivedMessage } from "./wa-reconcile.service.js";
-import { emitWaConversationUpdated, emitWaMessageUpdated } from "./wa-realtime.service.js";
+import { emitWaMessageUpdated } from "./wa-realtime.service.js";
+
+function asString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizePhoneE164(value: string | null) {
+  if (!value) return null;
+  const digits = value.replace(/[^\d]/g, "");
+  return digits ? `+${digits}` : null;
+}
+
+function derivePhoneE164FromJid(jid: string | null) {
+  if (!jid) return null;
+  // Only individual WA JIDs (@s.whatsapp.net) carry a phone number.
+  // Group JIDs (@g.us) and privacy-preserving LID JIDs (@lid) must not produce phone numbers.
+  if (!jid.endsWith("@s.whatsapp.net")) return null;
+  const local = jid.split("@")[0] ?? "";
+  return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
+}
 
 async function ingestSingleMessage(
   trx: Knex.Transaction,
@@ -40,10 +61,14 @@ async function ingestSingleMessage(
   }
 ) {
   const mapped = mapBaileysMessageToInbound(input.message);
-  if (!mapped) return;
+  if (!mapped) return null;
   const pushName = typeof input.message.pushName === "string" && input.message.pushName.trim()
     ? input.message.pushName.trim()
     : null;
+  const participantAlt = typeof input.message.key?.participantAlt === "string" && input.message.key.participantAlt.trim()
+    ? input.message.key.participantAlt.trim()
+    : null;
+  const fallbackPhone = derivePhoneE164FromJid(participantAlt);
 
   const remoteJid = mapped.chatJid;
   const providerMessageId = mapped.providerMessageId;
@@ -57,7 +82,7 @@ async function ingestSingleMessage(
     providerTs,
     payload: input.message as unknown as Record<string, unknown>
   });
-  if (!rawEvent) return;
+  if (!rawEvent) return null;
 
   const conversation = await upsertWaConversation(trx, {
     tenantId: input.tenantId,
@@ -70,24 +95,23 @@ async function ingestSingleMessage(
     contactPhoneE164: mapped.contactPhoneE164 ?? null
   });
 
+  if (mapped.conversationType === "direct" && mapped.direction === "inbound") {
+    await patchWaConversationContactProfile(trx, {
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      chatKeys: [mapped.chatJid],
+      contactName: pushName,
+      contactPhoneE164: fallbackPhone
+    });
+  }
+
   const existingMessage = await findWaMessageByProviderId(trx, {
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     providerMessageId
   });
   if (existingMessage) {
-    const conversationListItem = await getWaConversationListItem(trx, {
-      tenantId: input.tenantId,
-      waConversationId: conversation.waConversationId
-    });
-    if (conversationListItem) {
-      emitWaConversationUpdated({
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        conversation: conversationListItem
-      });
-    }
-    return;
+    return conversation.waConversationId;
   }
 
   const savedMessage = await insertWaMessage(trx, {
@@ -128,6 +152,13 @@ async function ingestSingleMessage(
       participantJid: mapped.participantJid,
       displayName: pushName
     });
+    if (participantAlt) {
+      await patchWaConversationMemberProfile(trx, {
+        tenantId: input.tenantId,
+        participantKeys: [participantAlt],
+        displayName: pushName
+      });
+    }
   }
 
   const attachment = mapped.attachment;
@@ -196,17 +227,7 @@ async function ingestSingleMessage(
     }
   }
 
-  const conversationListItem = await getWaConversationListItem(trx, {
-    tenantId: input.tenantId,
-    waConversationId: conversation.waConversationId
-  });
-  if (conversationListItem) {
-    emitWaConversationUpdated({
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      conversation: conversationListItem
-    });
-  }
+  return conversation.waConversationId;
 }
 
 export async function ingestBaileysMessagesUpsert(input: {
@@ -215,17 +236,29 @@ export async function ingestBaileysMessagesUpsert(input: {
   messages: WAMessage[];
   type: string;
 }) {
-  return withTenantTransaction(input.tenantId, async (trx) => {
+  const touchedConversationIds = await withTenantTransaction(input.tenantId, async (trx) => {
+    const touched = new Set<string>();
     for (const message of input.messages) {
-      await ingestSingleMessage(trx, {
+      const waConversationId = await ingestSingleMessage(trx, {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
         message,
         eventType: `MESSAGES_UPSERT:${input.type}`
       });
+      if (waConversationId) {
+        touched.add(waConversationId);
+      }
     }
-    return { ok: true, count: input.messages.length };
+    return Array.from(touched);
   });
+  for (const waConversationId of touchedConversationIds) {
+    await emitWaConversationProjection({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      waConversationId
+    });
+  }
+  return { ok: true, count: input.messages.length };
 }
 
 export async function ingestBaileysMessagesUpdate(input: {

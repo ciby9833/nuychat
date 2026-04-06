@@ -516,8 +516,11 @@ export type WaAccountListItem = {
   };
   actions: {
     canStartLogin: boolean;
+    startLoginReason?: string | null;
     canManageMembers: boolean;
     canViewHealth: boolean;
+    canLogout: boolean;
+    logoutReason: string | null;
     canReconnect: boolean;
     reconnectReason: string | null;
   };
@@ -543,8 +546,11 @@ export type WaAccountHealth = {
   };
   actions: {
     canStartLogin: boolean;
+    startLoginReason?: string | null;
     canManageMembers: boolean;
     canViewHealth: boolean;
+    canLogout: boolean;
+    logoutReason: string | null;
     canReconnect: boolean;
     reconnectReason: string | null;
   };
@@ -1011,6 +1017,12 @@ export type SupervisorConversationWorkbenchItem = {
   reservedResponsibleType: string | null;
   reservedResponsibleId: string | null;
   reservedResponsibleName: string | null;
+  serviceRequestMode: string | null;
+  queueMode: string | null;
+  queuePosition: number | null;
+  estimatedWaitSec: number | null;
+  aiFallbackAllowed: boolean;
+  lockedHumanSide: boolean;
   currentExceptionReason: string | null;
 };
 

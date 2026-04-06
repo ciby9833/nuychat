@@ -10,20 +10,102 @@
 import type { Chat, Contact, GroupMetadata, ParticipantAction, WAMessage } from "@whiskeysockets/baileys";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
-import { emitWaAccountUpdated, emitWaConversationUpdated } from "./wa-realtime.service.js";
+import { emitWaAccountUpdated } from "./wa-realtime.service.js";
 import { deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
 import { mapBaileysMessageToInbound } from "./runtime/baileys-message.mapper.js";
 import {
   findWaMessageByProviderId,
-  getWaConversationListItem,
   insertWaMessage,
   insertWaMessageAttachment,
   patchWaConversationChatState,
   patchWaConversationContactProfile,
   patchWaConversationMemberProfile,
+  upsertWaContact,
   upsertWaConversation,
   upsertWaConversationMember
 } from "./wa-conversation.repository.js";
+import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
+
+async function applyContactProjection(
+  trx: Parameters<Parameters<typeof withTenantTransaction>[1]>[0],
+  input: { tenantId: string; waAccountId: string; contact: Partial<Contact> }
+) {
+  const chatKeys = [input.contact.id, input.contact.lid, input.contact.phoneNumber ? `${input.contact.phoneNumber}@s.whatsapp.net` : null]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (chatKeys.length === 0) return;
+
+  const resolvedName = resolveContactName(input.contact);
+  const resolvedPhone = normalizePhoneE164(asString(input.contact.phoneNumber));
+
+  // Persist into wa_contacts so the workbench can show a contacts/friend list.
+  // Use the most specific individual JID as the primary key for the contact record.
+  const primaryJid =
+    (input.contact.id && !input.contact.id.endsWith("@g.us") ? input.contact.id : null) ??
+    input.contact.lid ??
+    (input.contact.phoneNumber ? `${input.contact.phoneNumber}@s.whatsapp.net` : null);
+  if (primaryJid) {
+    await upsertWaContact(trx, {
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      contactJid: primaryJid,
+      phoneE164: resolvedPhone,
+      displayName: resolvedName,
+      notifyName: asString(input.contact.notify),
+      verifiedName: asString(input.contact.verifiedName)
+    });
+  }
+
+  const rows = await patchWaConversationContactProfile(trx, {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    chatKeys,
+    contactName: resolvedName,
+    contactPhoneE164: resolvedPhone
+  });
+  await patchWaConversationMemberProfile(trx, {
+    tenantId: input.tenantId,
+    participantKeys: chatKeys,
+    displayName: resolvedName
+  });
+  for (const row of rows) {
+    await refreshWaConversationProjection(trx, {
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      waConversationId: row.waConversationId
+    });
+  }
+}
+
+async function applyGroupMetadataProjection(
+  trx: Parameters<Parameters<typeof withTenantTransaction>[1]>[0],
+  input: { tenantId: string; waAccountId: string; group: Partial<GroupMetadata> }
+) {
+  if (!input.group.id) return;
+  const conversation = await upsertWaConversation(trx, {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    chatJid: input.group.id,
+    conversationType: "group",
+    subject: typeof input.group.subject === "string" ? input.group.subject : undefined
+  });
+
+  for (const participant of input.group.participants ?? []) {
+    if (!participant.id) continue;
+    await upsertWaConversationMember(trx, {
+      tenantId: input.tenantId,
+      waConversationId: conversation.waConversationId,
+      participantJid: participant.id,
+      displayName: asString((participant as { name?: string | null }).name),
+      isAdmin: participant.admin === "admin" || participant.admin === "superadmin"
+    });
+  }
+
+  await refreshWaConversationProjection(trx, {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    waConversationId: conversation.waConversationId
+  });
+}
 
 function asString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -37,6 +119,9 @@ function normalizePhoneE164(value: string | null) {
 
 function derivePhoneE164FromJid(jid: string | null) {
   if (!jid) return null;
+  // Only individual WA JIDs (@s.whatsapp.net) carry a phone number.
+  // Group JIDs (@g.us) and privacy-preserving LID JIDs (@lid) must not produce phone numbers.
+  if (!jid.endsWith("@s.whatsapp.net")) return null;
   const local = jid.split("@")[0] ?? "";
   return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
 }
@@ -60,7 +145,7 @@ async function updateSessionSyncMeta(
 ) {
   const session = await trx("wa_account_sessions")
     .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
-    .orderBy("created_at", "desc")
+    .orderByRaw("coalesce(updated_at, heartbeat_at, created_at) desc, created_at desc")
     .first<{ session_id: string } | undefined>();
   if (!session) return;
 
@@ -222,24 +307,11 @@ export async function ingestBaileysGroupsUpdate(input: {
 }) {
   return withTenantTransaction(input.tenantId, async (trx) => {
     for (const group of input.groups) {
-      if (!group.id) continue;
-      const conversation = await upsertWaConversation(trx, {
+      await applyGroupMetadataProjection(trx, {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
-        chatJid: group.id,
-        conversationType: "group",
-        subject: typeof group.subject === "string" ? group.subject : null
+        group
       });
-
-      for (const participant of group.participants ?? []) {
-        if (!participant.id) continue;
-        await upsertWaConversationMember(trx, {
-          tenantId: input.tenantId,
-          waConversationId: conversation.waConversationId,
-          participantJid: participant.id,
-          isAdmin: participant.admin === "admin" || participant.admin === "superadmin"
-        });
-      }
     }
     await updateSessionSyncMeta(trx, {
       tenantId: input.tenantId,
@@ -297,9 +369,10 @@ export async function ingestBaileysChatsUpdate(input: {
         waAccountId: input.waAccountId,
         chatJid: chatId,
         conversationType: chatId.endsWith("@g.us") ? "group" : "direct",
-        subject: typeof chat.name === "string" ? chat.name : null,
-        contactJid: chatId.endsWith("@g.us") ? null : chatId,
-        contactPhoneE164: chatId.endsWith("@g.us") ? null : derivePhoneE164FromJid(chatId),
+        subject: typeof chat.name === "string" && chat.name.trim() ? chat.name : undefined,
+        contactJid: chatId.endsWith("@g.us") ? undefined : chatId,
+        contactName: chatId.endsWith("@g.us") ? undefined : (typeof chat.name === "string" && chat.name.trim() ? chat.name : undefined),
+        contactPhoneE164: chatId.endsWith("@g.us") ? undefined : derivePhoneE164FromJid(chatId),
         unreadCount: typeof chat.unreadCount === "number" ? chat.unreadCount : null
       });
       if (typeof chat.unreadCount === "number") {
@@ -311,17 +384,11 @@ export async function ingestBaileysChatsUpdate(input: {
           unreadCount: chat.unreadCount
         });
       }
-      const listItem = await getWaConversationListItem(trx, {
+      await refreshWaConversationProjection(trx, {
         tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
         waConversationId: conversation.waConversationId
       });
-      if (listItem) {
-        emitWaConversationUpdated({
-          tenantId: input.tenantId,
-          waAccountId: input.waAccountId,
-          conversation: listItem
-        });
-      }
     }
     await updateSessionSyncMeta(trx, {
       tenantId: input.tenantId,
@@ -342,34 +409,11 @@ export async function ingestBaileysContactsUpsert(input: {
 }) {
   return withTenantTransaction(input.tenantId, async (trx) => {
     for (const contact of input.contacts) {
-      const chatKeys = [contact.id, contact.lid, contact.phoneNumber ? `${contact.phoneNumber}@s.whatsapp.net` : null]
-        .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-      if (chatKeys.length === 0) continue;
-      const rows = await patchWaConversationContactProfile(trx, {
+      await applyContactProjection(trx, {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
-        chatKeys,
-        contactName: resolveContactName(contact),
-        contactPhoneE164: normalizePhoneE164(asString(contact.phoneNumber))
+        contact
       });
-      await patchWaConversationMemberProfile(trx, {
-        tenantId: input.tenantId,
-        participantKeys: chatKeys,
-        displayName: resolveContactName(contact)
-      });
-      for (const row of rows) {
-        const listItem = await getWaConversationListItem(trx, {
-          tenantId: input.tenantId,
-          waConversationId: row.waConversationId
-        });
-        if (listItem) {
-          emitWaConversationUpdated({
-            tenantId: input.tenantId,
-            waAccountId: input.waAccountId,
-            conversation: listItem
-          });
-        }
-      }
     }
     return { ok: true, count: input.contacts.length };
   });
@@ -382,34 +426,11 @@ export async function ingestBaileysContactsUpdate(input: {
 }) {
   return withTenantTransaction(input.tenantId, async (trx) => {
     for (const contact of input.contacts) {
-      const chatKeys = [contact.id, contact.lid, contact.phoneNumber ? `${contact.phoneNumber}@s.whatsapp.net` : null]
-        .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-      if (chatKeys.length === 0) continue;
-      const rows = await patchWaConversationContactProfile(trx, {
+      await applyContactProjection(trx, {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
-        chatKeys,
-        contactName: resolveContactName(contact),
-        contactPhoneE164: normalizePhoneE164(asString(contact.phoneNumber))
+        contact
       });
-      await patchWaConversationMemberProfile(trx, {
-        tenantId: input.tenantId,
-        participantKeys: chatKeys,
-        displayName: resolveContactName(contact)
-      });
-      for (const row of rows) {
-        const listItem = await getWaConversationListItem(trx, {
-          tenantId: input.tenantId,
-          waConversationId: row.waConversationId
-        });
-        if (listItem) {
-          emitWaConversationUpdated({
-            tenantId: input.tenantId,
-            waAccountId: input.waAccountId,
-            conversation: listItem
-          });
-        }
-      }
     }
     return { ok: true, count: input.contacts.length };
   });

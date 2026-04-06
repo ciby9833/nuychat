@@ -26,6 +26,7 @@ import {
   createWaAccountLoginTask,
   getWaAccountHealth,
   assignWaAccountMembers,
+  logoutWaAccount,
   reconnectWaAccount,
   updateWaAccountOwner
 } from "../../../api";
@@ -452,6 +453,7 @@ export function WaAccountsPane({
                     size="small"
                     icon={<LinkOutlined />}
                     disabled={!row.actions.canStartLogin}
+                    title={row.actions.startLoginReason ?? undefined}
                     onClick={() => {
                     void (async () => {
                       try {
@@ -465,6 +467,26 @@ export function WaAccountsPane({
                   </Button>
                   <Button size="small" disabled={!row.actions.canManageMembers} onClick={() => openAccess(row)}>成员分配</Button>
                   <Button size="small" disabled={!row.actions.canViewHealth} onClick={() => { void loadHealth(row); }}>健康状态</Button>
+                  <Button
+                    size="small"
+                    disabled={!row.actions.canLogout}
+                    title={row.actions.logoutReason ?? undefined}
+                    onClick={() => {
+                    void (async () => {
+                      try {
+                        await logoutWaAccount(row.waAccountId);
+                        setHealth((current) => current?.waAccountId === row.waAccountId ? null : current);
+                        setLoginTask((current) => current?.waAccountId === row.waAccountId ? null : current);
+                        void message.success("已退出 WA 会话");
+                        onReload();
+                      } catch (err) {
+                        void message.error((err as Error).message);
+                      }
+                    })();
+                  }}
+                  >
+                    退出WA
+                  </Button>
                   <Button
                     size="small"
                     disabled={!row.actions.canReconnect}

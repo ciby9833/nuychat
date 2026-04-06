@@ -50,11 +50,52 @@ export type WaSessionSnapshot = {
   hasGroupChats?: boolean | null;
 };
 
+export function normalizeWaSessionSnapshot<T extends WaSessionSnapshot | null>(session: T): T {
+  if (!session) return session;
+  const syncReady =
+    Boolean(session.historySyncedAt) &&
+    Boolean(session.chatsSyncedAt) &&
+    (!session.hasGroupChats || Boolean(session.groupsSyncedAt));
+
+  if (session.connectionState === "open" && syncReady) {
+    return {
+      ...session,
+      loginPhase: "connected"
+    } as T;
+  }
+
+  return session;
+}
+
+export function deriveWaAccountStatus(input: {
+  storedAccountStatus?: string | null;
+  session: WaSessionSnapshot | null;
+}) {
+  const session = normalizeWaSessionSnapshot(input.session);
+  if (!session) {
+    return input.storedAccountStatus ?? "offline";
+  }
+  if (session.connectionState === "open") {
+    return "online";
+  }
+  if (["qr_required", "qr_scanned", "connecting", "syncing"].includes(session.loginPhase ?? "")) {
+    return "pending_login";
+  }
+  if (session.disconnectReason === "401") {
+    return "offline";
+  }
+  if (["close", "idle"].includes(session.connectionState)) {
+    return "offline";
+  }
+  return input.storedAccountStatus ?? "offline";
+}
+
 export function deriveWaUiStatus(input: {
   accountStatus: string;
   session: WaSessionSnapshot | null;
 }): WaUiStatus {
-  if (!input.session) {
+  const session = normalizeWaSessionSnapshot(input.session);
+  if (!session) {
     return {
       code: "never_logged_in",
       label: "未登录",
@@ -63,7 +104,7 @@ export function deriveWaUiStatus(input: {
     };
   }
 
-  if (input.session.disconnectReason === "401") {
+  if (session.disconnectReason === "401") {
     return {
       code: "session_expired",
       label: "会话失效",
@@ -72,12 +113,12 @@ export function deriveWaUiStatus(input: {
     };
   }
 
-  switch (input.session.loginPhase) {
+  switch (session.loginPhase) {
     case "qr_required":
       return {
         code: "qr_required",
         label: "扫码中",
-        detail: input.session.qrCodeAvailable ? "请使用 WhatsApp 扫码登录。" : "正在准备二维码，请稍候。",
+        detail: session.qrCodeAvailable ? "请使用 WhatsApp 扫码登录。" : "正在准备二维码，请稍候。",
         tone: "warning"
       };
     case "qr_scanned":
@@ -137,7 +178,8 @@ export function deriveWaSyncStatus(input: {
   uiStatusCode: WaUiStatusCode;
   session: WaSessionSnapshot | null;
 }): WaSyncStatus {
-  if (input.uiStatusCode !== "connected" || !input.session) {
+  const session = normalizeWaSessionSnapshot(input.session);
+  if (input.uiStatusCode !== "connected" || !session) {
     return {
       code: "none",
       label: "未同步",
@@ -146,7 +188,7 @@ export function deriveWaSyncStatus(input: {
     };
   }
 
-  if (!input.session.historySyncedAt) {
+  if (!session.historySyncedAt) {
     return {
       code: "syncing_history",
       label: "同步消息",
@@ -155,7 +197,7 @@ export function deriveWaSyncStatus(input: {
     };
   }
 
-  if (!input.session.chatsSyncedAt) {
+  if (!session.chatsSyncedAt) {
     return {
       code: "syncing_chats",
       label: "同步会话",
@@ -164,7 +206,7 @@ export function deriveWaSyncStatus(input: {
     };
   }
 
-  if (input.session.hasGroupChats && !input.session.groupsSyncedAt) {
+  if (session.hasGroupChats && !session.groupsSyncedAt) {
     return {
       code: "syncing_groups",
       label: "同步群组",
@@ -185,15 +227,30 @@ export function deriveWaActions(input: {
   lastConnectedAt: string | null;
   session: WaSessionSnapshot | null;
 }) {
-  const loginInProgress = ["qr_required", "qr_scanned", "connecting", "syncing"].includes(input.session?.loginPhase ?? "");
-  const sessionExpired = input.session?.disconnectReason === "401";
+  const session = normalizeWaSessionSnapshot(input.session);
+  const loginInProgress = ["qr_required", "qr_scanned", "connecting", "syncing"].includes(session?.loginPhase ?? "");
+  const connected = session?.connectionState === "open" && session?.loginPhase === "connected";
+  const sessionExpired = session?.disconnectReason === "401";
   const canReconnect = Boolean(input.lastConnectedAt) && !loginInProgress && !sessionExpired;
+  const canLogout = Boolean(session) && !loginInProgress;
+  const canStartLogin = !connected && !loginInProgress;
 
   return {
-    canStartLogin: true,
+    canStartLogin,
     canManageMembers: true,
     canViewHealth: true,
+    canLogout,
+    logoutReason: !session
+      ? "当前账号还没有登录会话"
+      : loginInProgress
+        ? "当前账号正在登录中"
+        : null,
     canReconnect,
+    startLoginReason: connected
+      ? "当前账号已在线，无需重新扫码登录"
+      : loginInProgress
+        ? "当前账号正在登录中"
+        : null,
     reconnectReason: !input.lastConnectedAt
       ? "请先完成扫码登录后再重连"
       : sessionExpired

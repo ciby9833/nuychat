@@ -8,24 +8,22 @@
  */
 import type { Knex } from "knex";
 
-import { getWaProviderAdapter } from "./provider/provider-registry.js";
+import { waProviderAdapter } from "./provider/provider-registry.js";
 import { deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
 import { assertCanReplyToWaConversation, releaseWaConversation, takeOverWaConversation } from "./wa-assignment.service.js";
 import { createWaLoginTask, listAccessibleWaAccounts, upsertWaAccountSession } from "./wa-account.repository.js";
 import {
-  backfillWaConversationProfilesFromMessages,
   getConversationMembers,
   getConversationMessages,
   getWaConversationById,
   insertWaMessage,
   insertWaMessageAttachment,
   insertWaMessageReaction,
-  patchWaConversationChatState,
   resetWaConversationUnread,
-  listWaConversations
+  listWaConversations,
+  listWaContacts
 } from "./wa-conversation.repository.js";
-import { upsertWaConversationMember } from "./wa-conversation.repository.js";
-import { emitWaConversationUpdated } from "./wa-realtime.service.js";
+import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
 
 function includeAllForRole(role: string) {
   return ["tenant_admin", "admin", "supervisor", "readonly"].includes(role);
@@ -84,11 +82,10 @@ export async function createWorkbenchLoginTask(
   }
   const latestSession = await trx("wa_account_sessions")
     .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
-    .orderBy("created_at", "desc")
+    .orderByRaw("coalesce(updated_at, heartbeat_at, created_at) desc, created_at desc")
     .first<Record<string, unknown> | undefined>();
   const forceFresh = String(latestSession?.disconnect_reason ?? "") === "401";
-  const provider = getWaProviderAdapter();
-  const ticket = await provider.createLoginTicket({
+  const ticket = await waProviderAdapter.createLoginTicket({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     instanceKey: account.instanceKey,
@@ -181,62 +178,6 @@ export async function getWorkbenchConversationDetail(
   if (!conversation) throw new Error("Conversation not found");
   await assertConversationAccessible(trx, input);
 
-  await backfillWaConversationProfilesFromMessages(trx, {
-    tenantId: input.tenantId,
-    waAccountId: conversation.waAccountId,
-    waConversationId: input.waConversationId
-  });
-  conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId);
-  if (!conversation) throw new Error("Conversation not found");
-
-  if (conversation.conversationType === "group") {
-    const currentMembers = await getConversationMembers(trx, input.tenantId, input.waConversationId);
-    if (!conversation.subject || currentMembers.length <= 1) {
-      const account = await trx("wa_accounts")
-        .where({
-          tenant_id: input.tenantId,
-          wa_account_id: conversation.waAccountId
-        })
-        .select("instance_key")
-        .first<Record<string, unknown> | undefined>();
-      if (account?.instance_key) {
-        try {
-          const metadata = await getWaProviderAdapter().fetchGroupMetadata({
-            tenantId: input.tenantId,
-            waAccountId: conversation.waAccountId,
-            instanceKey: String(account.instance_key),
-            chatJid: conversation.chatJid
-          });
-          if (metadata) {
-            await patchWaConversationChatState(trx, {
-              tenantId: input.tenantId,
-              waAccountId: conversation.waAccountId,
-              chatJid: conversation.chatJid,
-              conversationType: "group",
-              subject: metadata.subject ?? conversation.subject ?? null
-            });
-            for (const participant of metadata.participants) {
-              await upsertWaConversationMember(trx, {
-                tenantId: input.tenantId,
-                waConversationId: input.waConversationId,
-                participantJid: participant.jid,
-                displayName: participant.displayName ?? null,
-                isAdmin: participant.isAdmin ?? false
-              });
-            }
-            conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId);
-          }
-        } catch (error) {
-          console.warn("[wa-workbench] fetch group metadata failed", {
-            tenantId: input.tenantId,
-            waConversationId: input.waConversationId,
-            error
-          });
-        }
-      }
-    }
-  }
-
   if (conversation.unreadCount > 0) {
     const account = await trx("wa_accounts")
       .where({
@@ -266,7 +207,7 @@ export async function getWorkbenchConversationDetail(
       const id = typeof key?.id === "string" ? key.id : null;
       if (id) {
         try {
-          await getWaProviderAdapter().markConversationRead({
+          await waProviderAdapter.markConversationRead({
             tenantId: input.tenantId,
             waAccountId: conversation.waAccountId,
             instanceKey: String(account.instance_key),
@@ -292,14 +233,12 @@ export async function getWorkbenchConversationDetail(
       waAccountId: conversation.waAccountId,
       chatJid: conversation.chatJid
     });
+    await refreshWaConversationProjection(trx, {
+      tenantId: input.tenantId,
+      waAccountId: conversation.waAccountId,
+      waConversationId: input.waConversationId
+    });
     conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId);
-    if (conversation) {
-      emitWaConversationUpdated({
-        tenantId: input.tenantId,
-        waAccountId: conversation.waAccountId,
-        conversation
-      });
-    }
   }
 
   const [messages, members] = await Promise.all([
@@ -390,23 +329,8 @@ export async function enqueueWorkbenchTextMessage(
 
   const conversation = await getConversationRow(trx, input);
 
-  const [job] = await trx("wa_outbound_jobs")
-    .insert({
-      tenant_id: input.tenantId,
-      wa_account_id: String(conversation.wa_account_id),
-      wa_conversation_id: input.waConversationId,
-      created_by_membership_id: input.membershipId,
-      client_message_id: input.clientMessageId,
-      job_type: "send_text",
-      send_status: "queued",
-      payload: JSON.stringify({
-        text: input.text,
-        quotedMessageId: input.quotedMessageId ?? null,
-        waMessageId: null // filled after message insert below
-      })
-    })
-    .returning("*");
-
+  // Insert the message FIRST so the real waMessageId can be stored in the job payload.
+  // This allows wa-startup to re-enqueue stuck jobs with a valid waMessageId.
   const message = await insertWaMessage(trx, {
     tenantId: input.tenantId,
     waAccountId: String(conversation.wa_account_id),
@@ -421,6 +345,23 @@ export async function enqueueWorkbenchTextMessage(
     deliveryStatus: "pending"
   });
 
+  const [job] = await trx("wa_outbound_jobs")
+    .insert({
+      tenant_id: input.tenantId,
+      wa_account_id: String(conversation.wa_account_id),
+      wa_conversation_id: input.waConversationId,
+      created_by_membership_id: input.membershipId,
+      client_message_id: input.clientMessageId,
+      job_type: "send_text",
+      send_status: "queued",
+      payload: JSON.stringify({
+        text: input.text,
+        quotedMessageId: input.quotedMessageId ?? null,
+        waMessageId: String(message.wa_message_id)
+      })
+    })
+    .returning("*");
+
   return {
     jobId: String(job.job_id),
     waMessageId: String(message.wa_message_id),
@@ -430,6 +371,7 @@ export async function enqueueWorkbenchTextMessage(
       waAccountId: String(conversation.wa_account_id),
       waConversationId: input.waConversationId,
       waMessageId: String(message.wa_message_id),
+      createdByMembershipId: input.membershipId,
       jobType: "send_text",
       text: input.text,
       quotedMessageId: input.quotedMessageId ?? null
@@ -462,26 +404,7 @@ export async function enqueueWorkbenchMediaMessage(
 
   const conversation = await getConversationRow(trx, input);
 
-  const [job] = await trx("wa_outbound_jobs")
-    .insert({
-      tenant_id: input.tenantId,
-      wa_account_id: String(conversation.wa_account_id),
-      wa_conversation_id: input.waConversationId,
-      created_by_membership_id: input.membershipId,
-      client_message_id: input.clientMessageId,
-      job_type: "send_media",
-      send_status: "queued",
-      payload: JSON.stringify({
-        mediaType: input.mediaType,
-        mimeType: input.mimeType,
-        fileName: input.fileName,
-        mediaUrl: input.mediaUrl,
-        caption: input.caption ?? null,
-        quotedMessageId: input.quotedMessageId ?? null
-      })
-    })
-    .returning("*");
-
+  // Insert the message and attachment FIRST so waMessageId is available for the job payload.
   const message = await insertWaMessage(trx, {
     tenantId: input.tenantId,
     waAccountId: String(conversation.wa_account_id),
@@ -505,6 +428,27 @@ export async function enqueueWorkbenchMediaMessage(
     storageUrl: input.mediaUrl
   });
 
+  const [job] = await trx("wa_outbound_jobs")
+    .insert({
+      tenant_id: input.tenantId,
+      wa_account_id: String(conversation.wa_account_id),
+      wa_conversation_id: input.waConversationId,
+      created_by_membership_id: input.membershipId,
+      client_message_id: input.clientMessageId,
+      job_type: "send_media",
+      send_status: "queued",
+      payload: JSON.stringify({
+        mediaType: input.mediaType,
+        mimeType: input.mimeType,
+        fileName: input.fileName,
+        mediaUrl: input.mediaUrl,
+        caption: input.caption ?? null,
+        quotedMessageId: input.quotedMessageId ?? null,
+        waMessageId: String(message.wa_message_id)
+      })
+    })
+    .returning("*");
+
   return {
     jobId: String(job.job_id),
     waMessageId: String(message.wa_message_id),
@@ -514,6 +458,7 @@ export async function enqueueWorkbenchMediaMessage(
       waAccountId: String(conversation.wa_account_id),
       waConversationId: input.waConversationId,
       waMessageId: String(message.wa_message_id),
+      createdByMembershipId: input.membershipId,
       jobType: "send_media" as const,
       text: input.caption ?? "",
       mediaType: input.mediaType,
@@ -581,10 +526,27 @@ export async function enqueueWorkbenchReaction(
       waAccountId: String(conversation.wa_account_id),
       waConversationId: input.waConversationId,
       waMessageId: input.targetWaMessageId,
+      createdByMembershipId: input.membershipId,
       jobType: "send_reaction" as const,
       emoji: input.emoji,
       reactionTargetId: String(target.provider_message_id ?? ""),
       remoteJid: String(conversation.chat_jid)
     }
   };
+}
+
+export async function listWorkbenchContacts(
+  trx: Knex.Transaction,
+  input: { tenantId: string; membershipId: string; role: string; waAccountId: string; search?: string | null }
+) {
+  // Verify the requesting member can access this WA account.
+  const accounts = await listWorkbenchAccounts(trx, input);
+  if (!accounts.some((item) => item.waAccountId === input.waAccountId)) {
+    throw new Error("WA account not accessible");
+  }
+  return listWaContacts(trx, {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    search: input.search ?? null
+  });
 }

@@ -22,6 +22,15 @@ export class QueueAssignmentService {
       lockedHumanSide?: boolean;
     }
   ) {
+    const serviceRequestMode = input.serviceRequestMode ?? "normal";
+    const queueMode = input.queueMode ?? "none";
+    const aiFallbackAllowed = input.aiFallbackAllowed ?? false;
+    const lockedHumanSide = input.lockedHumanSide ?? false;
+    const derivedHandoffRequired = serviceRequestMode === "human_requested";
+    const derivedHandoffReason = derivedHandoffRequired
+      ? (input.reason ?? "human_service_requested")
+      : null;
+
     const [assignment] = await db("queue_assignments")
       .insert({
         tenant_id: input.tenantId,
@@ -34,12 +43,14 @@ export class QueueAssignmentService {
         priority: input.priority,
         status: input.status,
         assignment_reason: input.reason ?? null,
-        service_request_mode: input.serviceRequestMode ?? "normal",
-        queue_mode: input.queueMode ?? "none",
+        handoff_required: derivedHandoffRequired,
+        handoff_reason: derivedHandoffReason,
+        service_request_mode: serviceRequestMode,
+        queue_mode: queueMode,
         queue_position: input.queuePosition ?? null,
         estimated_wait_sec: input.estimatedWaitSec ?? null,
-        ai_fallback_allowed: input.aiFallbackAllowed ?? false,
-        locked_human_side: input.lockedHumanSide ?? false
+        ai_fallback_allowed: aiFallbackAllowed,
+        locked_human_side: lockedHumanSide
       })
       .onConflict(["conversation_id"])
       .merge({
@@ -51,12 +62,14 @@ export class QueueAssignmentService {
         priority: input.priority,
         status: input.status,
         assignment_reason: input.reason ?? null,
-        service_request_mode: input.serviceRequestMode ?? "normal",
-        queue_mode: input.queueMode ?? "none",
+        handoff_required: derivedHandoffRequired,
+        handoff_reason: derivedHandoffReason,
+        service_request_mode: serviceRequestMode,
+        queue_mode: queueMode,
         queue_position: input.queuePosition ?? null,
         estimated_wait_sec: input.estimatedWaitSec ?? null,
-        ai_fallback_allowed: input.aiFallbackAllowed ?? false,
-        locked_human_side: input.lockedHumanSide ?? false,
+        ai_fallback_allowed: aiFallbackAllowed,
+        locked_human_side: lockedHumanSide,
         updated_at: db.fn.now()
       })
       .returning(["assignment_id"]);
@@ -73,12 +86,12 @@ export class QueueAssignmentService {
         assignedAiAgentId: input.assignedAiAgentId ?? null,
         status: input.status,
         reason: input.reason ?? null,
-        serviceRequestMode: input.serviceRequestMode ?? "normal",
-        queueMode: input.queueMode ?? "none",
+        serviceRequestMode,
+        queueMode,
         queuePosition: input.queuePosition ?? null,
         estimatedWaitSec: input.estimatedWaitSec ?? null,
-        aiFallbackAllowed: input.aiFallbackAllowed ?? false,
-        lockedHumanSide: input.lockedHumanSide ?? false
+        aiFallbackAllowed,
+        lockedHumanSide
       }
     });
 

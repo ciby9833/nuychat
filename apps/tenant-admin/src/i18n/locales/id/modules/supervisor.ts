@@ -33,9 +33,12 @@ export default {
       channel: "Kanal",
       currentResponsible: "Penanggung Jawab Saat Ini",
       reservedResponsible: "Penanggung Jawab Cadangan",
+      queueState: "Status Permintaan / Antrean",
       lastCustomerMessage: "Pesan Pelanggan Terakhir",
       waitingDuration: "Durasi Menunggu",
       minutes: "{{count}} menit",
+      queueAhead: "{{count}} pelanggan di depan",
+      etaMinutes: "Estimasi {{count}} menit",
       firstResponse: "Respons Pertama",
       replied: "Sudah Dijawab",
       notReplied: "Belum Dijawab",
@@ -49,7 +52,11 @@ export default {
       viewTooltip: "Buka Percakapan Manual untuk melihat detail dan aksi.",
       handleTooltip: "Dashboard supervisor digunakan untuk menemukan masalah. Intervensi, transfer, dan penutupan dilakukan di Percakapan Manual.",
       empty: "-",
-      aiSuffix: " (AI)"
+      aiSuffix: " (AI)",
+      humanRequested: "Minta Manusia",
+      assignedWaiting: "Sudah Dialokasikan",
+      pendingUnavailable: "Tidak ada manusia yang siap melayani",
+      aiFallbackAllowed: "AI boleh mengambil alih"
     },
     agents: {
       title: "Status Agen",

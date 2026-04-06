@@ -29,7 +29,7 @@ import {
 } from "../wa-baileys-sync.service.js";
 import { ingestBaileysMessageReceipts } from "../wa-baileys-receipt.service.js";
 import { emitWaAccountUpdated } from "../wa-realtime.service.js";
-import { deriveWaSyncStatus, deriveWaUiStatus } from "../wa-session-status.js";
+import { deriveWaAccountStatus, deriveWaSyncStatus, deriveWaUiStatus } from "../wa-session-status.js";
 import { createBaileysAuthState, persistBaileysAuthSnapshot, resetBaileysAuthState } from "./baileys-auth.repository.js";
 import { getBaileysRuntimeConfig } from "./baileys-config.js";
 import { mapBaileysMessageToInbound } from "./baileys-message.mapper.js";
@@ -144,15 +144,25 @@ async function persistSessionState(
   }
 ) {
   const occurredAt = new Date().toISOString();
-  const accountStatus =
-    input.loginPhase === "connected" ? "online" :
-    input.loginPhase === "qr_required" || input.loginPhase === "qr_scanned" || input.loginPhase === "syncing" || input.loginPhase === "connecting" ? "pending_login" :
-    "offline";
+  const sessionSnapshot = {
+    connectionState: input.connectionState,
+    loginPhase: input.loginPhase,
+    disconnectReason: input.disconnectReason ?? null,
+    qrCodeAvailable: Boolean(input.qrCode),
+    historySyncedAt: null,
+    chatsSyncedAt: null,
+    groupsSyncedAt: null,
+    hasGroupChats: null
+  } as const;
+  const accountStatus = deriveWaAccountStatus({
+    storedAccountStatus: null,
+    session: sessionSnapshot
+  });
 
   await withTenantTransaction(tenantId, async (trx) => {
     const existing = await trx("wa_account_sessions")
       .where({ tenant_id: tenantId, wa_account_id: waAccountId })
-      .orderBy("created_at", "desc")
+      .orderByRaw("coalesce(updated_at, heartbeat_at, created_at) desc, created_at desc")
       .first<Record<string, unknown> | undefined>();
 
     const sessionMeta = {
@@ -206,22 +216,12 @@ async function persistSessionState(
 
   emitWaAccountUpdated({
     ...(function buildStatuses() {
-      const session = {
-        connectionState: input.connectionState,
-        loginPhase: input.loginPhase,
-        disconnectReason: input.disconnectReason ?? null,
-        qrCodeAvailable: Boolean(input.qrCode),
-        historySyncedAt: null,
-        chatsSyncedAt: null,
-        groupsSyncedAt: null,
-        hasGroupChats: null
-      };
-      const uiStatus = deriveWaUiStatus({ accountStatus, session });
+      const uiStatus = deriveWaUiStatus({ accountStatus, session: sessionSnapshot });
       return {
         uiStatus,
         syncStatus: deriveWaSyncStatus({
           uiStatusCode: uiStatus.code,
-          session
+          session: sessionSnapshot
         })
       };
     })(),
@@ -525,11 +525,21 @@ async function buildSocket(input: {
   });
 
   socket.ev.on("groups.update", (groups) => {
-    void ingestBaileysGroupsUpdate({
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      groups
-    }).catch((error) => {
+    void (async () => {
+      const hydratedGroups = await Promise.all(groups.map(async (group) => {
+        if (!group.id?.endsWith("@g.us")) return group;
+        try {
+          return await socket.groupMetadata(group.id);
+        } catch {
+          return group;
+        }
+      }));
+      await ingestBaileysGroupsUpdate({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        groups: hydratedGroups
+      });
+    })().catch((error) => {
       console.error("[wa-baileys] groups.update ingest failed", {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
@@ -539,13 +549,25 @@ async function buildSocket(input: {
   });
 
   socket.ev.on("group-participants.update", (event) => {
-    void ingestBaileysGroupParticipantsUpdate({
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      chatJid: event.id,
-      participants: event.participants,
-      action: event.action
-    }).catch((error) => {
+    void (async () => {
+      try {
+        const metadata = await socket.groupMetadata(event.id);
+        await ingestBaileysGroupsUpdate({
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          groups: [metadata]
+        });
+        return;
+      } catch {
+        await ingestBaileysGroupParticipantsUpdate({
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          chatJid: event.id,
+          participants: event.participants,
+          action: event.action
+        });
+      }
+    })().catch((error) => {
       console.error("[wa-baileys] group-participants.update ingest failed", {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
@@ -663,29 +685,6 @@ export function getBaileysHistorySnapshot(input: {
   return bucket.slice(-(input.limit ?? 50));
 }
 
-export async function fetchBaileysGroupMetadata(input: {
-  tenantId: string;
-  waAccountId: string;
-  instanceKey: string;
-  chatJid: string;
-}) {
-  const runtime = await ensureBaileysRuntime({
-    tenantId: input.tenantId,
-    waAccountId: input.waAccountId,
-    instanceKey: input.instanceKey,
-    loginMode: "group_metadata"
-  });
-  const metadata = await runtime.socket.groupMetadata(input.chatJid);
-  return {
-    subject: typeof metadata.subject === "string" ? metadata.subject : null,
-    participants: (metadata.participants ?? []).map((participant) => ({
-      jid: participant.id,
-      displayName: null,
-      isAdmin: participant.admin === "admin" || participant.admin === "superadmin"
-    }))
-  };
-}
-
 export async function createBaileysLoginTicket(input: {
   tenantId: string;
   waAccountId: string;
@@ -780,6 +779,46 @@ export async function restartBaileysRuntime(input: {
   });
 
   return { connectionState: runtime.connectionState };
+}
+
+export async function logoutBaileysRuntime(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+}): Promise<{ ok: true }> {
+  const key = runtimeKey(input.tenantId, input.waAccountId);
+  const existing = runtimes.get(key);
+  if (existing) {
+    if (existing.syncFinalizeTimer) {
+      clearTimeout(existing.syncFinalizeTimer);
+    }
+    try {
+      await existing.socket.logout();
+    } catch {
+      try {
+        existing.socket.end(new Error("manual logout"));
+      } catch {
+        // ignore
+      }
+    }
+    runtimes.delete(key);
+  }
+
+  await resetBaileysAuthState(input.tenantId, input.waAccountId);
+
+  await persistSessionState(input.tenantId, input.waAccountId, {
+    sessionRef: `${input.instanceKey}:logged-out`,
+    connectionState: "close",
+    loginPhase: "idle",
+    loginMode: "admin_logout",
+    qrCode: null,
+    disconnectReason: "manual_logout",
+    isOnline: false,
+    phoneConnected: false,
+    receivedPendingNotifications: false
+  });
+
+  return { ok: true };
 }
 
 export async function markBaileysConversationRead(input: {
