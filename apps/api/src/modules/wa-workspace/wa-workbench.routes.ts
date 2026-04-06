@@ -21,9 +21,11 @@ import {
   getWorkbenchConversationDetail,
   listWorkbenchAccounts,
   listWorkbenchConversations,
+  loadMoreWorkbenchMessages,
   releaseWorkbenchConversation,
   takeOverWorkbenchConversation,
-  listWorkbenchContacts
+  listWorkbenchContacts,
+  openWorkbenchContactConversation
 } from "./wa-workbench.service.js";
 import { getWaRuntimeStatus } from "./wa-runtime.service.js";
 
@@ -68,6 +70,26 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     const { waConversationId } = req.params as { waConversationId: string };
     return withTenantTransaction(auth.tenantId, async (trx) =>
       getWorkbenchConversationDetail(trx, { ...auth, waConversationId })
+    );
+  });
+
+  // Load earlier messages (pagination) — returns messages older than beforeSeq
+  app.get("/api/wa/workbench/conversations/:waConversationId/messages", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { waConversationId } = req.params as { waConversationId: string };
+    const query = req.query as { beforeSeq?: string; limit?: string };
+    const beforeSeq = query.beforeSeq ? Number(query.beforeSeq) : null;
+    if (beforeSeq === null || !Number.isFinite(beforeSeq)) {
+      throw app.httpErrors.badRequest("beforeSeq (number) is required");
+    }
+    const limit = query.limit ? Math.min(Number(query.limit) || 50, 100) : 50;
+    return withTenantTransaction(auth.tenantId, async (trx) =>
+      loadMoreWorkbenchMessages(trx, {
+        ...auth,
+        waConversationId,
+        beforeLogicalSeq: beforeSeq,
+        limit
+      })
     );
   });
 
@@ -237,6 +259,115 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     }
     return withTenantTransaction(auth.tenantId, async (trx) =>
       listWorkbenchContacts(trx, { ...auth, waAccountId: accountId, search: search ?? null })
+    );
+  });
+
+  // ─── Media proxy (decrypt WhatsApp CDN media) ───────────────────────────────
+  // WhatsApp CDN URLs (mmg.whatsapp.net/*.enc) are AES-CBC encrypted.
+  // This endpoint fetches and decrypts media server-side using the stored mediaKey,
+  // then streams the clear-text bytes back to the browser.
+  // Token may be passed as ?token= query param since <img>/<video>/<audio> cannot set headers.
+  app.get("/api/wa/media/:attachmentId", async (req, reply) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { attachmentId } = req.params as { attachmentId: string };
+
+    const result = await withTenantTransaction(auth.tenantId, async (trx) => {
+      const att = await trx("wa_message_attachments")
+        .where({ tenant_id: auth.tenantId, attachment_id: attachmentId })
+        .first<Record<string, unknown> | undefined>();
+      if (!att) return null;
+      return att;
+    });
+
+    if (!result) throw app.httpErrors.notFound("Attachment not found");
+
+    // provider_payload on the attachment row IS the full raw Baileys WAMessage,
+    // which contains the mediaKey, fileEncSha256, directPath, etc. needed for decryption.
+    const rawPayload = result.provider_payload;
+    const payload = rawPayload
+      ? (typeof rawPayload === "string" ? JSON.parse(String(rawPayload)) : rawPayload) as Record<string, unknown>
+      : null;
+
+    const attachmentType = String(result.attachment_type) as "image" | "video" | "audio" | "document" | "sticker";
+    const contentKeyMap: Record<string, string> = {
+      image: "imageMessage",
+      video: "videoMessage",
+      audio: "audioMessage",
+      document: "documentMessage",
+      sticker: "stickerMessage"
+    };
+    const msgContent = (payload?.message as Record<string, unknown> | null)?.[contentKeyMap[attachmentType]] as Record<string, unknown> | null;
+    if (!msgContent) {
+      throw app.httpErrors.notFound("Media content not available in stored payload");
+    }
+
+    // Buffers become { type:"Buffer", data:[...] } or {0:1,1:2,...} after JSON round-trip.
+    function toBuffer(v: unknown): Buffer | undefined {
+      if (!v) return undefined;
+      if (Buffer.isBuffer(v)) return v;
+      if (v instanceof Uint8Array) return Buffer.from(v);
+      if (typeof v === "string") return Buffer.from(v, "base64");
+      if (typeof v === "object") {
+        const o = v as Record<string, unknown>;
+        if (o["type"] === "Buffer" && Array.isArray(o["data"])) return Buffer.from(o["data"] as number[]);
+        const keys = Object.keys(o).filter((k) => /^\d+$/.test(k));
+        if (keys.length > 0) return Buffer.from(keys.sort((a, b) => Number(a) - Number(b)).map((k) => Number(o[k])));
+      }
+      return undefined;
+    }
+
+    const reconstructed = {
+      ...msgContent,
+      mediaKey: toBuffer(msgContent["mediaKey"]),
+      fileEncSha256: toBuffer(msgContent["fileEncSha256"]),
+      fileSha256: toBuffer(msgContent["fileSha256"])
+    };
+
+    if (!reconstructed.mediaKey) {
+      throw app.httpErrors.badGateway("Media key missing — cannot decrypt");
+    }
+
+    try {
+      const { downloadContentFromMessage } = await import("@whiskeysockets/baileys");
+      const stream = await downloadContentFromMessage(
+        reconstructed as Parameters<typeof downloadContentFromMessage>[0],
+        attachmentType
+      );
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk as Buffer);
+      }
+      const buffer = Buffer.concat(chunks);
+
+      const mimeType = result.mime_type ? String(result.mime_type) : "application/octet-stream";
+      const fileName = result.file_name ? String(result.file_name) : null;
+
+      void reply.header("Content-Type", mimeType);
+      void reply.header("Cache-Control", "private, max-age=86400");
+      if (fileName) {
+        void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
+      }
+      return reply.send(buffer);
+    } catch (error) {
+      app.log.error({ attachmentId, error }, "[wa-media-proxy] decrypt/download failed");
+      throw app.httpErrors.badGateway("Failed to fetch media from WhatsApp");
+    }
+  });
+
+  app.post("/api/wa/workbench/contacts/:contactId/open", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { contactId } = req.params as { contactId: string };
+    const body = req.body as { accountId?: string };
+    if (!body.accountId) {
+      throw app.httpErrors.badRequest("accountId is required");
+    }
+    return withTenantTransaction(auth.tenantId, async (trx) =>
+      openWorkbenchContactConversation(trx, {
+        ...auth,
+        waAccountId: body.accountId!,
+        contactId
+      })
     );
   });
 }

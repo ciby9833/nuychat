@@ -19,6 +19,8 @@ import type {
   ConversationPreviewDetail,
   ConversationViewSummaries,
   MessageAttachment,
+  MessageItem,
+  PaginatedMessagesResponse,
   RealtimeReplayEvent,
   Session,
   WaRuntimeStatus
@@ -391,6 +393,28 @@ export function getConversationPreview(
   session: Session
 ): Promise<ConversationPreviewDetail> {
   return apiFetch<ConversationPreviewDetail>(`/api/conversations/${conversationId}/preview`, session);
+}
+
+export function listConversationMessages(
+  conversationId: string,
+  session: Session,
+  params: { before?: string | null; limit?: number } = {}
+): Promise<PaginatedMessagesResponse> {
+  const qs = new URLSearchParams();
+  if (params.before) qs.set("before", params.before);
+  if (params.limit) qs.set("limit", String(params.limit));
+  return apiFetch<PaginatedMessagesResponse>(
+    `/api/conversations/${conversationId}/messages${qs.size ? `?${qs.toString()}` : ""}`,
+    session
+  );
+}
+
+export function getConversationMessage(
+  conversationId: string,
+  messageId: string,
+  session: Session
+): Promise<MessageItem> {
+  return apiFetch<MessageItem>(`/api/conversations/${conversationId}/messages/${messageId}`, session);
 }
 
 export function getRealtimeReplay(

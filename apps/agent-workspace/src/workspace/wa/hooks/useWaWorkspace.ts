@@ -15,7 +15,10 @@ import {
   forceAssignWaConversation,
   getWaWorkbenchConversationDetail,
   listWaWorkbenchAccounts,
+  listWaWorkbenchContacts,
   listWaWorkbenchConversations,
+  loadMoreWaMessages,
+  openWaWorkbenchContactConversation,
   releaseWaConversation,
   sendWaMediaMessage,
   sendWaReaction,
@@ -23,7 +26,7 @@ import {
   takeoverWaConversation,
   uploadWaAttachment
 } from "../api";
-import type { WaAccountItem, WaConversationDetail, WaConversationItem, WaMessageItem } from "../types";
+import type { WaAccountItem, WaContactItem, WaConversationDetail, WaConversationItem, WaMessageItem } from "../types";
 
 type UploadingAttachment = {
   localId: string;
@@ -45,7 +48,12 @@ export function useWaWorkspace(session: Session | null) {
   const [accounts, setAccounts] = useState<WaAccountItem[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<WaConversationItem[]>([]);
+  const [contacts, setContacts] = useState<WaContactItem[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  // Capture unread count at the moment the user clicks a conversation, before
+  // loadDetail() resets it server-side. WaChatPanel uses this to scroll to the
+  // first unread message instead of always jumping to the very bottom.
+  const [unreadCountBeforeOpen, setUnreadCountBeforeOpen] = useState(0);
   const [detail, setDetail] = useState<WaConversationDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -55,6 +63,8 @@ export function useWaWorkspace(session: Session | null) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
   const [assignedToMeOnly, setAssignedToMeOnly] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
 
   const loadAccounts = useCallback(async () => {
     if (!session?.waSeatEnabled) return;
@@ -86,6 +96,19 @@ export function useWaWorkspace(session: Session | null) {
     }
   }, [accountId, assignedToMeOnly, session]);
 
+  const loadContacts = useCallback(async () => {
+    if (!session?.waSeatEnabled || !accountId) {
+      setContacts([]);
+      return;
+    }
+    try {
+      const rows = await listWaWorkbenchContacts(session, { accountId });
+      setContacts(rows);
+    } catch {
+      setContacts([]);
+    }
+  }, [accountId, session]);
+
   const loadDetail = useCallback(async () => {
     if (!session?.waSeatEnabled || !selectedConversationId) {
       setDetail(null);
@@ -96,13 +119,32 @@ export function useWaWorkspace(session: Session | null) {
     try {
       const next = await getWaWorkbenchConversationDetail(session, selectedConversationId);
       setDetail(next);
+      // Assume there may be more if exactly 100 messages are returned (the default limit).
+      setHasMoreMessages(next.messages.length >= 100);
     } catch (nextError) {
       setError((nextError as Error).message);
       setDetail(null);
+      setHasMoreMessages(false);
     } finally {
       setDetailLoading(false);
     }
   }, [selectedConversationId, session]);
+
+  const openContactConversation = useCallback(async (contactId: string) => {
+    if (!session || !accountId) return;
+    setActionLoading("open-contact");
+    setError("");
+    try {
+      const next = await openWaWorkbenchContactConversation(session, { accountId, contactId });
+      setDetail(next);
+      setSelectedConversationId(next.conversation.waConversationId);
+      await loadConversations();
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setActionLoading(null);
+    }
+  }, [accountId, loadConversations, session]);
 
   useEffect(() => {
     void loadAccounts();
@@ -111,6 +153,10 @@ export function useWaWorkspace(session: Session | null) {
   useEffect(() => {
     void loadConversations();
   }, [loadConversations]);
+
+  useEffect(() => {
+    void loadContacts();
+  }, [loadContacts]);
 
   useEffect(() => {
     void loadDetail();
@@ -312,6 +358,40 @@ export function useWaWorkspace(session: Session | null) {
     }
   }, [loadConversations, loadDetail, selectedConversationId, session]);
 
+  // Wraps setSelectedConversationId so we can capture the conversation's
+  // current unread count before detail loading resets it on the server.
+  const selectConversation = useCallback((id: string | null) => {
+    if (id) {
+      const conv = conversations.find((item) => item.waConversationId === id);
+      setUnreadCountBeforeOpen(conv?.unreadCount ?? 0);
+    } else {
+      setUnreadCountBeforeOpen(0);
+    }
+    setSelectedConversationId(id);
+  }, [conversations]);
+
+  const loadMoreMessages = useCallback(async () => {
+    if (!session || !selectedConversationId || !detail || loadingMoreMessages) return;
+    const oldestSeq = detail.messages[0]?.logicalSeq;
+    if (oldestSeq == null) return;
+    setLoadingMoreMessages(true);
+    try {
+      const result = await loadMoreWaMessages(session, selectedConversationId, { beforeSeq: oldestSeq, limit: 50 });
+      setDetail((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          messages: [...result.messages, ...current.messages]
+        };
+      });
+      setHasMoreMessages(result.hasMore);
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setLoadingMoreMessages(false);
+    }
+  }, [detail, loadingMoreMessages, selectedConversationId, session]);
+
   const reactToMessage = useCallback(async (message: WaMessageItem, emoji: string) => {
     if (!session || !detail) return;
     setActionLoading(`reaction:${message.waMessageId}`);
@@ -331,9 +411,12 @@ export function useWaWorkspace(session: Session | null) {
     accountId,
     setAccountId,
     conversations,
+    contacts,
     selectedConversation,
     selectedConversationId,
     setSelectedConversationId,
+    selectConversation,
+    unreadCountBeforeOpen,
     detail,
     loading,
     detailLoading,
@@ -351,10 +434,14 @@ export function useWaWorkspace(session: Session | null) {
     loadAccounts,
     loadConversations,
     loadDetail,
+    openContactConversation,
     sendCurrentMessage,
     uploadFiles,
     takeoverCurrentConversation,
     releaseCurrentConversation,
+    hasMoreMessages,
+    loadingMoreMessages,
+    loadMoreMessages,
     reactToMessage,
     forceAssignWaConversation: async (memberId: string) => {
       if (!session || !selectedConversationId) return;

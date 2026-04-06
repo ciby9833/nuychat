@@ -140,6 +140,14 @@ export type MessageItem = {
   sender_employee_no?: string | null;
 };
 
+export type PaginatedMessagesResponse = {
+  items: MessageItem[];
+  hasMore: boolean;
+  nextBefore: string | null;
+  unreadAnchorMessageId: string | null;
+  unreadCountSnapshot: number;
+};
+
 export type MessageAttachment = {
   url: string;
   mimeType: string;

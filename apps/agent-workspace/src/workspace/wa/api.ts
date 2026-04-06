@@ -105,6 +105,19 @@ export function sendWaReaction(
   );
 }
 
+export function loadMoreWaMessages(
+  session: Session,
+  waConversationId: string,
+  input: { beforeSeq: number; limit?: number }
+) {
+  const params = new URLSearchParams({ beforeSeq: String(input.beforeSeq) });
+  if (input.limit) params.set("limit", String(input.limit));
+  return apiFetch<{ messages: import("./types").WaMessageItem[]; hasMore: boolean }>(
+    `/api/wa/workbench/conversations/${waConversationId}/messages?${params}`,
+    session
+  );
+}
+
 export function listWaWorkbenchContacts(
   session: Session,
   input: { accountId: string; search?: string | null }
@@ -112,6 +125,17 @@ export function listWaWorkbenchContacts(
   const params = new URLSearchParams({ accountId: input.accountId });
   if (input.search) params.set("search", input.search);
   return apiFetch<WaContactItem[]>(`/api/wa/workbench/contacts?${params}`, session);
+}
+
+export function openWaWorkbenchContactConversation(
+  session: Session,
+  input: { accountId: string; contactId: string }
+) {
+  return apiPostJson<WaConversationDetail>(
+    `/api/wa/workbench/contacts/${input.contactId}/open`,
+    { accountId: input.accountId },
+    session
+  );
 }
 
 export async function uploadWaAttachment(session: Session, file: File) {

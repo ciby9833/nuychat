@@ -7,7 +7,7 @@ import { CUSTOMER_MESSAGE_SENDER_TYPE } from "./message.constants.js";
  * Returns messages for a conversation, enriched with sender agent info
  * (display_name + employee_no) for outbound agent messages.
  */
-export async function getRecentMessages(
+function buildConversationMessageQuery(
   tenantId: string,
   conversationId: string,
   executor?: Knex | Knex.Transaction
@@ -53,9 +53,151 @@ export async function getRecentMessages(
     .where({
       "m.tenant_id": tenantId,
       "m.conversation_id": conversationId
-    })
-    .orderBy("m.created_at", "asc")
-    .limit(100);
+    });
+}
+
+export async function getConversationMessagesPage(
+  tenantId: string,
+  conversationId: string,
+  input?: {
+    before?: string | null;
+    limit?: number;
+  },
+  executor?: Knex | Knex.Transaction
+) {
+  const limit = Math.min(Math.max(input?.limit ?? 50, 1), 100);
+  const unreadAnchor = !input?.before
+    ? await resolveExecutor(executor)("messages")
+        .select("message_id", "created_at")
+        .where({
+          tenant_id: tenantId,
+          conversation_id: conversationId,
+          direction: "inbound",
+          sender_type: CUSTOMER_MESSAGE_SENDER_TYPE
+        })
+        .whereNull("read_at")
+        .orderBy("created_at", "asc")
+        .orderBy("message_id", "asc")
+        .first<{ message_id: string; created_at: Date | string } | undefined>()
+    : undefined;
+  const unreadCountSnapshot = unreadAnchor
+    ? await countUnreadCustomerMessages(tenantId, conversationId, executor)
+    : 0;
+
+  const query = buildConversationMessageQuery(tenantId, conversationId, executor).clone();
+
+  if (input?.before) {
+    const cursorMessage = await resolveExecutor(executor)("messages")
+      .select("message_id", "created_at")
+      .where({
+        tenant_id: tenantId,
+        conversation_id: conversationId,
+        message_id: input.before
+      })
+      .first<{ message_id: string; created_at: Date | string } | undefined>();
+
+    if (cursorMessage) {
+      query.where((builder) => {
+        builder
+          .where("m.created_at", "<", cursorMessage.created_at)
+          .orWhere((orBuilder) => {
+            orBuilder
+              .where("m.created_at", "=", cursorMessage.created_at)
+              .andWhere("m.message_id", "<", cursorMessage.message_id);
+          });
+      });
+    } else {
+      query.where("m.created_at", "<", input.before);
+    }
+  } else if (unreadAnchor) {
+    const recentRows = await buildConversationMessageQuery(tenantId, conversationId, executor)
+      .clone()
+      .orderBy("m.created_at", "desc")
+      .orderBy("m.message_id", "desc")
+      .limit(limit)
+      .then((rows) => rows.reverse());
+
+    const includesAnchor = recentRows.some((row) => row.message_id === unreadAnchor.message_id);
+    if (includesAnchor) {
+      const hasMoreRecent = recentRows.length === limit;
+      return {
+        items: recentRows,
+        hasMore: hasMoreRecent,
+        nextBefore: hasMoreRecent ? recentRows[0]?.message_id ?? null : null,
+        unreadAnchorMessageId: unreadAnchor.message_id,
+        unreadCountSnapshot
+      };
+    }
+
+    const anchorWindow = await buildConversationMessageQuery(tenantId, conversationId, executor)
+      .clone()
+      .where((builder) => {
+        builder
+          .where("m.created_at", ">=", unreadAnchor.created_at)
+          .orWhere((orBuilder) => {
+            orBuilder
+              .where("m.created_at", "=", unreadAnchor.created_at)
+              .andWhere("m.message_id", ">=", unreadAnchor.message_id);
+          });
+      })
+      .orderBy("m.created_at", "asc")
+      .orderBy("m.message_id", "asc")
+      .limit(200);
+
+    const olderContext = await buildConversationMessageQuery(tenantId, conversationId, executor)
+      .clone()
+      .where((builder) => {
+        builder
+          .where("m.created_at", "<", unreadAnchor.created_at)
+          .orWhere((orBuilder) => {
+            orBuilder
+              .where("m.created_at", "=", unreadAnchor.created_at)
+              .andWhere("m.message_id", "<", unreadAnchor.message_id);
+          });
+      })
+      .orderBy("m.created_at", "desc")
+      .orderBy("m.message_id", "desc")
+      .limit(8)
+      .then((rows) => rows.reverse());
+
+    const items = [...olderContext, ...anchorWindow];
+    const hasMore = olderContext.length === 8;
+    return {
+      items,
+      hasMore,
+      nextBefore: hasMore ? items[0]?.message_id ?? null : null,
+      unreadAnchorMessageId: unreadAnchor.message_id,
+      unreadCountSnapshot
+    };
+  }
+
+  const rows = await query
+    .orderBy("m.created_at", "desc")
+    .orderBy("m.message_id", "desc")
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const items = rows.slice(0, limit).reverse();
+  const nextBefore = hasMore ? items[0]?.message_id ?? null : null;
+
+  return {
+    items,
+    hasMore,
+    nextBefore,
+    unreadAnchorMessageId: unreadAnchor?.message_id ?? null,
+    unreadCountSnapshot
+  };
+}
+
+export async function getConversationMessageById(
+  tenantId: string,
+  conversationId: string,
+  messageId: string,
+  executor?: Knex | Knex.Transaction
+) {
+  return buildConversationMessageQuery(tenantId, conversationId, executor)
+    .andWhere("m.message_id", messageId)
+    .first();
 }
 
 export async function resolveMessageIdByExternalId(

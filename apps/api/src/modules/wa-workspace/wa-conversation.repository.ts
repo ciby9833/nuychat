@@ -45,6 +45,86 @@ function deriveConversationDisplayName(row: Record<string, unknown>) {
   );
 }
 
+type ResolvedContactProfile = {
+  displayName: string | null;
+  phoneE164: string | null;
+};
+
+function buildContactKey(waAccountId: string, identifier: string) {
+  return `${waAccountId}:${identifier}`;
+}
+
+async function loadWaContactProfiles(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waAccountIds: string[];
+    identifiers?: string[];
+    phones?: string[];
+  }
+) {
+  const identifiers = Array.from(new Set((input.identifiers ?? []).filter((value): value is string => Boolean(asString(value)))));
+  const phones = Array.from(new Set((input.phones ?? []).filter((value): value is string => Boolean(asString(value)))));
+  if (input.waAccountIds.length === 0 || (identifiers.length === 0 && phones.length === 0)) {
+    return new Map<string, ResolvedContactProfile>();
+  }
+
+  const rows = await trx("wa_contacts")
+    .whereIn("wa_account_id", input.waAccountIds)
+    .andWhere("tenant_id", input.tenantId)
+    .andWhere((builder) => {
+      if (identifiers.length > 0) {
+        builder.whereIn("contact_jid", identifiers);
+      }
+      if (phones.length > 0) {
+        if (identifiers.length > 0) builder.orWhereIn("phone_e164", phones);
+        else builder.whereIn("phone_e164", phones);
+      }
+    })
+    .select("wa_account_id", "contact_jid", "phone_e164", "display_name", "notify_name", "verified_name")
+    .orderBy("updated_at", "desc");
+
+  const map = new Map<string, ResolvedContactProfile>();
+  for (const row of rows) {
+    const waAccountId = String(row.wa_account_id);
+    const displayName =
+      asString(row.display_name) ??
+      asString(row.notify_name) ??
+      asString(row.verified_name) ??
+      null;
+    const phoneE164 = asString(row.phone_e164);
+    const contactJid = asString(row.contact_jid);
+
+    if (contactJid) {
+      const key = buildContactKey(waAccountId, contactJid);
+      if (!map.has(key)) {
+        map.set(key, { displayName, phoneE164 });
+      }
+    }
+    if (phoneE164) {
+      const key = buildContactKey(waAccountId, phoneE164);
+      if (!map.has(key)) {
+        map.set(key, { displayName, phoneE164 });
+      }
+    }
+  }
+  return map;
+}
+
+function resolveContactProfile(
+  contactProfiles: Map<string, ResolvedContactProfile>,
+  waAccountId: string,
+  identifiers: Array<string | null | undefined>
+) {
+  for (const identifier of identifiers) {
+    const normalized = asString(identifier ?? null);
+    if (!normalized) continue;
+    const profile = contactProfiles.get(buildContactKey(waAccountId, normalized));
+    if (profile) return profile;
+  }
+  return null;
+}
+
 function mapConversation(row: Record<string, unknown>) {
   return {
     waConversationId: String(row.wa_conversation_id),
@@ -103,6 +183,63 @@ function extractPayloadAltJid(payload: unknown) {
   return asString(key?.participantAlt) ?? asString(key?.remoteJidAlt);
 }
 
+/**
+ * Best-effort extraction of body text from a stored WAMessage provider_payload.
+ * Used as a fallback when the body_text column is NULL (e.g. for messages stored
+ * before the mapper was updated to handle interactive/ephemeral types).
+ */
+function extractBodyTextFromPayload(payload: unknown): string | null {
+  const record = safeParseRecord(payload);
+  if (!record) return null;
+  const msg = safeParseRecord(record.message);
+  if (!msg) return null;
+
+  // Helper to safely read a string field from a nested record path.
+  function pick(...keys: string[]): string | null {
+    let cur: unknown = msg;
+    for (const k of keys) {
+      cur = safeParseRecord(cur)?.[k];
+      if (cur == null) return null;
+    }
+    return asString(cur);
+  }
+
+  return (
+    pick("conversation") ??
+    pick("extendedTextMessage", "text") ??
+    pick("imageMessage", "caption") ??
+    pick("videoMessage", "caption") ??
+    pick("documentMessage", "caption") ??
+    // Interactive types
+    pick("buttonsMessage", "contentText") ??
+    pick("buttonsMessage", "text") ??
+    pick("buttonsResponseMessage", "selectedDisplayText") ??
+    pick("listMessage", "description") ??
+    pick("listMessage", "title") ??
+    pick("listResponseMessage", "title") ??
+    pick("listResponseMessage", "description") ??
+    pick("interactiveMessage", "body", "text") ??
+    pick("templateMessage", "hydratedTemplate", "hydratedContentText") ??
+    pick("templateButtonReplyMessage", "selectedDisplayText") ??
+    pick("pollCreationMessage", "name") ??
+    pick("pollCreationMessageV2", "name") ??
+    pick("pollCreationMessageV3", "name") ??
+    pick("orderMessage", "message") ??
+    // Ephemeral / viewOnce wrappers — recurse into inner message
+    (() => {
+      const wrappers = ["ephemeralMessage", "viewOnceMessage", "viewOnceMessageV2", "documentWithCaptionMessage"];
+      for (const wk of wrappers) {
+        const inner = safeParseRecord(msg[wk]);
+        if (inner) {
+          const text = extractBodyTextFromPayload({ message: safeParseRecord(inner.message) ?? inner });
+          if (text) return text;
+        }
+      }
+      return null;
+    })()
+  );
+}
+
 function buildConversationBaseQuery(trx: Knex.Transaction, tenantId: string) {
   return trx("wa_conversations as c")
     .leftJoin("tenant_memberships as tm", function joinReplier() {
@@ -120,6 +257,7 @@ export async function getWaConversationById(trx: Knex.Transaction, tenantId: str
     .where({ "c.wa_conversation_id": waConversationId })
     .first<Record<string, unknown> | undefined>();
   if (!row) return null;
+  const waAccountId = String(row.wa_account_id);
 
   const latestInbound = await trx("wa_messages")
     .where({
@@ -133,16 +271,30 @@ export async function getWaConversationById(trx: Knex.Transaction, tenantId: str
   const inboundPayload = safeParseRecord(latestInbound?.provider_payload);
   const fallbackPushName = asString(inboundPayload?.pushName);
   const fallbackPhone = normalizePhoneE164(derivePhoneE164FromJid(extractPayloadAltJid(inboundPayload)));
+  const contactProfiles = await loadWaContactProfiles(trx, {
+    tenantId,
+    waAccountIds: [waAccountId],
+    identifiers: [asString(row.contact_jid), asString(row.chat_jid)],
+    phones: [asString(row.contact_phone_e164), fallbackPhone]
+  });
+  const contactProfile = resolveContactProfile(contactProfiles, waAccountId, [
+    asString(row.contact_jid),
+    asString(row.chat_jid),
+    asString(row.contact_phone_e164),
+    fallbackPhone
+  ]);
 
   const isDirect = String(row.conversation_type) === "direct";
   return {
     ...mapConversation(row),
-    contactName: asString(row.contact_name) ?? (isDirect ? fallbackPushName : null),
-    contactPhoneE164: asString(row.contact_phone_e164) ?? (isDirect ? fallbackPhone : null),
+    contactName: asString(row.contact_name) ?? contactProfile?.displayName ?? (isDirect ? fallbackPushName : null),
+    contactPhoneE164: asString(row.contact_phone_e164) ?? contactProfile?.phoneE164 ?? (isDirect ? fallbackPhone : null),
     displayName:
       asString(row.contact_name) ??
+      contactProfile?.displayName ??
       (isDirect ? fallbackPushName : null) ??
       asString(row.contact_phone_e164) ??
+      contactProfile?.phoneE164 ??
       (isDirect ? fallbackPhone : null) ??
       deriveConversationDisplayName(row)
   };
@@ -171,6 +323,12 @@ export async function listWaConversations(
     .orderByRaw("coalesce(c.last_message_at, c.created_at) desc")
     .orderBy("c.message_cursor", "desc")
     .orderBy("c.updated_at", "desc");
+  const contactProfiles = await loadWaContactProfiles(trx, {
+    tenantId: input.tenantId,
+    waAccountIds: Array.from(new Set(rows.map((row) => String(row.wa_account_id)))),
+    identifiers: rows.flatMap((row) => [asString(row.contact_jid), asString(row.chat_jid)]),
+    phones: rows.flatMap((row) => [asString(row.contact_phone_e164)])
+  });
   const conversationIds = rows.map((row) => String(row.wa_conversation_id));
   const messageRows = conversationIds.length === 0
     ? []
@@ -187,7 +345,10 @@ export async function listWaConversations(
   for (const row of messageRows) {
     const waConversationId = String(row.wa_conversation_id);
     if (previewByConversation.has(waConversationId)) continue;
-    previewByConversation.set(waConversationId, String(row.body_text ?? ""));
+    const preview = row.body_text
+      ? String(row.body_text)
+      : (extractBodyTextFromPayload(row.provider_payload) ?? "");
+    previewByConversation.set(waConversationId, preview);
   }
   for (const row of messageRows) {
     const waConversationId = String(row.wa_conversation_id);
@@ -205,28 +366,37 @@ export async function listWaConversations(
   }
 
   return rows.map((row) => ({
-    ...mapConversation(row as Record<string, unknown>),
-    contactName:
-      asString((row as Record<string, unknown>).contact_name) ??
-      (String((row as Record<string, unknown>).conversation_type) === "direct"
-        ? (pushNameByConversation.get(String(row.wa_conversation_id)) ?? null)
-        : null) ??
-      null,
-    contactPhoneE164:
-      asString((row as Record<string, unknown>).contact_phone_e164) ??
-      (String((row as Record<string, unknown>).conversation_type) === "direct"
-        ? (phoneByConversation.get(String(row.wa_conversation_id)) ?? null)
-        : null),
-    displayName:
-      asString((row as Record<string, unknown>).contact_name) ??
-      (String((row as Record<string, unknown>).conversation_type) === "direct"
-        ? (pushNameByConversation.get(String(row.wa_conversation_id)) ?? null)
-        : null) ??
-      asString((row as Record<string, unknown>).contact_phone_e164) ??
-      (String((row as Record<string, unknown>).conversation_type) === "direct"
-        ? (phoneByConversation.get(String(row.wa_conversation_id)) ?? null)
-        : null) ??
-      deriveConversationDisplayName(row as Record<string, unknown>),
+    ...(function mapConversationRow() {
+      const record = row as Record<string, unknown>;
+      const waAccountId = String(record.wa_account_id);
+      const isDirect = String(record.conversation_type) === "direct";
+      const profile = resolveContactProfile(contactProfiles, waAccountId, [
+        asString(record.contact_jid),
+        asString(record.chat_jid),
+        asString(record.contact_phone_e164),
+        phoneByConversation.get(String(row.wa_conversation_id)) ?? null
+      ]);
+      return {
+        ...mapConversation(record),
+        contactName:
+          asString(record.contact_name) ??
+          profile?.displayName ??
+          (isDirect ? (pushNameByConversation.get(String(row.wa_conversation_id)) ?? null) : null) ??
+          null,
+        contactPhoneE164:
+          asString(record.contact_phone_e164) ??
+          profile?.phoneE164 ??
+          (isDirect ? (phoneByConversation.get(String(row.wa_conversation_id)) ?? null) : null),
+        displayName:
+          asString(record.contact_name) ??
+          profile?.displayName ??
+          (isDirect ? (pushNameByConversation.get(String(row.wa_conversation_id)) ?? null) : null) ??
+          asString(record.contact_phone_e164) ??
+          profile?.phoneE164 ??
+          (isDirect ? (phoneByConversation.get(String(row.wa_conversation_id)) ?? null) : null) ??
+          deriveConversationDisplayName(record)
+      };
+    })(),
     lastMessagePreview: previewByConversation.get(String(row.wa_conversation_id)) ?? null
   }));
 }
@@ -239,6 +409,7 @@ export async function getWaConversationListItem(
     .where("c.wa_conversation_id", input.waConversationId)
     .first<Record<string, unknown> | undefined>();
   if (!row) return null;
+  const waAccountId = String(row.wa_account_id);
 
   const messageRow = await trx("wa_messages")
     .where({
@@ -261,19 +432,35 @@ export async function getWaConversationListItem(
   const inboundPayload = safeParseRecord(inboundRow?.provider_payload);
   const fallbackPushName = asString(inboundPayload?.pushName);
   const fallbackPhone = normalizePhoneE164(derivePhoneE164FromJid(extractPayloadAltJid(inboundPayload)));
+  const contactProfiles = await loadWaContactProfiles(trx, {
+    tenantId: input.tenantId,
+    waAccountIds: [waAccountId],
+    identifiers: [asString(row.contact_jid), asString(row.chat_jid)],
+    phones: [asString(row.contact_phone_e164), fallbackPhone]
+  });
+  const contactProfile = resolveContactProfile(contactProfiles, waAccountId, [
+    asString(row.contact_jid),
+    asString(row.chat_jid),
+    asString(row.contact_phone_e164),
+    fallbackPhone
+  ]);
 
   const isDirect = String(row.conversation_type) === "direct";
   return {
     ...mapConversation(row),
-    contactName: asString(row.contact_name) ?? (isDirect ? fallbackPushName : null),
-    contactPhoneE164: asString(row.contact_phone_e164) ?? (isDirect ? fallbackPhone : null),
+    contactName: asString(row.contact_name) ?? contactProfile?.displayName ?? (isDirect ? fallbackPushName : null),
+    contactPhoneE164: asString(row.contact_phone_e164) ?? contactProfile?.phoneE164 ?? (isDirect ? fallbackPhone : null),
     displayName:
       asString(row.contact_name) ??
+      contactProfile?.displayName ??
       (isDirect ? fallbackPushName : null) ??
       asString(row.contact_phone_e164) ??
+      contactProfile?.phoneE164 ??
       (isDirect ? fallbackPhone : null) ??
       deriveConversationDisplayName(row),
-    lastMessagePreview: messageRow?.body_text ? String(messageRow.body_text) : null
+    lastMessagePreview: messageRow?.body_text
+      ? String(messageRow.body_text)
+      : (messageRow ? extractBodyTextFromPayload(messageRow.provider_payload) : null)
   };
 }
 
@@ -418,14 +605,19 @@ export async function getConversationMessages(
   trx: Knex.Transaction,
   tenantId: string,
   waConversationId: string,
-  limit = 100
+  limit = 100,
+  beforeLogicalSeq?: number | null
 ) {
   const conversationRow = await trx("wa_conversations")
     .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
-    .select("conversation_type", "contact_name", "contact_phone_e164", "chat_jid")
+    .select("conversation_type", "contact_name", "contact_phone_e164", "chat_jid", "contact_jid", "wa_account_id")
     .first<Record<string, unknown> | undefined>();
-  const latestRowsSubquery = trx("wa_messages")
-    .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
+  const baseQuery = trx("wa_messages")
+    .where({ tenant_id: tenantId, wa_conversation_id: waConversationId });
+  if (beforeLogicalSeq != null) {
+    baseQuery.where("logical_seq", "<", beforeLogicalSeq);
+  }
+  const latestRowsSubquery = baseQuery
     .select("*")
     .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint, logical_seq) desc")
     .orderBy("logical_seq", "desc")
@@ -439,6 +631,16 @@ export async function getConversationMessages(
 
   const waMessageIds = rows.map((row) => String(row.wa_message_id));
   const participantJids = Array.from(new Set(rows.map((row) => (row.participant_jid ? String(row.participant_jid) : null)).filter(Boolean))) as string[];
+  const contactProfiles = await loadWaContactProfiles(trx, {
+    tenantId,
+    waAccountIds: conversationRow?.wa_account_id ? [String(conversationRow.wa_account_id)] : [],
+    identifiers: Array.from(new Set([
+      ...participantJids,
+      ...rows.map((row) => (row.sender_jid ? String(row.sender_jid) : null)),
+      ...rows.map((row) => extractPayloadAltJid(row.provider_payload))
+    ].filter(Boolean) as string[])),
+    phones: Array.from(new Set(rows.map((row) => normalizePhoneE164(derivePhoneE164FromJid(extractPayloadAltJid(row.provider_payload)))).filter(Boolean) as string[]))
+  });
   const [attachmentRows, reactionRows, receiptRows] = await Promise.all([
     waMessageIds.length === 0
       ? []
@@ -506,6 +708,14 @@ export async function getConversationMessages(
     const payloadAltPhone = normalizePhoneE164(derivePhoneE164FromJid(extractPayloadAltJid(row.provider_payload)));
     const participantJid = row.participant_jid ? String(row.participant_jid) : null;
     const senderPhone = normalizePhoneE164(derivePhoneE164FromJid(row.sender_jid ? String(row.sender_jid) : null));
+    const waAccountId = conversationRow?.wa_account_id ? String(conversationRow.wa_account_id) : "";
+    const senderProfile = resolveContactProfile(contactProfiles, waAccountId, [
+      participantJid,
+      extractPayloadAltJid(row.provider_payload),
+      row.sender_jid ? String(row.sender_jid) : null,
+      payloadAltPhone,
+      senderPhone
+    ]);
     if (participantJid && payloadAltPhone && !memberPhoneByParticipant.has(participantJid)) {
       memberPhoneByParticipant.set(participantJid, payloadAltPhone);
     }
@@ -513,8 +723,10 @@ export async function getConversationMessages(
       String(conversationRow?.conversation_type ?? "") === "group"
         ? (
             (participantJid ? memberNameByParticipant.get(participantJid) : null) ??
+            senderProfile?.displayName ??
             payloadPushName ??
             payloadAltPhone ??
+            senderProfile?.phoneE164 ??
             (participantJid ? memberPhoneByParticipant.get(participantJid) : null) ??
             senderPhone ??
             participantJid
@@ -522,6 +734,8 @@ export async function getConversationMessages(
         : (
             asString(conversationRow?.contact_name) ??
             asString(conversationRow?.contact_phone_e164) ??
+            senderProfile?.displayName ??
+            senderProfile?.phoneE164 ??
             asString(conversationRow?.chat_jid)
           );
     const receiptItems = (receiptsByMessage.get(String(row.wa_message_id)) ?? []).map((item) => ({
@@ -550,7 +764,9 @@ export async function getConversationMessages(
       senderRole: String(row.sender_role),
       participantJid: row.participant_jid ? String(row.participant_jid) : null,
       quotedMessageId: row.quoted_message_id ? String(row.quoted_message_id) : null,
-      bodyText: row.body_text ? String(row.body_text) : null,
+      bodyText: row.body_text
+        ? String(row.body_text)
+        : extractBodyTextFromPayload(row.provider_payload),
       logicalSeq: Number(row.logical_seq ?? 0),
       deliveryStatus: String(row.delivery_status),
       providerTs: row.provider_ts ? new Date(Number(row.provider_ts)).toISOString() : null,
@@ -592,6 +808,10 @@ export async function getConversationMembers(
   tenantId: string,
   waConversationId: string
 ) {
+  const conversationRow = await trx("wa_conversations")
+    .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
+    .select("wa_account_id")
+    .first<Record<string, unknown> | undefined>();
   const rows = await trx("wa_conversation_members")
     .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
     .orderBy("joined_at", "asc");
@@ -605,6 +825,14 @@ export async function getConversationMembers(
         .whereNotNull("provider_payload")
         .select("participant_jid", "provider_payload", "provider_ts", "created_at")
         .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint) desc");
+  const contactProfiles = await loadWaContactProfiles(trx, {
+    tenantId,
+    waAccountIds: conversationRow?.wa_account_id ? [String(conversationRow.wa_account_id)] : [],
+    identifiers: participantJids,
+    phones: participantJids
+      .map((jid) => normalizePhoneE164(derivePhoneE164FromJid(jid)))
+      .filter(Boolean) as string[]
+  });
   const fallbackByParticipant = new Map<string, { displayName: string | null; phone: string | null }>();
   for (const row of latestMessageRows) {
     const participantJid = row.participant_jid ? String(row.participant_jid) : null;
@@ -619,19 +847,72 @@ export async function getConversationMembers(
     });
   }
 
+  const participantPhoneByKey = new Map<string, string>();
+  for (const [participantJid, fallback] of fallbackByParticipant.entries()) {
+    if (fallback.phone) {
+      participantPhoneByKey.set(participantJid, fallback.phone);
+    }
+  }
+
   return rows.map((row) => ({
-    memberRowId: String(row.member_row_id),
-    participantJid: String(row.participant_jid),
-    participantType: String(row.participant_type),
-    displayName:
-      (row.display_name ? String(row.display_name) : null) ??
-      fallbackByParticipant.get(String(row.participant_jid))?.displayName ??
-      fallbackByParticipant.get(String(row.participant_jid))?.phone ??
-      null,
-    isAdmin: Boolean(row.is_admin),
-    joinedAt: new Date(String(row.joined_at)).toISOString(),
-    leftAt: row.left_at ? new Date(String(row.left_at)).toISOString() : null
+    ...(function mapMemberRow() {
+      const waAccountId = conversationRow?.wa_account_id ? String(conversationRow.wa_account_id) : "";
+      const participantJid = String(row.participant_jid);
+      const fallbackPhone = participantPhoneByKey.get(participantJid) ?? null;
+      const profile = resolveContactProfile(contactProfiles, waAccountId, [
+        participantJid,
+        fallbackPhone
+      ]);
+      return {
+        memberRowId: String(row.member_row_id),
+        participantJid,
+        participantType: String(row.participant_type),
+        displayName:
+          (row.display_name ? String(row.display_name) : null) ??
+          profile?.displayName ??
+          profile?.phoneE164 ??
+          fallbackByParticipant.get(participantJid)?.displayName ??
+          fallbackByParticipant.get(participantJid)?.phone ??
+          null,
+        isAdmin: Boolean(row.is_admin),
+        joinedAt: new Date(String(row.joined_at)).toISOString(),
+        leftAt: row.left_at ? new Date(String(row.left_at)).toISOString() : null
+      };
+    })()
   }));
+}
+
+export async function getOrCreateDirectConversationForContact(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waAccountId: string;
+    contactJid: string;
+    displayName?: string | null;
+    phoneE164?: string | null;
+  }
+) {
+  const existing = await trx("wa_conversations")
+    .where({
+      tenant_id: input.tenantId,
+      wa_account_id: input.waAccountId,
+      chat_jid: input.contactJid
+    })
+    .first<Record<string, unknown> | undefined>();
+
+  if (existing) {
+    return mapConversation(existing);
+  }
+
+  return upsertWaConversation(trx, {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    chatJid: input.contactJid,
+    conversationType: "direct",
+    contactJid: input.contactJid,
+    contactName: input.displayName ?? null,
+    contactPhoneE164: input.phoneE164 ?? null
+  });
 }
 
 export async function getNextConversationSeq(trx: Knex.Transaction, tenantId: string, waConversationId: string) {

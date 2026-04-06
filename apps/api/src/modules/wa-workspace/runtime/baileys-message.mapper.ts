@@ -44,16 +44,70 @@ export function mapBaileysDeliveryStatus(status?: number | null) {
   return null;
 }
 
+/** Safely read a chain of keys from an unknown object. */
+function deepGet(obj: unknown, ...keys: string[]): unknown {
+  let cur: unknown = obj;
+  for (const k of keys) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[k];
+  }
+  return cur;
+}
+
 export function extractBaileysBodyText(message: WAMessage["message"] | null | undefined): string | null {
   if (!message) return null;
-  return (
+  const m: unknown = message;
+
+  // ── Most common types ────────────────────────────────────────────────────
+  const direct =
     asString(message.conversation) ??
     asString(message.extendedTextMessage?.text) ??
     asString(message.imageMessage?.caption) ??
     asString(message.videoMessage?.caption) ??
-    asString(message.documentMessage?.caption) ??
-    null
-  );
+    asString(message.documentMessage?.caption);
+  if (direct) return direct;
+
+  // ── Interactive / rich types ─────────────────────────────────────────────
+  const interactive =
+    // Buttons
+    asString(deepGet(m, "buttonsMessage", "contentText")) ??
+    asString(deepGet(m, "buttonsMessage", "text")) ??
+    asString(deepGet(m, "buttonsResponseMessage", "selectedDisplayText")) ??
+    // Lists
+    asString(deepGet(m, "listMessage", "description")) ??
+    asString(deepGet(m, "listMessage", "title")) ??
+    asString(deepGet(m, "listResponseMessage", "title")) ??
+    asString(deepGet(m, "listResponseMessage", "description")) ??
+    // Interactive messages (WhatsApp Business)
+    asString(deepGet(m, "interactiveMessage", "body", "text")) ??
+    // Template messages
+    asString(deepGet(m, "templateMessage", "hydratedTemplate", "hydratedContentText")) ??
+    asString(deepGet(m, "templateButtonReplyMessage", "selectedDisplayText")) ??
+    // Poll
+    asString(deepGet(m, "pollCreationMessage", "name")) ??
+    asString(deepGet(m, "pollCreationMessageV2", "name")) ??
+    asString(deepGet(m, "pollCreationMessageV3", "name")) ??
+    // Order messages
+    asString(deepGet(m, "orderMessage", "message"));
+  if (interactive) return interactive;
+
+  // ── Wrapper / ephemeral types — recurse into inner content ───────────────
+  const wrapperKeys = [
+    "ephemeralMessage",
+    "viewOnceMessage",
+    "viewOnceMessageV2",
+    "documentWithCaptionMessage"
+  ];
+  for (const key of wrapperKeys) {
+    const inner = deepGet(m, key);
+    if (inner && typeof inner === "object") {
+      const innerMsg = (inner as Record<string, unknown>)["message"] as WAMessage["message"];
+      const text = extractBaileysBodyText(innerMsg);
+      if (text) return text;
+    }
+  }
+
+  return null;
 }
 
 export function inferBaileysMessageType(message: WAMessage["message"] | null | undefined) {
@@ -63,6 +117,9 @@ export function inferBaileysMessageType(message: WAMessage["message"] | null | u
   if (message.videoMessage) return "video" as const;
   if (message.audioMessage) return "audio" as const;
   if (message.documentMessage) return "document" as const;
+  if (message.stickerMessage) return "sticker" as const;
+  if (message.locationMessage) return "location" as const;
+  if (message.contactMessage || message.contactsArrayMessage) return "contact_card" as const;
   return "text" as const;
 }
 
@@ -122,6 +179,41 @@ export function extractBaileysAttachment(message: WAMessage["message"] | null | 
       durationMs: null,
       storageUrl: asString(document.url),
       previewUrl: null
+    } as const;
+  }
+  const sticker = message.stickerMessage;
+  if (sticker) {
+    return {
+      attachmentType: "sticker",
+      mimeType: asString(sticker.mimetype) ?? "image/webp",
+      fileName: null,
+      fileSize: asNumber(sticker.fileLength),
+      width: asNumber(sticker.width),
+      height: asNumber(sticker.height),
+      durationMs: null,
+      storageUrl: asString(sticker.url),
+      previewUrl: null
+    } as const;
+  }
+  const location = message.locationMessage;
+  if (location) {
+    const lat = location.degreesLatitude;
+    const lng = location.degreesLongitude;
+    const name = asString(location.name) ?? asString(location.address);
+    return {
+      attachmentType: "location",
+      mimeType: null,
+      fileName: name,
+      fileSize: null,
+      width: typeof lat === "number" ? lat : null,
+      height: typeof lng === "number" ? lng : null,
+      durationMs: null,
+      storageUrl: lat != null && lng != null
+        ? `https://maps.google.com/?q=${lat},${lng}`
+        : null,
+      previewUrl: asString(location.jpegThumbnail
+        ? `data:image/jpeg;base64,${Buffer.from(location.jpegThumbnail as Uint8Array).toString("base64")}`
+        : null)
     } as const;
   }
   return null;

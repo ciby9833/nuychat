@@ -19,9 +19,11 @@ import {
   apiPut,
   apiPost,
   getWaWorkbenchRuntime,
+  getConversationMessage,
   getRealtimeReplay,
   markConversationRead,
   logoutSession,
+  listConversationMessages,
   listConversationsPaginated,
   registerSessionUpdater,
   switchTenantSession,
@@ -52,6 +54,7 @@ import type {
   CopilotData,
   MessageItem,
   MessageAttachment,
+  PaginatedMessagesResponse,
   MyTaskListItem,
   LeftPanelMode,
   RightTab,
@@ -137,8 +140,14 @@ export function useWorkspaceDashboard() {
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [viewSummaries, setViewSummaries] = useState<ConversationViewSummaries>(EMPTY_VIEW_SUMMARIES);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedUnreadAnchorCount, setSelectedUnreadAnchorCount] = useState(0);
+  const [selectedUnreadAnchorMessageId, setSelectedUnreadAnchorMessageId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [messages, setMessages] = useState<MessageItem[]>([]);
+  const [messagesHasMore, setMessagesHasMore] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesLoadingMore, setMessagesLoadingMore] = useState(false);
+  const oldestMessageCursorRef = useRef<string | null>(null);
   const [copilot, setCopilot] = useState<CopilotData | null>(null);
   const [skillRecommendation, setSkillRecommendation] = useState<ConversationSkillRecommendationResponse | null>(null);
   const [reply, setReply] = useState("");
@@ -312,15 +321,85 @@ export function useWorkspaceDashboard() {
     }
   }, [session]);
 
+  const appendOrReplaceMessage = useCallback((message: MessageItem) => {
+    setMessages((current) => {
+      const next = [...current];
+      const existingIndex = next.findIndex((item) => item.message_id === message.message_id);
+      if (existingIndex >= 0) {
+        next[existingIndex] = message;
+      } else {
+        next.push(message);
+      }
+      next.sort((a, b) => {
+        if (a.created_at !== b.created_at) {
+          return a.created_at < b.created_at ? -1 : 1;
+        }
+        return a.message_id < b.message_id ? -1 : 1;
+      });
+      return next;
+    });
+  }, []);
+
+  const replaceMessageStatus = useCallback((messageId: string, patch: Partial<MessageItem>) => {
+    setMessages((current) => current.map((message) => (
+      message.message_id === messageId ? { ...message, ...patch } : message
+    )));
+  }, []);
+
+  const applyMessagesPage = useCallback((page: PaginatedMessagesResponse, mode: "replace" | "prepend") => {
+    oldestMessageCursorRef.current = page.nextBefore;
+    setMessagesHasMore(page.hasMore);
+    if (mode === "replace") {
+      setSelectedUnreadAnchorMessageId(page.unreadAnchorMessageId ?? null);
+      setSelectedUnreadAnchorCount(page.unreadCountSnapshot ?? 0);
+    }
+    setMessages((current) => {
+      if (mode === "replace") {
+        return page.items;
+      }
+      const seen = new Set(current.map((item) => item.message_id));
+      const older = page.items.filter((item) => !seen.has(item.message_id));
+      return [...older, ...current];
+    });
+  }, []);
+
   const loadMessages = useCallback(async (id: string) => {
     if (!session) return;
+    setMessagesLoading(true);
     try {
-      const rows = await apiFetch<MessageItem[]>(`/api/conversations/${id}/messages`, session);
-      setMessages(rows);
+      const page = await listConversationMessages(id, session, { limit: 40 });
+      applyMessagesPage(page, "replace");
     } catch {
       setMessages([]);
+      setMessagesHasMore(false);
+      oldestMessageCursorRef.current = null;
+    } finally {
+      setMessagesLoading(false);
     }
-  }, [session]);
+  }, [applyMessagesPage, session]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!session || !selectedId || messagesLoadingMore) return;
+    const before = oldestMessageCursorRef.current;
+    if (!before) return;
+    setMessagesLoadingMore(true);
+    try {
+      const page = await listConversationMessages(selectedId, session, { before, limit: 50 });
+      applyMessagesPage(page, "prepend");
+    } finally {
+      setMessagesLoadingMore(false);
+    }
+  }, [applyMessagesPage, messagesLoadingMore, selectedId, session]);
+
+  const fetchAndMergeMessage = useCallback(async (conversationId: string, messageId: string) => {
+    if (!session) return;
+    try {
+      const message = await getConversationMessage(conversationId, messageId, session);
+      appendOrReplaceMessage(message);
+    } catch {
+      // noop
+    }
+  }, [appendOrReplaceMessage, session]);
 
   const loadCopilot = useCallback(async (id: string) => {
     if (!session) return;
@@ -484,38 +563,57 @@ export function useWorkspaceDashboard() {
     });
     if (ev.conversationId === selectedIdRef.current) {
       void loadDetail(ev.conversationId);
-      void loadMessages(ev.conversationId);
       if (typeof ev.unreadCount !== "number" || ev.unreadCount > 0) {
         void syncConversationReadIfVisible(ev.conversationId);
       }
     }
-  }, [agentId, rememberRealtimeEventId, loadDetail, loadMessages, syncConversationReadIfVisible]);
+  }, [agentId, rememberRealtimeEventId, loadDetail, syncConversationReadIfVisible]);
 
-  const handleMessageReceivedEvent = useCallback((ev: { eventId?: string; conversationId: string }) => {
+  const handleMessageReceivedEvent = useCallback((ev: { eventId?: string; conversationId: string; messageId?: string }) => {
     rememberRealtimeEventId(ev.eventId);
     if (ev.conversationId === selectedIdRef.current) {
-      void loadMessages(ev.conversationId);
+      if (ev.messageId) {
+        void fetchAndMergeMessage(ev.conversationId, ev.messageId);
+      }
       void loadCopilot(ev.conversationId);
       void loadSkillRecommendation(ev.conversationId);
       void syncConversationReadIfVisible(ev.conversationId);
     }
-  }, [loadCopilot, loadMessages, loadSkillRecommendation, rememberRealtimeEventId, syncConversationReadIfVisible]);
+  }, [fetchAndMergeMessage, loadCopilot, loadSkillRecommendation, rememberRealtimeEventId, syncConversationReadIfVisible]);
 
-  const handleMessageSentEvent = useCallback((ev: { eventId?: string; conversationId: string }) => {
+  const handleMessageSentEvent = useCallback((ev: { eventId?: string; conversationId: string; messageId?: string }) => {
     rememberRealtimeEventId(ev.eventId);
     if (ev.conversationId === selectedIdRef.current) {
       clearConversationUnreadLocal(ev.conversationId);
-      void loadMessages(ev.conversationId);
+      if (ev.messageId) {
+        void fetchAndMergeMessage(ev.conversationId, ev.messageId);
+      }
       void loadAiTraces(ev.conversationId);
     }
-  }, [clearConversationUnreadLocal, loadAiTraces, loadMessages, rememberRealtimeEventId]);
+  }, [clearConversationUnreadLocal, fetchAndMergeMessage, loadAiTraces, rememberRealtimeEventId]);
 
-  const handleMessageUpdatedEvent = useCallback((ev: { eventId?: string; conversationId: string }) => {
+  const handleMessageUpdatedEvent = useCallback((ev: {
+    eventId?: string;
+    conversationId: string;
+    messageId?: string;
+    messageStatus?: string;
+    occurredAt?: string;
+  }) => {
     rememberRealtimeEventId(ev.eventId);
     if (ev.conversationId === selectedIdRef.current) {
-      void loadMessages(ev.conversationId);
+      if (ev.messageId) {
+        replaceMessageStatus(ev.messageId, {
+          message_status: ev.messageStatus ?? null,
+          status_sent_at: ev.messageStatus === "sent" ? (ev.occurredAt ?? null) : undefined,
+          status_delivered_at: ev.messageStatus === "delivered" ? (ev.occurredAt ?? null) : undefined,
+          status_read_at: ev.messageStatus === "read" ? (ev.occurredAt ?? null) : undefined,
+          status_failed_at: ev.messageStatus === "failed" ? (ev.occurredAt ?? null) : undefined,
+          status_deleted_at: ev.messageStatus === "deleted" ? (ev.occurredAt ?? null) : undefined
+        });
+        void fetchAndMergeMessage(ev.conversationId, ev.messageId);
+      }
     }
-  }, [loadMessages, rememberRealtimeEventId]);
+  }, [fetchAndMergeMessage, rememberRealtimeEventId, replaceMessageStatus]);
 
   const handleTaskUpdatedEvent = useCallback((ev: {
     eventId?: string;
@@ -523,11 +621,10 @@ export function useWorkspaceDashboard() {
   }) => {
     rememberRealtimeEventId(ev.eventId);
     if (ev.conversationId && ev.conversationId === selectedIdRef.current) {
-      void loadMessages(ev.conversationId);
       void loadTickets(ev.conversationId);
     }
     void loadMyTasksRef.current?.();
-  }, [loadMessages, loadTickets, rememberRealtimeEventId]);
+  }, [loadTickets, rememberRealtimeEventId]);
 
   const replayRealtimeGap = useCallback(async () => {
     const currentSession = sessionRef.current;
@@ -545,11 +642,17 @@ export function useWorkspaceDashboard() {
             occurredAt: string;
           });
         } else if (item.event === "message.received") {
-          handleMessageReceivedEvent(item.payload as { eventId?: string; conversationId: string });
+          handleMessageReceivedEvent(item.payload as { eventId?: string; conversationId: string; messageId?: string });
         } else if (item.event === "message.sent") {
-          handleMessageSentEvent(item.payload as { eventId?: string; conversationId: string });
+          handleMessageSentEvent(item.payload as { eventId?: string; conversationId: string; messageId?: string });
         } else if (item.event === "message.updated") {
-          handleMessageUpdatedEvent(item.payload as { eventId?: string; conversationId: string });
+          handleMessageUpdatedEvent(item.payload as {
+            eventId?: string;
+            conversationId: string;
+            messageId?: string;
+            messageStatus?: string;
+            occurredAt?: string;
+          });
         } else if (item.event === "task.updated") {
           handleTaskUpdatedEvent(item.payload as { eventId?: string; conversationId?: string | null });
         }
@@ -646,7 +749,6 @@ export function useWorkspaceDashboard() {
       void loadConversationsRef.current?.();
       if (selectedIdRef.current) {
         void loadDetail(selectedIdRef.current);
-        void loadMessages(selectedIdRef.current);
       }
     }, 4000);
 
@@ -748,8 +850,14 @@ export function useWorkspaceDashboard() {
 
   useEffect(() => {
     if (!selectedId) {
+      setSelectedUnreadAnchorCount(0);
+      setSelectedUnreadAnchorMessageId(null);
       setDetail(null);
       setMessages([]);
+      setMessagesHasMore(false);
+      setMessagesLoading(false);
+      setMessagesLoadingMore(false);
+      oldestMessageCursorRef.current = null;
       setCopilot(null);
       setComposerAiSuggestions([]);
       setSkillRecommendation(null);
@@ -813,11 +921,15 @@ export function useWorkspaceDashboard() {
 
   useEffect(() => {
     if (selectedId && !filteredConversations.some((c) => c.conversationId === selectedId)) {
+      setSelectedUnreadAnchorCount(0);
+      setSelectedUnreadAnchorMessageId(null);
       setSelectedId(filteredConversations[0]?.conversationId ?? null);
       return;
     }
 
     if (!selectedId && filteredConversations[0]?.conversationId) {
+      setSelectedUnreadAnchorCount(0);
+      setSelectedUnreadAnchorMessageId(null);
       setSelectedId(filteredConversations[0].conversationId);
     }
   }, [effectiveView, filteredConversations, selectedId]);
@@ -837,6 +949,8 @@ export function useWorkspaceDashboard() {
   const openTaskConversation = useCallback((task: MyTaskListItem) => {
     if (!task.conversationId) return;
     setLeftPanelMode("conversations");
+    setSelectedUnreadAnchorCount(0);
+    setSelectedUnreadAnchorMessageId(null);
     setSelectedId(task.conversationId);
     setRightTab("orders");
     void syncConversationReadIfVisible(task.conversationId);
@@ -844,6 +958,8 @@ export function useWorkspaceDashboard() {
 
   const openConversation = useCallback(async (conversationId: string) => {
     setLeftPanelMode("conversations");
+    setSelectedUnreadAnchorCount(0);
+    setSelectedUnreadAnchorMessageId(null);
     setSelectedId(conversationId);
 
     void syncConversationReadIfVisible(conversationId);
@@ -866,8 +982,7 @@ export function useWorkspaceDashboard() {
     setPendingAttachments([]);
     setReplyTargetMessageId(null);
     clearConversationUnreadLocal(selectedId);
-    await loadMessages(selectedId);
-  }, [clearConversationUnreadLocal, loadMessages, pendingAttachments, postAgentActivity, reply, replyTargetMessageId, selectedId, session]);
+  }, [clearConversationUnreadLocal, pendingAttachments, postAgentActivity, reply, replyTargetMessageId, selectedId, session]);
 
   const sendReaction = useCallback(async (targetMessageId: string, emoji: string) => {
     if (!session || !selectedId) return;
@@ -880,8 +995,7 @@ export function useWorkspaceDashboard() {
       },
       session
     );
-    await loadMessages(selectedId);
-  }, [loadMessages, postAgentActivity, selectedId, session]);
+  }, [postAgentActivity, selectedId, session]);
 
   const handleUploadFiles = useCallback(async (
     files: File[],
@@ -1059,6 +1173,10 @@ export function useWorkspaceDashboard() {
     setViewSummaries(EMPTY_VIEW_SUMMARIES);
     setDetail(null);
     setMessages([]);
+    setMessagesHasMore(false);
+    setMessagesLoading(false);
+    setMessagesLoadingMore(false);
+    oldestMessageCursorRef.current = null;
     setCopilot(null);
     setSkillRecommendation(null);
     setPendingAttachments([]);
@@ -1236,8 +1354,13 @@ export function useWorkspaceDashboard() {
     loadMyTasks,
     loadMoreConversations,
     selectedId,
+    selectedUnreadAnchorCount,
+    selectedUnreadAnchorMessageId,
     detail,
     messages,
+    messagesHasMore,
+    messagesLoading,
+    messagesLoadingMore,
     copilot,
     skillRecommendation,
     composerAiSuggestions,
@@ -1259,6 +1382,7 @@ export function useWorkspaceDashboard() {
     setSelectedId,
     openConversation,
     openTaskConversation,
+    loadOlderMessages,
     setReply,
     setPendingAttachments,
     setReplyTargetMessageId,

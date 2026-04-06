@@ -22,6 +22,18 @@ export const tenantContextPlugin: FastifyPluginAsync = fp(async (app) => {
   app.decorateRequest("tenant", undefined);
   app.decorateRequest("auth", undefined);
 
+  // Allow Bearer token via ?token= query param for specific media proxy endpoints
+  // where setting request headers is not possible (e.g., <img src="...">) .
+  app.addHook("preValidation", async (req) => {
+    if (!req.headers.authorization) {
+      const query = req.query as Record<string, string | undefined>;
+      const queryToken = query?.token;
+      if (queryToken && req.url.includes("/api/wa/media/")) {
+        req.headers.authorization = `Bearer ${queryToken}`;
+      }
+    }
+  });
+
   app.addHook("preHandler", async (req) => {
     const auth = await resolveAuth(app, req);
     if (auth) {

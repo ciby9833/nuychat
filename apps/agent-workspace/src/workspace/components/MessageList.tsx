@@ -31,10 +31,16 @@ type RenderItem =
 type MessageListProps = {
   detailOpen: boolean;
   messages: MessageItem[];
+  unreadAnchorCount: number;
+  unreadAnchorMessageId: string | null;
+  messagesHasMore: boolean;
+  messagesLoading: boolean;
+  messagesLoadingMore: boolean;
   capability: ChannelCapability;
   isAssignedToMe: boolean;
   listRef: RefObject<HTMLDivElement | null>;
   bottomRef: RefObject<HTMLDivElement | null>;
+  unreadDividerRef: RefObject<HTMLDivElement | null>;
   hoveredMessageId: string | null;
   messageMenuId: string | null;
   reactionTargetId: string | null;
@@ -437,8 +443,8 @@ function MenuItem({ icon, label, onClick }: { icon: ReactNode; label: string; on
 
 export function MessageList(props: MessageListProps) {
   const {
-    detailOpen, messages, capability, isAssignedToMe,
-    listRef, bottomRef,
+    detailOpen, messages, unreadAnchorCount, unreadAnchorMessageId, messagesHasMore, messagesLoading, messagesLoadingMore, capability, isAssignedToMe,
+    listRef, bottomRef, unreadDividerRef,
     hoveredMessageId, messageMenuId, reactionTargetId, reactionPlacement, menuPlacement,
     onHoverMessage, onCloseReactionMenuForMessage, onCloseMenus,
     onToggleReactionMenu, onToggleMessageMenu,
@@ -585,11 +591,21 @@ export function MessageList(props: MessageListProps) {
     return map;
   }, [messages]);
 
+  const unreadDividerMessageId = unreadAnchorMessageId;
+
   // ── Render ──
 
   return (
     <div ref={listRef}
       className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto bg-white px-4 py-4">
+
+      {detailOpen && messagesLoadingMore ? (
+        <div className="mb-3 flex justify-center">
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500">
+            {t("msgList.loadingOlder", { defaultValue: "加载更早消息中..." })}
+          </span>
+        </div>
+      ) : null}
 
       {/* Empty states */}
       {!detailOpen && (
@@ -601,7 +617,7 @@ export function MessageList(props: MessageListProps) {
       {detailOpen && messages.length === 0 && (
         <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3">
           <span className="text-5xl">📭</span>
-          <span className="text-sm">{t("msgList.noMessages")}</span>
+          <span className="text-sm">{messagesLoading ? t("msgList.loading", { defaultValue: "消息加载中..." }) : t("msgList.noMessages")}</span>
         </div>
       )}
 
@@ -640,6 +656,7 @@ export function MessageList(props: MessageListProps) {
         const barVisible  = isHovered || isMenuOpen || isReactOpen;
 
         const reactions   = reactionsByTarget.get(m.message_id) ?? [];
+        const showUnreadDivider = unreadDividerMessageId === m.message_id;
 
         // Attribution label
         const aiLabel  = isAI  ? `🤖 ${m.content?.aiAgentName ?? "AI"}` : null;
@@ -666,6 +683,16 @@ export function MessageList(props: MessageListProps) {
             onMouseEnter={() => handleRowEnter(m.message_id)}
             onMouseLeave={() => handleRowLeave(m.message_id)}
           >
+            {showUnreadDivider ? (
+              <div ref={unreadDividerRef} className="mb-3 flex items-center gap-3 px-1">
+                <div className="h-px flex-1 bg-emerald-200" />
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-medium text-emerald-700">
+                  ↑ {unreadAnchorCount} 条未读消息
+                </span>
+                <div className="h-px flex-1 bg-emerald-200" />
+              </div>
+            ) : null}
+
             {/* Attribution (AI / agent name) */}
             {attrLabel && (
               <div className={cn(
@@ -779,6 +806,12 @@ export function MessageList(props: MessageListProps) {
       })}
 
       <div ref={bottomRef} />
+
+      {detailOpen && !messagesHasMore && messages.length > 0 ? (
+        <div className="pt-3 text-center text-[11px] text-slate-400">
+          {t("msgList.historyStart", { defaultValue: "已到最早消息" })}
+        </div>
+      ) : null}
     </div>
   );
 }

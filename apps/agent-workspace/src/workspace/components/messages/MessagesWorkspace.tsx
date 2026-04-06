@@ -46,6 +46,11 @@ export function MessagesWorkspace({ vm, rightWidth, onStartResize }: MessagesWor
         <TimelinePanel
           detail={vm.detail}
           messages={vm.messages}
+          unreadAnchorCount={vm.selectedUnreadAnchorCount}
+          unreadAnchorMessageId={vm.selectedUnreadAnchorMessageId}
+          messagesHasMore={vm.messagesHasMore}
+          messagesLoading={vm.messagesLoading}
+          messagesLoadingMore={vm.messagesLoadingMore}
           reply={vm.reply}
           pendingAttachments={vm.pendingAttachments}
           replyTargetMessageId={vm.replyTargetMessageId}
@@ -70,6 +75,7 @@ export function MessagesWorkspace({ vm, rightWidth, onStartResize }: MessagesWor
           onTransfer={vm.doTransfer}
           onResolve={vm.doResolve}
           onManualSkillAssist={vm.onManualSkillAssist}
+          onLoadOlderMessages={vm.loadOlderMessages}
           onAddTaskFromMessage={(messageId, preview) => {
             vm.setTaskDraft({ sourceMessageId: messageId, sourceMessagePreview: preview });
             vm.setRightTab("orders");

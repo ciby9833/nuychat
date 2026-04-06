@@ -1,12 +1,10 @@
 /**
  * 功能名称: WA 工作台页面
  * 菜单路径: 工作台 / WA工作台
- * 文件职责: 组合 WA 左侧会话列表、中间聊天区和右侧上下文区，呈现接近 WhatsApp Web 的三栏工作布局。
+ * 文件职责: 组合 WA 左侧会话列表、中间聊天区和右侧信息栏，呈现接近 WhatsApp Web 的主工作界面。
  * 交互页面:
  * - ../../pages/DashboardPage.tsx: 通过路由挂载此页面。
  */
-
-import { useState } from "react";
 
 import type { Session } from "../../types";
 import { useWaWorkspace } from "../hooks/useWaWorkspace";
@@ -20,39 +18,15 @@ type WaWorkspaceProps = {
 
 export function WaWorkspace({ session }: WaWorkspaceProps) {
   const vm = useWaWorkspace(session);
-  const [rightWidth, setRightWidth] = useState(320);
-
-  const startRightResize = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = rightWidth;
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-
-    const onMove = (ev: MouseEvent) => {
-      const delta = startX - ev.clientX;
-      setRightWidth(Math.max(260, Math.min(520, startWidth + delta)));
-    };
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  };
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-[#efeae2]">
-      <div className="min-h-0 flex-1 p-3">
+    <section className="flex h-full min-h-0 flex-col bg-[#0b141a]">
+      <div className="min-h-0 flex-1 p-2 lg:p-3">
         <div
-          className="grid h-full min-h-0 overflow-hidden rounded-[24px] border border-[#d7dbdf] bg-[#f0f2f5] shadow-[0_14px_34px_rgba(17,27,33,0.08)]"
-          style={{ gridTemplateColumns: `360px minmax(0,1fr) 8px ${rightWidth}px` }}
+          className="grid h-full min-h-0 overflow-hidden rounded-[18px] border border-[#1f2c33] bg-[#111b21] shadow-[0_18px_48px_rgba(0,0,0,0.28)]"
+          style={{ gridTemplateColumns: "410px minmax(0,1fr) 360px" }}
         >
-          <div className="min-h-0 border-r border-[#d7dbdf] bg-[#ffffff]">
+          <div className="min-h-0 border-r border-[#222d34] bg-[#111b21]">
             <WaConversationList
               accounts={vm.accounts}
               accountId={vm.accountId}
@@ -60,15 +34,22 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               assignedToMeOnly={vm.assignedToMeOnly}
               onAssignedToMeOnlyChange={vm.setAssignedToMeOnly}
               conversations={vm.conversations}
+              contacts={vm.contacts}
               selectedConversationId={vm.selectedConversationId}
               loading={vm.loading}
-              onSelectConversation={vm.setSelectedConversationId}
+              onSelectConversation={vm.selectConversation}
+              onOpenContact={vm.openContactConversation}
             />
           </div>
-          <div className="min-h-0 bg-[#efeae2]">
+          <div className="min-h-0 bg-[#0b141a]">
             <WaChatPanel
+              session={session}
               detail={vm.detail}
               detailLoading={vm.detailLoading}
+              firstUnreadCount={vm.unreadCountBeforeOpen}
+              hasMoreMessages={vm.hasMoreMessages}
+              loadingMoreMessages={vm.loadingMoreMessages}
+              onLoadMoreMessages={() => { void vm.loadMoreMessages(); }}
               composerText={vm.composerText}
               onComposerTextChange={vm.setComposerText}
               quotedMessage={vm.quotedMessage}
@@ -84,8 +65,7 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               actionLoading={vm.actionLoading}
             />
           </div>
-          <div className="cursor-col-resize bg-[#e9edef]" onMouseDown={startRightResize} />
-          <div className="min-h-0 border-l border-[#d7dbdf] bg-[#ffffff]">
+          <div className="min-h-0 border-l border-[#222d34] bg-[#111b21]">
             <WaContextPanel
               detail={vm.detail}
               session={session}

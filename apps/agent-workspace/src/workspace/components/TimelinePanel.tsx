@@ -20,6 +20,11 @@ import { ConversationComposerPane } from "./messages/ConversationComposerPane";
 type TimelinePanelProps = {
   detail: ConversationDetail | null;
   messages: MessageItem[];
+  unreadAnchorCount: number;
+  unreadAnchorMessageId: string | null;
+  messagesHasMore: boolean;
+  messagesLoading: boolean;
+  messagesLoadingMore: boolean;
   reply: string;
   pendingAttachments: MessageAttachment[];
   replyTargetMessageId: string | null;
@@ -50,6 +55,7 @@ type TimelinePanelProps = {
   onTransfer: (targetAgentId: string, reason?: string) => Promise<void>;
   onResolve: () => Promise<void>;
   onManualSkillAssist: (messageId: string, skillSlug: string) => Promise<ComposerSkillAssist | null>;
+  onLoadOlderMessages: () => Promise<void>;
   onAddTaskFromMessage: (messageId: string, preview: string) => void;
 };
 
@@ -80,6 +86,11 @@ export function TimelinePanel(props: TimelinePanelProps) {
   const {
     detail,
     messages,
+    unreadAnchorCount,
+    unreadAnchorMessageId,
+    messagesHasMore,
+    messagesLoading,
+    messagesLoadingMore,
     reply,
     pendingAttachments,
     replyTargetMessageId,
@@ -104,6 +115,7 @@ export function TimelinePanel(props: TimelinePanelProps) {
     onTransfer,
     onResolve,
     onManualSkillAssist,
+    onLoadOlderMessages,
     onAddTaskFromMessage
   } = props;
 
@@ -120,7 +132,11 @@ export function TimelinePanel(props: TimelinePanelProps) {
   );
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const unreadDividerRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
+  const prependScrollHeightRef = useRef<number | null>(null);
+  const previousConversationIdRef = useRef<string | null>(null);
+  const previousLastMessageIdRef = useRef<string | null>(null);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [reactionTargetId, setReactionTargetId] = useState<string | null>(null);
   const [messageMenuId, setMessageMenuId] = useState<string | null>(null);
@@ -149,15 +165,52 @@ export function TimelinePanel(props: TimelinePanelProps) {
     if (!el) return;
     const onScroll = () => {
       userScrolledUpRef.current = el.scrollHeight - el.scrollTop - el.clientHeight > 200;
+      if (el.scrollTop <= 80 && messagesHasMore && !messagesLoading && !messagesLoadingMore) {
+        prependScrollHeightRef.current = el.scrollHeight;
+        void onLoadOlderMessages();
+      }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [messagesHasMore, messagesLoading, messagesLoadingMore, onLoadOlderMessages]);
 
   useEffect(() => {
-    if (!userScrolledUpRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = listRef.current;
+    if (el && prependScrollHeightRef.current != null) {
+      const heightDelta = el.scrollHeight - prependScrollHeightRef.current;
+      el.scrollTop += heightDelta;
+      prependScrollHeightRef.current = null;
+      return;
     }
+    const currentConversationId = detail?.conversationId ?? null;
+    const latestMessageId = messages.length > 0 ? messages[messages.length - 1]?.message_id ?? null : null;
+
+    if (currentConversationId && previousConversationIdRef.current !== currentConversationId) {
+      if (unreadAnchorCount > 0 && unreadDividerRef.current) {
+        unreadDividerRef.current.scrollIntoView({ behavior: "instant", block: "start" });
+        userScrolledUpRef.current = true;
+      } else {
+        bottomRef.current?.scrollIntoView({ behavior: "instant" });
+        userScrolledUpRef.current = false;
+      }
+      previousConversationIdRef.current = currentConversationId;
+      previousLastMessageIdRef.current = latestMessageId;
+      return;
+    }
+
+    if (
+      currentConversationId
+      && latestMessageId
+      && previousLastMessageIdRef.current
+      && latestMessageId !== previousLastMessageIdRef.current
+      && messages.length > 0
+      && messages[messages.length - 1]?.message_type !== "reaction"
+    ) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      userScrolledUpRef.current = false;
+    }
+    previousConversationIdRef.current = currentConversationId;
+    previousLastMessageIdRef.current = latestMessageId;
   }, [messages]);
 
   useEffect(() => {
@@ -175,6 +228,8 @@ export function TimelinePanel(props: TimelinePanelProps) {
     setComposerError("");
     setImagePreview(null);
     setManualSkillModal(null);
+    previousConversationIdRef.current = null;
+    previousLastMessageIdRef.current = null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.conversationId]);
 
@@ -325,10 +380,16 @@ export function TimelinePanel(props: TimelinePanelProps) {
       <ConversationMessageStream
         detailOpen={Boolean(detail)}
         messages={messages}
+        unreadAnchorCount={unreadAnchorCount}
+        unreadAnchorMessageId={unreadAnchorMessageId}
+        messagesHasMore={messagesHasMore}
+        messagesLoading={messagesLoading}
+        messagesLoadingMore={messagesLoadingMore}
         capability={capability}
         isAssignedToMe={isAssignedToMe}
         listRef={listRef}
         bottomRef={bottomRef}
+        unreadDividerRef={unreadDividerRef}
         hoveredMessageId={hoveredMessageId}
         messageMenuId={messageMenuId}
         reactionTargetId={reactionTargetId}

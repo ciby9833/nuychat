@@ -20,7 +20,7 @@ export type WaNormalizedMessage = {
   chatJid: string;
   senderJid: string | null;
   participantJid?: string | null;
-  messageType: "text" | "image" | "video" | "audio" | "document" | "reaction";
+  messageType: "text" | "image" | "video" | "audio" | "document" | "reaction" | "sticker" | "location" | "contact_card";
   bodyText: string | null;
   providerTs: number;
   direction: "inbound" | "outbound";
@@ -34,7 +34,7 @@ export type WaNormalizedMessage = {
   reactionEmoji?: string | null;
   reactionTargetId?: string | null;
   attachment?: {
-    attachmentType: "image" | "video" | "audio" | "document";
+    attachmentType: "image" | "video" | "audio" | "document" | "sticker" | "location";
     mimeType?: string | null;
     fileName?: string | null;
     fileSize?: number | null;

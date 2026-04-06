@@ -15,6 +15,7 @@ import { createWaLoginTask, listAccessibleWaAccounts, upsertWaAccountSession } f
 import {
   getConversationMembers,
   getConversationMessages,
+  getOrCreateDirectConversationForContact,
   getWaConversationById,
   insertWaMessage,
   insertWaMessageAttachment,
@@ -535,6 +536,26 @@ export async function enqueueWorkbenchReaction(
   };
 }
 
+export async function loadMoreWorkbenchMessages(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    membershipId: string;
+    role: string;
+    waConversationId: string;
+    beforeLogicalSeq: number;
+    limit?: number;
+  }
+) {
+  await assertConversationAccessible(trx, input);
+  const limit = Math.min(input.limit ?? 50, 100);
+  const messages = await getConversationMessages(trx, input.tenantId, input.waConversationId, limit, input.beforeLogicalSeq);
+  return {
+    messages,
+    hasMore: messages.length >= limit
+  };
+}
+
 export async function listWorkbenchContacts(
   trx: Knex.Transaction,
   input: { tenantId: string; membershipId: string; role: string; waAccountId: string; search?: string | null }
@@ -548,5 +569,51 @@ export async function listWorkbenchContacts(
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     search: input.search ?? null
+  });
+}
+
+export async function openWorkbenchContactConversation(
+  trx: Knex.Transaction,
+  input: { tenantId: string; membershipId: string; role: string; waAccountId: string; contactId: string }
+) {
+  const accounts = await listWorkbenchAccounts(trx, input);
+  if (!accounts.some((item) => item.waAccountId === input.waAccountId)) {
+    throw new Error("WA account not accessible");
+  }
+
+  const contact = await trx("wa_contacts")
+    .where({
+      tenant_id: input.tenantId,
+      wa_account_id: input.waAccountId,
+      contact_id: input.contactId
+    })
+    .first<Record<string, unknown> | undefined>();
+  if (!contact) {
+    throw new Error("Contact not found");
+  }
+
+  const conversation = await getOrCreateDirectConversationForContact(trx, {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    contactJid: String(contact.contact_jid),
+    displayName:
+      (contact.display_name ? String(contact.display_name) : null) ??
+      (contact.notify_name ? String(contact.notify_name) : null),
+    phoneE164: contact.phone_e164 ? String(contact.phone_e164) : null
+  });
+
+  await refreshWaConversationProjection(trx, {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    waConversationId: conversation.waConversationId
+  });
+
+  // Return full detail (conversation + messages + members + permissions)
+  // so the frontend can populate the chat panel immediately on open.
+  return getWorkbenchConversationDetail(trx, {
+    tenantId: input.tenantId,
+    membershipId: input.membershipId,
+    role: input.role,
+    waConversationId: conversation.waConversationId
   });
 }

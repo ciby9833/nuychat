@@ -30,10 +30,16 @@ type ManualSkillModalState = {
 type ConversationMessageStreamProps = {
   detailOpen: boolean;
   messages: MessageItem[];
+  unreadAnchorCount: number;
+  unreadAnchorMessageId: string | null;
+  messagesHasMore: boolean;
+  messagesLoading: boolean;
+  messagesLoadingMore: boolean;
   capability: ChannelCapability;
   isAssignedToMe: boolean;
   listRef: RefObject<HTMLDivElement | null>;
   bottomRef: RefObject<HTMLDivElement | null>;
+  unreadDividerRef: RefObject<HTMLDivElement | null>;
   hoveredMessageId: string | null;
   messageMenuId: string | null;
   reactionTargetId: string | null;
@@ -64,10 +70,16 @@ export function ConversationMessageStream(props: ConversationMessageStreamProps)
   const {
     detailOpen,
     messages,
+    unreadAnchorCount,
+    unreadAnchorMessageId,
+    messagesHasMore,
+    messagesLoading,
+    messagesLoadingMore,
     capability,
     isAssignedToMe,
     listRef,
     bottomRef,
+    unreadDividerRef,
     hoveredMessageId,
     messageMenuId,
     reactionTargetId,
@@ -101,10 +113,16 @@ export function ConversationMessageStream(props: ConversationMessageStreamProps)
       <MessageList
         detailOpen={detailOpen}
         messages={messages}
+        unreadAnchorCount={unreadAnchorCount}
+        unreadAnchorMessageId={unreadAnchorMessageId}
+        messagesHasMore={messagesHasMore}
+        messagesLoading={messagesLoading}
+        messagesLoadingMore={messagesLoadingMore}
         capability={capability}
         isAssignedToMe={isAssignedToMe}
         listRef={listRef}
         bottomRef={bottomRef}
+        unreadDividerRef={unreadDividerRef}
         hoveredMessageId={hoveredMessageId}
         messageMenuId={messageMenuId}
         reactionTargetId={reactionTargetId}

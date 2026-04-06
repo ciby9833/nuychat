@@ -11,7 +11,8 @@ import { OwnershipService } from "./ownership.service.js";
 import { emitConversationUpdatedSnapshot } from "./conversation-realtime.service.js";
 import { ConversationSegmentService } from "./conversation-segment.service.js";
 import {
-  getRecentMessages,
+  getConversationMessageById,
+  getConversationMessagesPage,
   getConversationSummary,
   markCustomerMessagesRead
 } from "../message/message.repository.js";
@@ -247,6 +248,10 @@ export async function conversationRoutes(app: FastifyInstance) {
     const agentId = auth.agentId ?? undefined;
     const role = (auth as { role?: string }).role ?? "agent";
     const { conversationId } = req.params as { conversationId: string };
+    const query = req.query as { before?: string; limit?: string | number };
+    const before = typeof query.before === "string" && query.before.trim().length > 0 ? query.before.trim() : null;
+    const limitRaw = typeof query.limit === "number" ? query.limit : Number(query.limit ?? 50);
+    const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
 
     return withTenantTransaction(tenantId, async (trx) => {
       await assertConversationAccess(trx, {
@@ -257,7 +262,34 @@ export async function conversationRoutes(app: FastifyInstance) {
         app
       });
 
-      return getRecentMessages(tenantId, conversationId, trx);
+      return getConversationMessagesPage(tenantId, conversationId, {
+        before,
+        limit
+      }, trx);
+    });
+  });
+
+  app.get("/api/conversations/:conversationId/messages/:messageId", async (req) => {
+    const auth = requireAuth(app, req);
+    const tenantId = auth.tenantId;
+    const agentId = auth.agentId ?? undefined;
+    const role = (auth as { role?: string }).role ?? "agent";
+    const { conversationId, messageId } = req.params as { conversationId: string; messageId: string };
+
+    return withTenantTransaction(tenantId, async (trx) => {
+      await assertConversationAccess(trx, {
+        tenantId,
+        conversationId,
+        agentId,
+        role,
+        app
+      });
+
+      const row = await getConversationMessageById(tenantId, conversationId, messageId, trx);
+      if (!row) {
+        throw app.httpErrors.notFound("Message not found");
+      }
+      return row;
     });
   });
 
