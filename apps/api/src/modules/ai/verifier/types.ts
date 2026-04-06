@@ -71,6 +71,10 @@ export interface PointBContext {
   finalContent: string;
   /** Parsed action from normalizeAIInteractionContract */
   proposedAction: string;
+  /** Parsed intent from normalizeAIInteractionContract */
+  proposedIntent: string | null;
+  /** Parsed sentiment from normalizeAIInteractionContract */
+  proposedSentiment: "positive" | "neutral" | "negative" | "angry" | null;
   /** All verified facts accumulated during this run */
   runVerifiedFacts: VerifiedFact[];
   /** Full fact snapshot from DB */

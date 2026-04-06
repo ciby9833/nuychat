@@ -21,6 +21,33 @@ export type WaAccountItem = {
   memberCount: number;
   lastConnectedAt: string | null;
   lastDisconnectedAt: string | null;
+  session: {
+    sessionRef: string;
+    connectionState: string;
+    loginMode: string | null;
+    disconnectReason: string | null;
+    loginPhase: string | null;
+    qrCodeAvailable: boolean;
+  } | null;
+  uiStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
+  syncStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
+  actions: {
+    canStartLogin: boolean;
+    canManageMembers: boolean;
+    canViewHealth: boolean;
+    canReconnect: boolean;
+    reconnectReason: string | null;
+  };
 };
 
 export type WaConversationItem = {
@@ -29,13 +56,17 @@ export type WaConversationItem = {
   chatJid: string;
   conversationType: string;
   subject: string | null;
+  displayName: string | null;
   contactJid: string | null;
+  contactName: string | null;
+  contactPhoneE164: string | null;
   conversationStatus: string;
   currentReplierMembershipId: string | null;
   currentReplierName: string | null;
   accountDisplayName: string | null;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
+  unreadCount: number;
 };
 
 export type WaConversationMember = {
@@ -92,6 +123,7 @@ export type WaMessageItem = {
   bodyText: string | null;
   logicalSeq: number;
   deliveryStatus: string;
+  providerTs: string | null;
   receiptSummary: {
     totalReceipts: number;
     latestStatus: string | null;

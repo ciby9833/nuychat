@@ -37,7 +37,7 @@ export class RoutingContextService {
         } | undefined>(),
       db("queue_assignments")
         .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
-        .select("department_id", "team_id", "assigned_agent_id", "assignment_strategy", "priority", "status")
+        .select("department_id", "team_id", "assigned_agent_id", "assignment_strategy", "priority", "status", "handoff_required", "handoff_reason")
         .first<{
           department_id: string | null;
           team_id: string | null;
@@ -45,6 +45,8 @@ export class RoutingContextService {
           assignment_strategy: "round_robin" | "least_busy" | "sticky" | null;
           priority: number | null;
           status: string | null;
+          handoff_required: boolean | null;
+          handoff_reason: string | null;
         } | undefined>(),
       db("conversation_memory_snapshots")
         .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
@@ -124,7 +126,9 @@ export class RoutingContextService {
             assignedAgentId: assignment.assigned_agent_id ?? null,
             assignmentStrategy: assignment.assignment_strategy ?? null,
             priority: assignment.priority ?? null,
-            status: assignment.status ?? null
+            status: assignment.status ?? null,
+            handoffRequired: Boolean(assignment.handoff_required),
+            handoffReason: assignment.handoff_reason ?? null
           }
         : null
     };

@@ -9,7 +9,9 @@
 
 export type WaLoginSessionTicket = {
   sessionRef: string;
-  qrCode: string;
+  qrCode: string | null;
+  loginPhase: string;
+  connectionState: string;
   expiresAt: string;
 };
 
@@ -25,6 +27,8 @@ export type WaNormalizedMessage = {
   senderRole: "customer" | "group_member" | "employee" | "wa_account";
   conversationType: "direct" | "group";
   subject?: string | null;
+  contactName?: string | null;
+  contactPhoneE164?: string | null;
   contactJid?: string | null;
   quotedMessageId?: string | null;
   reactionEmoji?: string | null;
@@ -57,7 +61,7 @@ export type WaProviderHistoryResult = {
 };
 
 export interface WaProviderAdapter {
-  createLoginTicket(input: { tenantId: string; waAccountId: string; instanceKey: string }): Promise<WaLoginSessionTicket>;
+  createLoginTicket(input: { tenantId: string; waAccountId: string; instanceKey: string; forceFresh?: boolean }): Promise<WaLoginSessionTicket>;
   restartSession(input: { instanceKey: string; tenantId?: string; waAccountId?: string }): Promise<{ connectionState: string }>;
   sendText(input: {
     instanceKey: string;

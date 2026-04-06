@@ -148,5 +148,7 @@ export type RoutingContext = {
     assignmentStrategy: HumanRoutingAssignmentStrategy | null;
     priority: number | null;
     status: string | null;
+    handoffRequired: boolean;
+    handoffReason: string | null;
   } | null;
 };

@@ -9,7 +9,7 @@ import { TooltipProvider } from "../../components/ui/tooltip";
 const HomeOverview = lazy(() => import("../components/home/HomeOverview").then((module) => ({ default: module.HomeOverview })));
 const MessagesWorkspace = lazy(() => import("../components/messages/MessagesWorkspace").then((module) => ({ default: module.MessagesWorkspace })));
 const TasksWorkspace = lazy(() => import("../components/tasks/TasksWorkspace").then((module) => ({ default: module.TasksWorkspace })));
-const WaWorkspace = lazy(() => import("../wa/components/WaWorkspace").then((module) => ({ default: module.WaWorkspace })));
+const WaDashboardPage = lazy(() => import("../wa/pages/WaDashboardPage").then((module) => ({ default: module.WaDashboardPage })));
 
 export function DashboardPage() {
   const vm = useWorkspaceDashboard();
@@ -66,6 +66,16 @@ export function DashboardPage() {
   if (!vm.isLoggedIn || !vm.session) return null;
 
   const waEnabled = vm.waSeatEnabled && vm.waRuntimeAvailable;
+  const headerProps = {
+    tenantId: vm.tenantId,
+    tenantSlug: vm.tenantSlug,
+    agentId: vm.agentId,
+    socketStatus: vm.socketStatus,
+    memberships: vm.memberships,
+    session: vm.session,
+    onSwitchTenant: vm.onSwitchTenant,
+    onLogout: vm.onLogout
+  };
 
   return (
     <TooltipProvider>
@@ -75,16 +85,7 @@ export function DashboardPage() {
         taskCount={vm.filteredMyTasks.length}
         waEnabled={waEnabled}
         onNavigate={(next) => navigate(`/dashboard/${next}`)}
-        header={{
-          tenantId: vm.tenantId,
-          tenantSlug: vm.tenantSlug,
-          agentId: vm.agentId,
-          socketStatus: vm.socketStatus,
-          memberships: vm.memberships,
-          session: vm.session,
-          onSwitchTenant: vm.onSwitchTenant,
-          onLogout: vm.onLogout
-        }}
+        header={headerProps}
       >
         <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-slate-400">Loading…</div>}>
           <Routes>
@@ -122,7 +123,7 @@ export function DashboardPage() {
             />
             <Route
               path="wa"
-              element={waEnabled ? <WaWorkspace session={vm.session} /> : <Navigate to="/dashboard/home" replace />}
+              element={<WaDashboardPage enabled={waEnabled} session={vm.session} />}
             />
             <Route path="*" element={<Navigate to="/dashboard/home" replace />} />
           </Routes>

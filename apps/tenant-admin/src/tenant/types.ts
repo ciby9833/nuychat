@@ -494,6 +494,33 @@ export type WaAccountListItem = {
   memberCount: number;
   lastConnectedAt: string | null;
   lastDisconnectedAt: string | null;
+  session: {
+    sessionRef: string;
+    connectionState: string;
+    loginMode: string | null;
+    disconnectReason: string | null;
+    loginPhase: string | null;
+    qrCodeAvailable: boolean;
+  } | null;
+  uiStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
+  syncStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
+  actions: {
+    canStartLogin: boolean;
+    canManageMembers: boolean;
+    canViewHealth: boolean;
+    canReconnect: boolean;
+    reconnectReason: string | null;
+  };
 };
 
 export type WaAccountHealth = {
@@ -502,6 +529,25 @@ export type WaAccountHealth = {
   providerKey: string;
   lastConnectedAt: string | null;
   lastDisconnectedAt: string | null;
+  uiStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
+  syncStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
+  actions: {
+    canStartLogin: boolean;
+    canManageMembers: boolean;
+    canViewHealth: boolean;
+    canReconnect: boolean;
+    reconnectReason: string | null;
+  };
   session: {
     connectionState: string;
     loginPhase?: string | null;

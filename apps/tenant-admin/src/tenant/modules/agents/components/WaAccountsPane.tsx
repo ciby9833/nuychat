@@ -17,7 +17,7 @@ import {
   Typography,
   message
 } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
 import {
@@ -48,27 +48,27 @@ type LoginTaskModalState = {
   accountName: string;
   qrCode: string;
   expiresAt: string;
-  loginPhase: string;
-  connectionState: string;
+  uiStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
   disconnectReason: string | null;
 } | null;
 
-function getLoginPhaseMeta(loginPhase: string | null | undefined) {
-  switch (loginPhase) {
-    case "qr_required":
-      return { title: "使用 WhatsApp 扫码登录", detail: "请在手机 WhatsApp 中扫码。", color: "default" as const };
-    case "qr_scanned":
-      return { title: "已扫码，等待手机确认", detail: "请在手机上确认继续登录。", color: "processing" as const };
-    case "connecting":
-      return { title: "正在建立连接", detail: "系统正在与 WhatsApp 建立会话。", color: "processing" as const };
-    case "syncing":
-      return { title: "正在同步聊天和群组", detail: "首次登录可能需要几十秒。", color: "processing" as const };
-    case "connected":
-      return { title: "登录成功", detail: "账号已连接，可进入 WA 工作台处理会话。", color: "success" as const };
-    case "failed":
-      return { title: "登录失败", detail: "连接已中断，请重新发起扫码。", color: "error" as const };
+function mapToneToTagColor(tone: "default" | "warning" | "success" | "danger" | "processing") {
+  switch (tone) {
+    case "success":
+      return "green";
+    case "danger":
+      return "red";
+    case "processing":
+      return "processing";
+    case "warning":
+      return "gold";
     default:
-      return { title: "等待登录状态", detail: "正在获取当前账号会话状态。", color: "default" as const };
+      return "default";
   }
 }
 
@@ -93,6 +93,11 @@ export function WaAccountsPane({
   const [qrCountdownMs, setQrCountdownMs] = useState(0);
   const [createForm] = Form.useForm<CreateWaAccountForm>();
   const [accessForm] = Form.useForm<AccessForm>();
+  const onReloadRef = useRef(onReload);
+
+  useEffect(() => {
+    onReloadRef.current = onReload;
+  }, [onReload]);
 
   const memberOptions = members.map((member) => ({
     value: member.membershipId,
@@ -122,10 +127,9 @@ export function WaAccountsPane({
     setLoginTask({
       waAccountId: account.waAccountId,
       accountName: account.displayName,
-      qrCode: task.qrCode,
+      qrCode: task.qrCode ?? "",
       expiresAt: task.expiresAt,
-      loginPhase: "qr_required",
-      connectionState: "qr_required",
+      uiStatus: task.uiStatus,
       disconnectReason: null
     });
   };
@@ -147,6 +151,18 @@ export function WaAccountsPane({
       accountStatus: string;
       connectionState: string;
       loginPhase: string;
+      uiStatus: {
+        code: string;
+        label: string;
+        detail: string;
+        tone: "default" | "warning" | "success" | "danger" | "processing";
+      };
+      syncStatus: {
+        code: string;
+        label: string;
+        detail: string;
+        tone: "default" | "warning" | "success" | "danger" | "processing";
+      };
       qrCode: string | null;
       heartbeatAt: string | null;
       disconnectReason: string | null;
@@ -205,30 +221,35 @@ export function WaAccountsPane({
           return {
             ...current,
             qrCode: event.qrCode,
-            loginPhase: event.loginPhase,
-            connectionState: event.connectionState,
+            uiStatus: event.uiStatus,
             disconnectReason: event.disconnectReason
           };
+        }
+        if (
+          (event.qrCode ?? current.qrCode) === current.qrCode &&
+          event.uiStatus.code === current.uiStatus.code &&
+          event.disconnectReason === current.disconnectReason
+        ) {
+          return current;
         }
         return {
           ...current,
           qrCode: event.qrCode ?? current.qrCode,
-          loginPhase: event.loginPhase,
-          connectionState: event.connectionState,
+          uiStatus: event.uiStatus,
           disconnectReason: event.disconnectReason
         };
       });
 
       if (connectedAccountName) {
         void message.success(`WA账号 ${connectedAccountName} 已连接成功`);
-        onReload();
+        onReloadRef.current();
       }
     });
 
     return () => {
       socket.close();
     };
-  }, [onReload, selectedAccount?.waAccountId]);
+  }, [selectedAccount?.waAccountId]);
 
   useEffect(() => {
     if (!loginTask) {
@@ -247,7 +268,7 @@ export function WaAccountsPane({
   }, [loginTask]);
 
   useEffect(() => {
-    if (!loginTask || loginTask.loginPhase !== "qr_required" || refreshingLoginTask || qrCountdownMs > 0) return;
+    if (!loginTask || loginTask.uiStatus.code !== "qr_required" || refreshingLoginTask || qrCountdownMs > 0) return;
 
     let cancelled = false;
     setRefreshingLoginTask(true);
@@ -258,10 +279,9 @@ export function WaAccountsPane({
           setLoginTask((current) => current && current.waAccountId === loginTask.waAccountId
             ? {
                 ...current,
-                qrCode: nextTask.qrCode,
+                qrCode: nextTask.qrCode ?? current.qrCode,
                 expiresAt: nextTask.expiresAt,
-                loginPhase: "qr_required",
-                connectionState: "qr_required",
+                uiStatus: nextTask.uiStatus,
                 disconnectReason: null
               }
             : current);
@@ -293,22 +313,32 @@ export function WaAccountsPane({
 
         setHealth((current) => current && current.waAccountId === next.waAccountId ? next : current);
 
-        const isConnected = next.accountStatus === "online" || next.session.connectionState === "open" || next.session.loginPhase === "connected";
+        const isConnected = next.uiStatus.code === "connected";
         if (isConnected) {
           setLoginTask((current) => current?.waAccountId === next.waAccountId ? null : current);
           void message.success(`WA账号 ${loginTask.accountName} 已连接成功`);
-          onReload();
+          onReloadRef.current();
           return;
         }
 
         setLoginTask((current) => current?.waAccountId === next.waAccountId
-          ? {
-              ...current,
-              qrCode: next.session?.qrCode ?? current.qrCode,
-              loginPhase: next.session?.loginPhase ?? current.loginPhase,
-              connectionState: next.session?.connectionState ?? current.connectionState,
-              disconnectReason: next.session?.disconnectReason ?? current.disconnectReason
-            }
+          ? (() => {
+              const nextQrCode = next.session?.qrCode ?? current.qrCode;
+              const nextDisconnectReason = next.session?.disconnectReason ?? current.disconnectReason;
+              if (
+                nextQrCode === current.qrCode &&
+                next.uiStatus.code === current.uiStatus.code &&
+                nextDisconnectReason === current.disconnectReason
+              ) {
+                return current;
+              }
+              return {
+                ...current,
+                qrCode: nextQrCode,
+                uiStatus: next.uiStatus,
+                disconnectReason: nextDisconnectReason
+              };
+            })()
           : current);
       } catch {
         // ignore polling failures and wait for next cycle
@@ -324,7 +354,7 @@ export function WaAccountsPane({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [loginTask, onReload]);
+  }, [loginTask]);
 
   const countdownLabel = (() => {
     const totalSeconds = Math.ceil(qrCountdownMs / 1000);
@@ -333,9 +363,15 @@ export function WaAccountsPane({
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   })();
   const isImageQrCode = typeof loginTask?.qrCode === "string" && loginTask.qrCode.startsWith("data:image/");
-  const loginPhaseMeta = getLoginPhaseMeta(loginTask?.loginPhase);
-  const shouldShowQr = loginTask?.loginPhase === "qr_required";
-  const showLoadingState = loginTask?.loginPhase && loginTask.loginPhase !== "qr_required" && loginTask.loginPhase !== "connected" && loginTask.loginPhase !== "failed";
+  const shouldShowQr = loginTask?.uiStatus.code === "qr_required" && Boolean(loginTask.qrCode);
+  const showLoadingState = Boolean(
+    loginTask?.uiStatus.code &&
+    ((loginTask.uiStatus.code === "qr_required" && !loginTask.qrCode) ||
+      !["qr_required", "connected", "failed", "session_expired"].includes(loginTask.uiStatus.code))
+  );
+  const resolveRowStatus = (row: WaAccountListItem) => (
+    row.uiStatus.code === "connected" ? row.syncStatus : row.uiStatus
+  );
 
   return (
     <>
@@ -382,11 +418,10 @@ export function WaAccountsPane({
             {
               title: "状态",
               width: 120,
-              render: (_, row) => (
-                <Tag color={row.accountStatus === "online" ? "green" : row.accountStatus === "offline" ? "default" : "gold"}>
-                  {row.accountStatus}
-                </Tag>
-              )
+              render: (_, row) => {
+                const status = resolveRowStatus(row);
+                return <Tag color={mapToneToTagColor(status.tone)}>{status.label}</Tag>;
+              }
             },
             {
               title: "负责人",
@@ -410,9 +445,14 @@ export function WaAccountsPane({
             {
               title: "操作",
               width: 360,
-              render: (_, row) => (
+              render: (_, row) => {
+                return (
                 <Space wrap>
-                  <Button size="small" icon={<LinkOutlined />} onClick={() => {
+                  <Button
+                    size="small"
+                    icon={<LinkOutlined />}
+                    disabled={!row.actions.canStartLogin}
+                    onClick={() => {
                     void (async () => {
                       try {
                         await openLoginTask(row);
@@ -423,12 +463,12 @@ export function WaAccountsPane({
                   }}>
                     扫码登录
                   </Button>
-                  <Button size="small" onClick={() => openAccess(row)}>成员分配</Button>
-                  <Button size="small" onClick={() => { void loadHealth(row); }}>健康状态</Button>
+                  <Button size="small" disabled={!row.actions.canManageMembers} onClick={() => openAccess(row)}>成员分配</Button>
+                  <Button size="small" disabled={!row.actions.canViewHealth} onClick={() => { void loadHealth(row); }}>健康状态</Button>
                   <Button
                     size="small"
-                    disabled={!row.lastConnectedAt}
-                    title={!row.lastConnectedAt ? "请先完成扫码登录后再重连" : undefined}
+                    disabled={!row.actions.canReconnect}
+                    title={row.actions.reconnectReason ?? undefined}
                     onClick={() => {
                     void (async () => {
                       try {
@@ -444,7 +484,8 @@ export function WaAccountsPane({
                     重连
                   </Button>
                 </Space>
-              )
+              );
+              }
             }
           ]}
         />
@@ -494,7 +535,41 @@ export function WaAccountsPane({
       <Modal
         title={`扫码登录: ${loginTask?.accountName ?? ""}`}
         open={!!loginTask}
-        footer={null}
+        footer={loginTask ? (
+          <Space>
+            {["failed", "session_expired"].includes(loginTask.uiStatus.code) ? (
+              <Button
+                type="primary"
+                loading={refreshingLoginTask}
+                onClick={() => {
+                  void (async () => {
+                    if (!loginTask) return;
+                    setRefreshingLoginTask(true);
+                    try {
+                      const nextTask = await createWaAccountLoginTask(loginTask.waAccountId);
+                      setLoginTask((current) => current?.waAccountId === loginTask.waAccountId
+                        ? {
+                            ...current,
+                            qrCode: nextTask.qrCode ?? "",
+                            expiresAt: nextTask.expiresAt,
+                            uiStatus: nextTask.uiStatus,
+                            disconnectReason: null
+                          }
+                        : current);
+                    } catch (err) {
+                      void message.error((err as Error).message);
+                    } finally {
+                      setRefreshingLoginTask(false);
+                    }
+                  })();
+                }}
+              >
+                重新扫码
+              </Button>
+            ) : null}
+            <Button onClick={() => setLoginTask(null)}>关闭</Button>
+          </Space>
+        ) : null}
         onCancel={() => setLoginTask(null)}
         destroyOnHidden
         width={520}
@@ -515,7 +590,7 @@ export function WaAccountsPane({
               <div style={{ width: 280, height: 280, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 12, border: "1px solid #f0f0f0", background: "#fafafa" }}>
                 <Spin indicator={<LoadingOutlined style={{ fontSize: 36 }} spin />} />
               </div>
-            ) : loginTask.loginPhase === "connected" ? (
+            ) : loginTask.uiStatus.code === "connected" ? (
               <div style={{ width: 280, height: 280, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 12, border: "1px solid #f0f0f0", background: "#f6ffed" }}>
                 <CheckCircleFilled style={{ fontSize: 48, color: "#52c41a" }} />
               </div>
@@ -524,8 +599,8 @@ export function WaAccountsPane({
                 <Typography.Text type="danger">请重新扫码</Typography.Text>
               </div>
             )}
-            <Typography.Text strong>{loginPhaseMeta.title}</Typography.Text>
-            <Typography.Text type="secondary">{loginPhaseMeta.detail}</Typography.Text>
+            <Typography.Text strong>{loginTask.uiStatus.label}</Typography.Text>
+            <Typography.Text type="secondary">{loginTask.uiStatus.detail}</Typography.Text>
             {shouldShowQr ? (
               <Tag color={refreshingLoginTask ? "processing" : qrCountdownMs <= 15000 ? "gold" : "default"}>
                 {refreshingLoginTask ? "二维码刷新中" : `将在 ${countdownLabel} 后刷新`}
@@ -587,6 +662,8 @@ export function WaAccountsPane({
           <Space direction="vertical" size={8} style={{ width: "100%", marginTop: 12 }}>
             <Typography.Text>账号状态: {health.accountStatus}</Typography.Text>
             <Typography.Text>Provider: {health.providerKey}</Typography.Text>
+            <Typography.Text>展示状态: {health.uiStatus.label}</Typography.Text>
+            <Typography.Text>同步状态: {health.syncStatus.label}</Typography.Text>
             <Typography.Text>最近连接: {health.lastConnectedAt ? new Date(health.lastConnectedAt).toLocaleString() : "暂无"}</Typography.Text>
             <Typography.Text>最近掉线: {health.lastDisconnectedAt ? new Date(health.lastDisconnectedAt).toLocaleString() : "暂无"}</Typography.Text>
             <Typography.Text>连接态: {health.session?.connectionState ?? "暂无session"}</Typography.Text>

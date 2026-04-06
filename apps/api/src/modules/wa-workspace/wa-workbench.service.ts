@@ -9,6 +9,7 @@
 import type { Knex } from "knex";
 
 import { getWaProviderAdapter } from "./provider/provider-registry.js";
+import { deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
 import { assertCanReplyToWaConversation, releaseWaConversation, takeOverWaConversation } from "./wa-assignment.service.js";
 import { createWaLoginTask, listAccessibleWaAccounts, upsertWaAccountSession } from "./wa-account.repository.js";
 import {
@@ -76,11 +77,17 @@ export async function createWorkbenchLoginTask(
   if (!account) {
     throw new Error("WA account not accessible");
   }
+  const latestSession = await trx("wa_account_sessions")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .orderBy("created_at", "desc")
+    .first<Record<string, unknown> | undefined>();
+  const forceFresh = String(latestSession?.disconnect_reason ?? "") === "401";
   const provider = getWaProviderAdapter();
   const ticket = await provider.createLoginTicket({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
-    instanceKey: account.instanceKey
+    instanceKey: account.instanceKey,
+    forceFresh
   });
 
   await upsertWaAccountSession(trx, {
@@ -88,8 +95,8 @@ export async function createWorkbenchLoginTask(
     waAccountId: input.waAccountId,
     sessionRef: ticket.sessionRef,
     loginMode: "employee_scan",
-    connectionState: "qr_required",
-    loginPhase: "qr_required",
+    connectionState: ticket.connectionState,
+    loginPhase: ticket.loginPhase,
     qrCode: ticket.qrCode
   });
 
@@ -106,7 +113,36 @@ export async function createWorkbenchLoginTask(
   return {
     loginTaskId: String(row.login_task_id),
     sessionRef: String(row.session_ref),
-    qrCode: String(row.qr_code),
+    qrCode: row.qr_code ? String(row.qr_code) : null,
+    loginPhase: ticket.loginPhase,
+    connectionState: ticket.connectionState,
+    ...(function buildStatus() {
+      const session = {
+        connectionState: ticket.connectionState,
+        loginPhase: ticket.loginPhase,
+        disconnectReason: null,
+        qrCodeAvailable: Boolean(ticket.qrCode),
+        historySyncedAt: null,
+        chatsSyncedAt: null,
+        groupsSyncedAt: null,
+        hasGroupChats: null
+      };
+      const uiStatus = deriveWaUiStatus({
+        accountStatus: String(account.accountStatus),
+        session
+      });
+      return {
+        uiStatus,
+        syncStatus: deriveWaSyncStatus({
+          uiStatusCode: uiStatus.code,
+          session
+        }),
+        actions: deriveWaActions({
+          lastConnectedAt: account.lastConnectedAt,
+          session
+        })
+      };
+    })(),
     expiresAt: new Date(String(row.expires_at)).toISOString()
   };
 }

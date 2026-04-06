@@ -32,6 +32,15 @@ type UploadingAttachment = {
   url: string;
 };
 
+function sortWaConversations(rows: WaConversationItem[]) {
+  return [...rows].sort((left, right) => {
+    const leftTs = left.lastMessageAt ? Date.parse(left.lastMessageAt) : 0;
+    const rightTs = right.lastMessageAt ? Date.parse(right.lastMessageAt) : 0;
+    if (rightTs !== leftTs) return rightTs - leftTs;
+    return right.unreadCount - left.unreadCount;
+  });
+}
+
 export function useWaWorkspace(session: Session | null) {
   const [accounts, setAccounts] = useState<WaAccountItem[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -64,7 +73,12 @@ export function useWaWorkspace(session: Session | null) {
         assignedToMe: assignedToMeOnly
       });
       setConversations(rows);
-      setSelectedConversationId((current) => current ?? rows[0]?.waConversationId ?? null);
+      setSelectedConversationId((current) => {
+        if (!current) return rows[0]?.waConversationId ?? null;
+        return rows.some((item) => item.waConversationId === current)
+          ? current
+          : (rows[0]?.waConversationId ?? null);
+      });
     } catch (nextError) {
       setError((nextError as Error).message);
     } finally {
@@ -117,15 +131,50 @@ export function useWaWorkspace(session: Session | null) {
       waAccountId: string;
       accountStatus: string;
       connectionState: string;
+      uiStatus: {
+        code: string;
+        label: string;
+        detail: string;
+        tone: "default" | "warning" | "success" | "danger" | "processing";
+      };
+      syncStatus: {
+        code: string;
+        label: string;
+        detail: string;
+        tone: "default" | "warning" | "success" | "danger" | "processing";
+      };
     }) => {
       setAccounts((current) => current.map((item) => (
         item.waAccountId === event.waAccountId
           ? {
               ...item,
-              accountStatus: event.accountStatus
+              accountStatus: event.accountStatus,
+              uiStatus: event.uiStatus,
+              syncStatus: event.syncStatus
             }
           : item
       )));
+    });
+
+    socket.on("wa.conversation.updated", (event: {
+      waAccountId: string;
+      conversation: WaConversationItem;
+    }) => {
+      setConversations((current) => {
+        const target = event.conversation;
+        const scoped = accountId && target.waAccountId !== accountId
+          ? current.filter((item) => item.waConversationId !== target.waConversationId)
+          : (() => {
+              const next = current.filter((item) => item.waConversationId !== target.waConversationId);
+              next.unshift(target);
+              return next;
+            })();
+        return sortWaConversations(scoped);
+      });
+
+      if (event.conversation.waConversationId === selectedConversationId) {
+        void loadDetail();
+      }
     });
 
     socket.on("wa.message.updated", (event: {
@@ -161,7 +210,7 @@ export function useWaWorkspace(session: Session | null) {
     return () => {
       socket.close();
     };
-  }, [selectedConversationId, session]);
+  }, [accountId, loadDetail, selectedConversationId, session]);
 
   const selectedConversation = useMemo(
     () => conversations.find((item) => item.waConversationId === selectedConversationId) ?? null,

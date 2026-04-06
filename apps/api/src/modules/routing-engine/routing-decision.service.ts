@@ -405,6 +405,13 @@ function resolvePolicyMode(tenantOperatingMode: string, executionMode: RoutingPl
 }
 
 function resolveOverride(context: RoutingContext): { ownerType: RoutingOwnerSide | null; reason: string | null } {
+  if (context.existingAssignment?.handoffRequired) {
+    return {
+      ownerType: "human",
+      reason: "human_handoff_queue_active"
+    };
+  }
+
   if (isHumanHandoffIntent(context.issueSummary.lastIntent)) {
     return {
       ownerType: "human",

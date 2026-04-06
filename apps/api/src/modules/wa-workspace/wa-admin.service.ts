@@ -10,6 +10,7 @@ import type { Knex } from "knex";
 
 import { normalizeNonEmptyString } from "../tenant/tenant-admin.shared.js";
 import { getWaProviderAdapter } from "./provider/provider-registry.js";
+import { deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
 import {
   createWaLoginTask,
   getWaAccountById,
@@ -61,12 +62,18 @@ export async function createAdminLoginTask(
   if (!account) {
     throw new Error("WA account not found");
   }
+  const latestSession = await trx("wa_account_sessions")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .orderBy("created_at", "desc")
+    .first<Record<string, unknown> | undefined>();
+  const forceFresh = String(latestSession?.disconnect_reason ?? "") === "401";
 
   const provider = getWaProviderAdapter();
   const ticket = await provider.createLoginTicket({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
-    instanceKey: account.instanceKey
+    instanceKey: account.instanceKey,
+    forceFresh
   });
 
   await upsertWaAccountSession(trx, {
@@ -74,8 +81,8 @@ export async function createAdminLoginTask(
     waAccountId: input.waAccountId,
     sessionRef: ticket.sessionRef,
     loginMode: input.loginMode,
-    connectionState: "qr_required",
-    loginPhase: "qr_required",
+    connectionState: ticket.connectionState,
+    loginPhase: ticket.loginPhase,
     qrCode: ticket.qrCode
   });
 
@@ -92,7 +99,36 @@ export async function createAdminLoginTask(
   return {
     loginTaskId: String(row.login_task_id),
     sessionRef: String(row.session_ref),
-    qrCode: String(row.qr_code),
+    qrCode: row.qr_code ? String(row.qr_code) : null,
+    loginPhase: ticket.loginPhase,
+    connectionState: ticket.connectionState,
+    ...(function buildStatus() {
+      const session = {
+        connectionState: ticket.connectionState,
+        loginPhase: ticket.loginPhase,
+        disconnectReason: null,
+        qrCodeAvailable: Boolean(ticket.qrCode),
+        historySyncedAt: null,
+        chatsSyncedAt: null,
+        groupsSyncedAt: null,
+        hasGroupChats: null
+      };
+      const uiStatus = deriveWaUiStatus({
+        accountStatus: String(account.accountStatus),
+        session
+      });
+      return {
+        uiStatus,
+        syncStatus: deriveWaSyncStatus({
+          uiStatusCode: uiStatus.code,
+          session
+        }),
+        actions: deriveWaActions({
+          lastConnectedAt: account.lastConnectedAt,
+          session
+        })
+      };
+    })(),
     expiresAt: new Date(String(row.expires_at)).toISOString()
   };
 }
@@ -124,21 +160,50 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
     providerKey: account.provider_key,
     lastConnectedAt: account.last_connected_at ? new Date(account.last_connected_at).toISOString() : null,
     lastDisconnectedAt: account.last_disconnected_at ? new Date(account.last_disconnected_at).toISOString() : null,
-    session: session
-      ? {
-          ...(parseSessionMeta(session.session_meta) ?? {}),
-          connectionState: session.connection_state,
-          sessionRef: session.session_ref,
-          loginMode: session.login_mode,
-          heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
-          disconnectReason: session.disconnect_reason ?? null,
-          autoReconnectCount: Number(session.auto_reconnect_count ?? 0),
-          qrCode: (() => {
-            const meta = parseSessionMeta(session.session_meta);
-            return typeof meta?.qrCode === "string" ? meta.qrCode : null;
-          })()
-        }
-      : null
+    ...(function buildUi() {
+      const meta = session ? parseSessionMeta(session.session_meta) : null;
+      const sessionView = session
+        ? {
+            ...(meta ?? {}),
+            connectionState: session.connection_state,
+            sessionRef: session.session_ref,
+            loginMode: session.login_mode,
+            heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
+            disconnectReason: session.disconnect_reason ?? null,
+            autoReconnectCount: Number(session.auto_reconnect_count ?? 0),
+            qrCode: typeof meta?.qrCode === "string" ? meta.qrCode : null
+          }
+        : null;
+      const sessionSummary = session
+        ? {
+            connectionState: String(session.connection_state),
+            loginPhase: typeof meta?.loginPhase === "string" ? meta.loginPhase : null,
+            disconnectReason: session.disconnect_reason ? String(session.disconnect_reason) : null,
+            qrCodeAvailable: typeof meta?.qrCode === "string" && meta.qrCode.length > 0,
+            historySyncedAt: typeof meta?.historySyncedAt === "string" ? meta.historySyncedAt : null,
+            chatsSyncedAt: typeof meta?.chatsSyncedAt === "string" ? meta.chatsSyncedAt : null,
+            groupsSyncedAt: typeof meta?.groupsSyncedAt === "string" ? meta.groupsSyncedAt : null,
+            hasGroupChats: typeof meta?.hasGroupChats === "boolean" ? meta.hasGroupChats : null
+          }
+        : null;
+      const lastConnectedAt = account.last_connected_at ? new Date(account.last_connected_at).toISOString() : null;
+      const uiStatus = deriveWaUiStatus({
+        accountStatus: String(account.account_status),
+        session: sessionSummary
+      });
+      return {
+        session: sessionView,
+        uiStatus,
+        syncStatus: deriveWaSyncStatus({
+          uiStatusCode: uiStatus.code,
+          session: sessionSummary
+        }),
+        actions: deriveWaActions({
+          lastConnectedAt,
+          session: sessionSummary
+        })
+      };
+    })()
   };
 }
 

@@ -1,7 +1,10 @@
 import type { AIMessage, AIProvider } from "../../../../../packages/ai-sdk/src/index.ts";
+import type { Knex } from "knex";
+import type { ProviderName } from "../../../../../packages/ai-sdk/src/index.js";
 
 import type { CapabilitySuggestionResult, TenantSkillDefinition } from "./contracts.js";
 import { buildSkillPlannerCatalog } from "./skill-definition.service.js";
+import { recordAIUsage } from "../ai/usage-meter.service.js";
 
 // ─── Smart Planner Threshold ────────────────────────────────────────────────
 // When available skills ≤ this number, skip LLM planner and use all as candidates.
@@ -37,6 +40,8 @@ Rules:
 
 type PlannerCallResult = {
   content: string;
+  inputTokens: number;
+  outputTokens: number;
 };
 
 function safeParseJson(raw: string): Record<string, unknown> {
@@ -73,11 +78,14 @@ function clampConfidence(value: unknown) {
 
 export async function smartPlanCapabilities(input: {
   provider: AIProvider;
+  providerName?: ProviderName;
   model: string;
   messages: AIMessage[];
   temperature: number;
   maxTokens: number;
   skills: TenantSkillDefinition[];
+  db?: Knex | Knex.Transaction;
+  tenantId?: string;
 }): Promise<CapabilitySuggestionResult & { plannerStrategy: "direct" | "rule_filter" | "llm_planner" }> {
   if (input.skills.length === 0) {
     return {
@@ -125,7 +133,12 @@ export async function smartPlanCapabilities(input: {
   }
 
   // Tier 3: Too many candidates — call LLM planner
-  const llmResult = await suggestCapabilities(input);
+  const llmResult = await suggestCapabilities({
+    ...input,
+    db: input.db,
+    tenantId: input.tenantId,
+    providerName: input.providerName
+  });
   return {
     ...llmResult,
     plannerStrategy: "llm_planner"
@@ -199,11 +212,14 @@ function extractCustomerText(messages: AIMessage[]): string {
 
 export async function suggestCapabilities(input: {
   provider: AIProvider;
+  providerName?: ProviderName;
   model: string;
   messages: AIMessage[];
   temperature: number;
   maxTokens: number;
   skills: TenantSkillDefinition[];
+  db?: Knex | Knex.Transaction;
+  tenantId?: string;
 }): Promise<CapabilitySuggestionResult> {
   if (input.skills.length === 0) {
     return {
@@ -233,6 +249,19 @@ export async function suggestCapabilities(input: {
     input.temperature,
     Math.min(input.maxTokens, 900)
   );
+
+  // Record usage when db + tenantId are available (always from orchestrator path)
+  if (input.db && input.tenantId && input.providerName) {
+    await recordAIUsage(input.db, {
+      tenantId: input.tenantId,
+      provider: input.providerName,
+      model: input.model,
+      feature: "skill_planner",
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      metadata: { skillCount: input.skills.length }
+    });
+  }
 
   const parsed = safeParseJson(result.content);
   const candidatesRaw = Array.isArray(parsed.candidates) ? parsed.candidates : [];
@@ -281,6 +310,8 @@ async function callPlannerLLM(
   });
 
   return {
-    content: result.content
+    content: result.content,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens
   };
 }

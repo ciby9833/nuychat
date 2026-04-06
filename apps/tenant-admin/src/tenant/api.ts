@@ -841,7 +841,15 @@ export function createWaAccountLoginTask(waAccountId: string) {
   return api<{
     loginTaskId: string;
     sessionRef: string;
-    qrCode: string;
+    qrCode: string | null;
+    loginPhase: string;
+    connectionState: string;
+    uiStatus: {
+      code: string;
+      label: string;
+      detail: string;
+      tone: "default" | "warning" | "success" | "danger" | "processing";
+    };
     expiresAt: string;
   }>(`/api/admin/wa/accounts/${waAccountId}/login-task`, {
     method: "POST",

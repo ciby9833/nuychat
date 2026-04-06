@@ -90,6 +90,18 @@ type WaAccountUpdatedEvent = RealtimeEventBase & {
   accountStatus: string;
   connectionState: string;
   loginPhase: string;
+  uiStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
+  syncStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
   sessionRef: string | null;
   heartbeatAt: string | null;
   qrCode: string | null;
@@ -111,6 +123,30 @@ type WaMessageUpdatedEvent = RealtimeEventBase & {
   occurredAt: string;
 };
 
+type WaConversationUpdatedEvent = RealtimeEventBase & {
+  tenantId: string;
+  waAccountId: string;
+  conversation: {
+    waConversationId: string;
+    waAccountId: string;
+    chatJid: string;
+    conversationType: string;
+    subject: string | null;
+    displayName: string | null;
+    contactJid: string | null;
+    contactName: string | null;
+    contactPhoneE164: string | null;
+    conversationStatus: string;
+    currentReplierMembershipId: string | null;
+    currentReplierName: string | null;
+    accountDisplayName: string | null;
+    lastMessageAt: string | null;
+    lastMessagePreview: string | null;
+    unreadCount: number;
+  };
+  occurredAt: string;
+};
+
 export type RealtimeEvents = {
   "conversation.created": ConversationCreatedEvent;
   "conversation.updated": ConversationUpdatedEvent;
@@ -119,6 +155,7 @@ export type RealtimeEvents = {
   "message.updated": MessageUpdatedEvent;
   "task.updated": TaskUpdatedEvent;
   "wa.account.updated": WaAccountUpdatedEvent;
+  "wa.conversation.updated": WaConversationUpdatedEvent;
   "wa.message.updated": WaMessageUpdatedEvent;
 };
 

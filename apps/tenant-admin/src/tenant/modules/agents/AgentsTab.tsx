@@ -4,7 +4,7 @@
 
 import { MessageOutlined, TeamOutlined, UserOutlined } from "@ant-design/icons";
 import { Space, Tabs, Tag } from "antd";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AgentsPane } from "./components/AgentsPane";
@@ -20,6 +20,9 @@ export function AgentsTab() {
   const [showMemberModal, setShowMemberModal] = useState(false);
   const [showEnableAgentModal, setShowEnableAgentModal] = useState(false);
   const [activeTab, setActiveTab] = useState("agents");
+  const handleReload = useCallback(() => {
+    void data.load();
+  }, [data.load]);
 
   return (
     <>
@@ -41,7 +44,7 @@ export function AgentsTab() {
                 agents={data.agents}
                 members={data.members}
                 loading={data.loading}
-                onReload={() => { void data.load(); }}
+                onReload={handleReload}
                 onEnable={() => setShowEnableAgentModal(true)}
               />
             )
@@ -60,7 +63,7 @@ export function AgentsTab() {
                 members={data.members}
                 waAvailable={Boolean(data.waRuntime?.available)}
                 loading={data.loading}
-                onReload={() => { void data.load(); }}
+                onReload={handleReload}
                 onCreate={() => setShowMemberModal(true)}
                 onEnableAgent={() => setShowEnableAgentModal(true)}
               />
@@ -80,7 +83,7 @@ export function AgentsTab() {
                 waAccounts={data.waAccounts}
                 members={data.members}
                 loading={data.loading}
-                onReload={() => { void data.load(); }}
+                onReload={handleReload}
               />
             )
           }] : [])

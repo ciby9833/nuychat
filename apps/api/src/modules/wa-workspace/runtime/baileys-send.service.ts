@@ -10,19 +10,49 @@ import crypto from "node:crypto";
 
 import type { AnyMessageContent, WAMessage } from "@whiskeysockets/baileys";
 
+import { withTenantTransaction } from "../../../infra/db/client.js";
+import { mapBaileysDeliveryStatus } from "./baileys-message.mapper.js";
 import { ensureBaileysRuntime, getBaileysRuntime } from "./baileys-runtime.manager.js";
 
-function buildQuotedMessage(chatJid: string, quotedMessageId?: string | null): WAMessage | undefined {
+async function buildQuotedMessage(
+  tenantId: string,
+  waAccountId: string,
+  chatJid: string,
+  quotedMessageId?: string | null
+): Promise<WAMessage | undefined> {
   if (!quotedMessageId) return undefined;
+
+  const row = await withTenantTransaction(tenantId, async (trx) =>
+    trx("wa_messages")
+      .where("tenant_id", tenantId)
+      .where("wa_account_id", waAccountId)
+      .andWhere((builder) => {
+        builder.where("provider_message_id", quotedMessageId).orWhere("wa_message_id", quotedMessageId);
+      })
+      .select("provider_message_id", "direction", "provider_payload")
+      .orderBy("created_at", "desc")
+      .first<Record<string, unknown> | undefined>()
+  );
+  if (!row) return undefined;
+
+  const providerMessageId =
+    typeof row.provider_message_id === "string" && row.provider_message_id.trim()
+      ? row.provider_message_id.trim()
+      : quotedMessageId;
+  const payload = typeof row.provider_payload === "string"
+    ? JSON.parse(String(row.provider_payload))
+    : (row.provider_payload as Record<string, unknown> | null);
+  const message = payload && typeof payload === "object" && payload.message && typeof payload.message === "object"
+    ? (payload.message as WAMessage["message"])
+    : { conversation: "" };
+
   return {
     key: {
       remoteJid: chatJid,
-      id: quotedMessageId,
-      fromMe: false
+      id: providerMessageId,
+      fromMe: String(row.direction) === "outbound"
     },
-    message: {
-      conversation: ""
-    }
+    message
   };
 }
 
@@ -51,7 +81,7 @@ export async function sendBaileysMessage(input: {
     });
   }
 
-  const quoted = buildQuotedMessage(input.chatJid, input.quotedMessageId);
+  const quoted = await buildQuotedMessage(input.tenantId, input.waAccountId, input.chatJid, input.quotedMessageId);
 
   let content: AnyMessageContent;
   if (input.jobType === "send_media") {
@@ -96,7 +126,7 @@ export async function sendBaileysMessage(input: {
 
   return {
     providerMessageId: response?.key?.id ?? crypto.randomUUID(),
-    deliveryStatus: "sent",
+    deliveryStatus: mapBaileysDeliveryStatus(response?.status) ?? "pending",
     providerPayload: (response ?? {}) as Record<string, unknown>
   };
 }

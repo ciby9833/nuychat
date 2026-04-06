@@ -194,6 +194,14 @@ function allowedActionsForMetric(metric: SlaBreachMetric) {
   }
 }
 
+export function resolveConfiguredFollowUpCloseMode(
+  triggerPolicy: ResolvedSlaTriggerPolicy | null
+): FollowUpMonitorMode | null {
+  const closeAction = triggerPolicy?.followUpActions.find((action) => action.type === "close_case") ?? null;
+  if (!closeAction) return null;
+  return closeAction.mode ?? "waiting_customer";
+}
+
 async function removeTimeoutJobs(jobIds: string[]): Promise<void> {
   for (const jobId of jobIds) {
     await conversationTimeoutQueue.remove(jobId).catch(() => null);
@@ -218,17 +226,19 @@ export async function scheduleFollowUpTimeout(
   tenantId: string,
   conversationId: string,
   customerId: string,
-  input: { mode: FollowUpMonitorMode }
+  input?: { mode?: FollowUpMonitorMode | null }
 ): Promise<void> {
   const definition = await resolveConversationSlaDefinition(tenantId, customerId);
   if (!definition?.followUpTargetSec || definition.followUpTargetSec <= 0) return;
+  const triggerPolicy = await resolveConversationTriggerPolicy(tenantId, customerId);
+  const followUpMode = input?.mode ?? resolveConfiguredFollowUpCloseMode(triggerPolicy) ?? "waiting_customer";
 
   const scheduledAt = Date.now();
   const jobId = `conv-followup-${conversationId}`;
   await removeTimeoutJobs([jobId, `conv-close-${conversationId}`, `conv-unanswered-close-${conversationId}`]);
   await conversationTimeoutQueue.add(
     "conversation.follow_up_check",
-    { tenantId, conversationId, alertType: "follow_up", followUpMode: input.mode, scheduledAt },
+    { tenantId, conversationId, alertType: "follow_up", followUpMode: followUpMode, scheduledAt },
     {
       jobId,
       delay: definition.followUpTargetSec * 1000,
@@ -375,6 +385,66 @@ export async function recoverOverdueAssignmentAcceptTimeouts(limit = 500): Promi
     );
     recovered += 1;
   }
+  return recovered;
+}
+
+export async function recoverOverdueFollowUpTimeouts(limit = 500): Promise<number> {
+  const rows = await db("conversations as c")
+    .join("conversation_cases as cc", function joinCurrentCase() {
+      this.on("cc.case_id", "=", "c.current_case_id").andOn("cc.tenant_id", "=", "c.tenant_id");
+    })
+    .select("c.tenant_id", "c.conversation_id", "c.customer_id")
+    .whereIn("c.status", ["open", "queued", "bot_active", "human_active"])
+    .where("cc.status", "waiting_customer")
+    .orderBy("c.updated_at", "asc")
+    .limit(limit) as Array<{
+      tenant_id: string;
+      conversation_id: string;
+      customer_id: string | null;
+    }>;
+
+  let recovered = 0;
+  const now = Date.now();
+
+  for (const row of rows) {
+    if (!row.customer_id) continue;
+    const definition = await resolveConversationSlaDefinition(row.tenant_id, row.customer_id);
+    if (!definition?.followUpTargetSec || definition.followUpTargetSec <= 0) continue;
+
+    const latestMessage = await db("messages")
+      .where({ tenant_id: row.tenant_id, conversation_id: row.conversation_id })
+      .orderBy("created_at", "desc")
+      .select("direction", "created_at")
+      .first<{ direction: string; created_at: string | Date | null } | undefined>();
+
+    if (!latestMessage?.created_at || latestMessage.direction !== "outbound") continue;
+    const latestMessageMs = new Date(latestMessage.created_at).getTime();
+    if (!Number.isFinite(latestMessageMs)) continue;
+    if (latestMessageMs + definition.followUpTargetSec * 1000 > now) continue;
+
+    const triggerPolicy = await resolveConversationTriggerPolicy(row.tenant_id, row.customer_id);
+    const followUpMode = resolveConfiguredFollowUpCloseMode(triggerPolicy) ?? "waiting_customer";
+    const jobId = `conv-followup-${row.conversation_id}`;
+    await removeTimeoutJobs([jobId, `conv-close-${row.conversation_id}`, `conv-unanswered-close-${row.conversation_id}`]);
+    await conversationTimeoutQueue.add(
+      "conversation.follow_up_check",
+      {
+        tenantId: row.tenant_id,
+        conversationId: row.conversation_id,
+        alertType: "follow_up",
+        followUpMode,
+        scheduledAt: now
+      },
+      {
+        jobId,
+        delay: 0,
+        removeOnComplete: 50,
+        removeOnFail: 20
+      }
+    );
+    recovered += 1;
+  }
+
   return recovered;
 }
 

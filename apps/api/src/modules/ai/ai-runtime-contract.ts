@@ -141,7 +141,11 @@ export function inferConversationSentiment(history: ChatMessage[]): AISentiment 
 export function isHumanHandoffIntent(value: string | null | undefined): boolean {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
-  return normalized === "handoff_request" || normalized === "human_handoff" || normalized === "human_escalation";
+  return normalized === "handoff_request"
+    || normalized === "human_handoff"
+    || normalized === "human_escalation"
+    || normalized === "request_human_agent"
+    || normalized === "request_live_agent";
 }
 
 function normalizeAction(value: unknown, fallback: AIControlAction): AIControlAction {

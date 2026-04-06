@@ -13,7 +13,7 @@ import { emitWaMessageUpdated } from "./wa-realtime.service.js";
 
 export async function enqueueWaOutboundJob(payload: WaWorkspaceOutboundJobPayload) {
   await waWorkspaceOutboundQueue.add("wa.outbound.send_text", payload, {
-    jobId: `wa:${payload.jobId}`,
+    jobId: `wa-${payload.jobId}`,
     removeOnComplete: 50,
     removeOnFail: 50
   });

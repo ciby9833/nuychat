@@ -1,7 +1,15 @@
 import type { Knex } from "knex";
 
 type ProviderName = "openai" | "anthropic" | "gemini" | "ollama";
-type FeatureName = "orchestrator" | "copilot" | "embedding" | "customer_analysis";
+export type FeatureName =
+  | "orchestrator"
+  | "copilot"
+  | "embedding"
+  | "customer_analysis"
+  | "skill_planner"
+  | "closure_evaluator"
+  | "skill_execution"
+  | "memory_encoder";
 
 type PriceCard = {
   inputPerMillionUsd: number;

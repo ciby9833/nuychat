@@ -7,8 +7,44 @@
  * - 仅处理持久化，不做权限与业务编排。
  */
 import type { Knex } from "knex";
+import { deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
+
+function parseSessionMeta(value: unknown): Record<string, unknown> | null {
+  try {
+    if (!value) return null;
+    return typeof value === "string"
+      ? JSON.parse(value) as Record<string, unknown>
+      : value as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
 
 function mapAccount(row: Record<string, unknown>) {
+  const sessionMeta = parseSessionMeta(row.session_meta);
+  const session = row.session_ref
+    ? {
+        sessionRef: String(row.session_ref),
+        connectionState: row.session_connection_state ? String(row.session_connection_state) : "idle",
+        loginMode: row.login_mode ? String(row.login_mode) : null,
+        disconnectReason: row.session_disconnect_reason ? String(row.session_disconnect_reason) : null,
+        loginPhase: typeof sessionMeta?.loginPhase === "string" ? sessionMeta.loginPhase : null,
+        qrCodeAvailable: typeof sessionMeta?.qrCode === "string" && sessionMeta.qrCode.length > 0,
+        historySyncedAt: typeof sessionMeta?.historySyncedAt === "string" ? sessionMeta.historySyncedAt : null,
+        chatsSyncedAt: typeof sessionMeta?.chatsSyncedAt === "string" ? sessionMeta.chatsSyncedAt : null,
+        groupsSyncedAt: typeof sessionMeta?.groupsSyncedAt === "string" ? sessionMeta.groupsSyncedAt : null,
+        hasGroupChats: typeof sessionMeta?.hasGroupChats === "boolean" ? sessionMeta.hasGroupChats : null
+      }
+    : null;
+  const uiStatus = deriveWaUiStatus({
+    accountStatus: String(row.account_status),
+    session
+  });
+  const syncStatus = deriveWaSyncStatus({
+    uiStatusCode: uiStatus.code,
+    session
+  });
+  const lastConnectedAt = row.last_connected_at ? new Date(String(row.last_connected_at)).toISOString() : null;
   return {
     waAccountId: String(row.wa_account_id),
     instanceKey: String(row.instance_key),
@@ -21,8 +57,12 @@ function mapAccount(row: Record<string, unknown>) {
     primaryOwnerName: row.primary_owner_name ? String(row.primary_owner_name) : null,
     memberIds: Array.isArray(row.member_ids) ? row.member_ids.map((item) => String(item)) : [],
     memberCount: Number(row.member_count ?? 0),
-    lastConnectedAt: row.last_connected_at ? new Date(String(row.last_connected_at)).toISOString() : null,
-    lastDisconnectedAt: row.last_disconnected_at ? new Date(String(row.last_disconnected_at)).toISOString() : null
+    lastConnectedAt,
+    lastDisconnectedAt: row.last_disconnected_at ? new Date(String(row.last_disconnected_at)).toISOString() : null,
+    session,
+    uiStatus,
+    syncStatus,
+    actions: deriveWaActions({ lastConnectedAt, session })
   };
 }
 
@@ -42,6 +82,46 @@ async function loadWaAccounts(
     .select(
       "a.*",
       trx.raw("owner.display_name as primary_owner_name"),
+      trx.raw(`(
+        select s.session_ref
+        from wa_account_sessions s
+        where s.tenant_id = a.tenant_id
+          and s.wa_account_id = a.wa_account_id
+        order by s.created_at desc
+        limit 1
+      ) as session_ref`),
+      trx.raw(`(
+        select s.connection_state
+        from wa_account_sessions s
+        where s.tenant_id = a.tenant_id
+          and s.wa_account_id = a.wa_account_id
+        order by s.created_at desc
+        limit 1
+      ) as session_connection_state`),
+      trx.raw(`(
+        select s.login_mode
+        from wa_account_sessions s
+        where s.tenant_id = a.tenant_id
+          and s.wa_account_id = a.wa_account_id
+        order by s.created_at desc
+        limit 1
+      ) as login_mode`),
+      trx.raw(`(
+        select s.disconnect_reason
+        from wa_account_sessions s
+        where s.tenant_id = a.tenant_id
+          and s.wa_account_id = a.wa_account_id
+        order by s.created_at desc
+        limit 1
+      ) as session_disconnect_reason`),
+      trx.raw(`(
+        select s.session_meta
+        from wa_account_sessions s
+        where s.tenant_id = a.tenant_id
+          and s.wa_account_id = a.wa_account_id
+        order by s.created_at desc
+        limit 1
+      ) as session_meta`),
       trx.raw("coalesce(json_agg(distinct wam.membership_id) filter (where wam.membership_id is not null), '[]'::json) as member_ids"),
       trx.raw("count(distinct wam.membership_id) as member_count")
     )

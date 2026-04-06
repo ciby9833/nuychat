@@ -22,7 +22,7 @@ import type {
 } from "../provider-contract.js";
 
 export class BaileysProviderAdapter implements WaProviderAdapter {
-  async createLoginTicket(input: { tenantId: string; waAccountId: string; instanceKey: string }): Promise<WaLoginSessionTicket> {
+  async createLoginTicket(input: { tenantId: string; waAccountId: string; instanceKey: string; forceFresh?: boolean }): Promise<WaLoginSessionTicket> {
     return createBaileysLoginTicket({
       ...input,
       loginMode: "employee_scan"

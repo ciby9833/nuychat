@@ -34,24 +34,31 @@ export function WaConversationList(props: WaConversationListProps) {
   } = props;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-slate-200 px-4 py-4">
-        <div className="text-sm font-semibold text-slate-900">WA 工作台</div>
-        <div className="mt-1 text-xs text-slate-500">独立账号池，不与当前官方客服渠道混线。</div>
+    <div className="flex h-full min-h-0 flex-col bg-[#ffffff]">
+      <div className="border-b border-[#d7dbdf] bg-[#f0f2f5] px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[15px] font-semibold text-[#111b21]">WhatsApp</div>
+            <div className="mt-0.5 text-[11px] text-[#667781]">{accounts.length} 个账号</div>
+          </div>
+          <div className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-[#54656f] shadow-sm">
+            {assignedToMeOnly ? "我的接管" : "全部会话"}
+          </div>
+        </div>
         <div className="mt-3 space-y-2">
           <select
-            className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+            className="h-10 w-full rounded-xl border border-[#d1d7db] bg-white px-3 text-sm text-[#111b21] focus:outline-none focus:ring-2 focus:ring-[#00a884]/20"
             value={accountId ?? ""}
             onChange={(event) => onAccountChange(event.target.value || null)}
           >
             <option value="">全部账号</option>
             {accounts.map((account) => (
               <option key={account.waAccountId} value={account.waAccountId}>
-                {account.displayName} · {account.accountStatus}
+                {account.displayName} · {account.uiStatus.label}{account.uiStatus.code === "connected" && account.syncStatus.code !== "ready" ? ` / ${account.syncStatus.label}` : ""}
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-2 text-xs text-slate-600">
+          <label className="flex items-center gap-2 text-xs text-[#54656f]">
             <input
               type="checkbox"
               checked={assignedToMeOnly}
@@ -62,38 +69,56 @@ export function WaConversationList(props: WaConversationListProps) {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
-        {loading ? <div className="px-2 py-3 text-sm text-slate-400">加载中...</div> : null}
-        <div className="space-y-2">
+      <div className="min-h-0 flex-1 overflow-auto bg-white">
+        {loading ? <div className="px-4 py-3 text-sm text-[#8696a0]">加载中...</div> : null}
+        <div>
           {conversations.map((conversation) => {
             const active = conversation.waConversationId === selectedConversationId;
-            const title = conversation.subject || conversation.contactJid || conversation.chatJid;
+            const title = conversation.displayName || conversation.subject || conversation.contactJid || conversation.chatJid;
+            const secondary = conversation.conversationType === "group"
+              ? conversation.chatJid
+              : (conversation.contactPhoneE164 || conversation.contactJid || conversation.chatJid);
             return (
               <button
                 key={conversation.waConversationId}
                 type="button"
                 onClick={() => onSelectConversation(conversation.waConversationId)}
-                className={`w-full rounded-2xl border px-3 py-3 text-left transition-colors ${
+                className={`w-full border-b border-[#f0f2f5] px-4 py-3 text-left transition-colors ${
                   active
-                    ? "border-emerald-300 bg-emerald-50"
-                    : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                    ? "bg-[#f0fdf9]"
+                    : "bg-white hover:bg-[#f5f6f6]"
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="truncate text-sm font-medium text-slate-900">{title}</div>
-                  <span className="text-[11px] uppercase text-slate-400">{conversation.conversationType}</span>
+                  <div className="min-w-0 flex items-center gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#d9fdd3] text-sm font-semibold text-[#005c4b]">
+                      {(title || "?").slice(0, 1).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-[#111b21]">{title}</div>
+                      <div className="mt-0.5 truncate text-[11px] text-[#8696a0]">{secondary}</div>
+                      <div className="mt-1 truncate text-xs text-[#667781]">{conversation.lastMessagePreview || "暂无消息"}</div>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="text-[11px] uppercase text-[#8696a0]">{conversation.conversationType}</div>
+                    {conversation.unreadCount > 0 ? (
+                      <div className="mt-2 inline-flex min-w-5 items-center justify-center rounded-full bg-[#25d366] px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                        {conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="mt-1 truncate text-xs text-slate-500">{conversation.lastMessagePreview || "暂无消息"}</div>
-                <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-400">
-                  <span>{conversation.accountDisplayName || "WA账号"}</span>
-                  <span>{conversation.currentReplierName ? `当前回复: ${conversation.currentReplierName}` : "未接管"}</span>
+                <div className="mt-2 flex items-center justify-between gap-2 pl-14 text-[11px] text-[#8696a0]">
+                  <span>{conversation.accountDisplayName || "WA"}</span>
+                  <span>{conversation.currentReplierName || "未接管"}</span>
                 </div>
               </button>
             );
           })}
           {!loading && conversations.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">
-              当前没有可见 WA 会话
+            <div className="px-6 py-10 text-center text-sm text-[#8696a0]">
+              当前没有会话
             </div>
           ) : null}
         </div>

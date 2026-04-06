@@ -19,6 +19,18 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
+function normalizePhoneE164(value: string | null) {
+  if (!value) return null;
+  const digits = value.replace(/[^\d]/g, "");
+  return digits ? `+${digits}` : null;
+}
+
+function derivePhoneE164FromJid(jid: string | null) {
+  if (!jid) return null;
+  const local = jid.split("@")[0] ?? "";
+  return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
+}
+
 export function mapBaileysDeliveryStatus(status?: number | null) {
   if (status === WAMessageStatus.ERROR) return "failed";
   if (status === WAMessageStatus.PENDING) return "pending";
@@ -142,7 +154,11 @@ export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMess
     direction,
     senderRole,
     conversationType,
-    subject: asString(message.pushName),
+    // pushName on outbound (fromMe) messages is the account's own display name, not the contact's.
+    // For groups, pushName is the sender's name (not the group name — that comes from groups.update).
+    subject: conversationType === "direct" && !fromMe ? asString(message.pushName) : null,
+    contactName: conversationType === "direct" && !fromMe ? asString(message.pushName) : null,
+    contactPhoneE164: conversationType === "direct" ? derivePhoneE164FromJid(remoteJid) : null,
     contactJid: conversationType === "direct" ? remoteJid : null,
     quotedMessageId: asString(message.message?.extendedTextMessage?.contextInfo?.stanzaId),
     reactionEmoji: asString(reaction?.text),

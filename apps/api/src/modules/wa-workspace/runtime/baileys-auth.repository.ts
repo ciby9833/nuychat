@@ -68,6 +68,16 @@ export async function persistBaileysAuthSnapshot(tenantId: string, waAccountId: 
   });
 }
 
+export async function resetBaileysAuthState(tenantId: string, waAccountId: string) {
+  const sessionPath = getSessionPath(tenantId, waAccountId);
+  await fs.rm(sessionPath, { recursive: true, force: true });
+  await withTenantTransaction(tenantId, async (trx) => {
+    await trx("wa_baileys_auth_snapshots")
+      .where({ tenant_id: tenantId, wa_account_id: waAccountId })
+      .del();
+  });
+}
+
 async function restoreBaileysAuthSnapshot(tenantId: string, waAccountId: string, sessionPath: string) {
   await fs.mkdir(sessionPath, { recursive: true });
   const existingFiles = (await fs.readdir(sessionPath).catch(() => [])).filter((name) => name.endsWith(".json"));

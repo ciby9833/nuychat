@@ -9,7 +9,8 @@
 
 import type { VerifierVerdict, VerifierAction } from "../verifier/types.js";
 import type { VerifiedFact, FactSnapshot } from "../fact-layer.service.js";
-import type { AIMessage, AIProvider, AIToolDefinition } from "../../../../../../packages/ai-sdk/src/index.js";
+import type { AIMessage } from "../../../../../../packages/ai-sdk/src/index.js";
+import type { LLMParams } from "../call-context.js";
 
 // ─── Reviser action identifiers ──────────────────────────────────────────────
 
@@ -62,11 +63,6 @@ export interface ReviserPointBContext {
   skillsInvoked: string[];
   loopMessages: AIMessage[];
   chatHistory: AIMessage[];
-  /** LLM infrastructure for rewrite_answer */
-  llm: {
-    provider: AIProvider;
-    model: string;
-    temperature: number;
-    maxTokens: number;
-  };
+  /** LLM infrastructure for rewrite_answer / clarify */
+  llm: LLMParams;
 }

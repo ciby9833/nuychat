@@ -19,6 +19,7 @@ import {
   type ConversationTimeoutJobPayload
 } from "../infra/queue/queues.js";
 import { OwnershipService } from "../modules/conversation/ownership.service.js";
+import { ConversationClosureEvaluatorService } from "../modules/conversation/conversation-closure-evaluator.service.js";
 import { emitConversationUpdatedSnapshot } from "../modules/conversation/conversation-realtime.service.js";
 import { ConversationSegmentService } from "../modules/conversation/conversation-segment.service.js";
 import { CUSTOMER_MESSAGE_SENDER_TYPE } from "../modules/message/message.constants.js";
@@ -31,8 +32,10 @@ import { HumanDispatchService } from "../modules/routing-engine/human-dispatch.s
 import { recordConversationSlaBreach } from "../modules/sla/sla-breach.service.js";
 import {
   resolveConversationSlaDefinition,
+  resolveConfiguredFollowUpCloseMode,
   resolveConversationTriggerPolicy,
   scheduleAssignmentAcceptTimeout,
+  scheduleFollowUpTimeout,
   scheduleSubsequentResponseTimeout,
   type FollowUpMonitorMode,
   type SlaTriggerAction
@@ -43,6 +46,7 @@ const ACTIVE_STATUSES = new Set(["open", "queued", "bot_active", "human_active"]
 const conversationSegmentService = new ConversationSegmentService();
 const humanDispatchService = new HumanDispatchService();
 const ownershipService = new OwnershipService();
+const conversationClosureEvaluatorService = new ConversationClosureEvaluatorService();
 const routingContextService = new RoutingContextService();
 const routingExecutionService = new RoutingExecutionService();
 const unifiedRoutingEngineService = new UnifiedRoutingEngineService();
@@ -180,6 +184,7 @@ export function createConversationTimeoutWorker() {
           const triggerPolicy = customer?.customer_id
             ? await resolveConversationTriggerPolicy(tenantId, customer.customer_id)
             : null;
+          const configuredFollowUpMode = resolveConfiguredFollowUpCloseMode(triggerPolicy) ?? "waiting_customer";
           const actualSec = latestActivity?.latest_at && definition?.followUpTargetSec
             ? Math.max(
               definition.followUpTargetSec + 1,
@@ -201,7 +206,7 @@ export function createConversationTimeoutWorker() {
               severity: "warning",
               details: {
                 trigger: "follow_up_timeout",
-                followUpMode: normalized.followUpMode ?? "waiting_customer"
+                followUpMode: configuredFollowUpMode
               }
             });
           }
@@ -213,19 +218,41 @@ export function createConversationTimeoutWorker() {
               event_type: "sla_follow_up_escalated",
               actor_type: "system",
               actor_id: null,
-              payload: { followUpMode: normalized.followUpMode ?? "waiting_customer" }
+              payload: { followUpMode: configuredFollowUpMode }
             });
           }
 
-          if (!shouldCloseForMode(triggerPolicy?.followUpActions ?? [], normalized.followUpMode ?? "waiting_customer")) {
+          if (!shouldCloseForMode(triggerPolicy?.followUpActions ?? [], configuredFollowUpMode)) {
             return { skipped: false, action: "follow_up_breach_recorded" };
+          }
+
+          if (configuredFollowUpMode === "semantic") {
+            const verdict = await conversationClosureEvaluatorService.evaluate(trx, {
+              tenantId,
+              conversationId
+            });
+
+            if (verdict.verdict !== "close") {
+              if (customer?.customer_id) {
+                await scheduleFollowUpTimeout(tenantId, conversationId, customer.customer_id, {
+                  mode: "semantic"
+                });
+              }
+              return {
+                skipped: false,
+                action: "follow_up_semantic_continues",
+                verdict: verdict.verdict,
+                confidence: verdict.confidence,
+                reason: verdict.reason
+              };
+            }
           }
 
           await conversationSegmentService.closeCurrentSegment(trx, {
             tenantId,
             conversationId,
             status: "resolved",
-            reason: `sla-follow-up-${normalized.followUpMode ?? "waiting_customer"}`
+            reason: `sla-follow-up-${configuredFollowUpMode}`
           });
 
           // Auto-resolve the conversation
@@ -252,7 +279,7 @@ export function createConversationTimeoutWorker() {
             actor_type: "system",
             actor_id: null,
             payload: {
-              closeMode: normalized.followUpMode ?? "waiting_customer"
+              closeMode: configuredFollowUpMode
             }
           });
 

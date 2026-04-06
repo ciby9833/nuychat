@@ -16,7 +16,6 @@ import { markCustomerMessagesRead } from "../modules/message/message.repository.
 import { emitConversationUpdatedSnapshot } from "../modules/conversation/conversation-realtime.service.js";
 import { realtimeEventBus } from "../modules/realtime/realtime.events.js";
 import { trackEvent } from "../modules/analytics/analytics.service.js";
-import { ConversationClosureEvaluatorService } from "../modules/conversation/conversation-closure-evaluator.service.js";
 import {
   cancelAssignmentAcceptTimeout,
   cancelFirstResponseTimeout,
@@ -29,7 +28,6 @@ const messageService = new MessageService();
 const presenceService = new PresenceService();
 const conversationCaseService = new ConversationCaseService();
 const ownershipService = new OwnershipService();
-const conversationClosureEvaluatorService = new ConversationClosureEvaluatorService();
 
 export function createOutboundWorker() {
   const workerConnection = duplicateRedisConnection();
@@ -248,16 +246,7 @@ async function schedulePostReplyCloseTimer(input: {
   conversationId: string;
   customerId: string;
 }) {
-  const verdict = await withTenantTransaction(input.tenantId, async (trx) =>
-    conversationClosureEvaluatorService.evaluate(trx, {
-      tenantId: input.tenantId,
-      conversationId: input.conversationId
-    })
-  );
-
-  await scheduleFollowUpTimeout(input.tenantId, input.conversationId, input.customerId, {
-    mode: verdict.verdict === "close" ? "semantic" : "waiting_customer"
-  });
+  await scheduleFollowUpTimeout(input.tenantId, input.conversationId, input.customerId);
 }
 
 async function resolveCurrentCaseId(trx: Knex.Transaction, conversationId: string) {

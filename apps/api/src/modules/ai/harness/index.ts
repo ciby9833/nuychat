@@ -47,3 +47,12 @@ export {
 
 // Sandbox (guardrails)
 export { SandboxState } from "./sandbox-evaluator.js";
+
+// AI Call Context (re-export from parent module for convenience)
+export {
+  type AICallContext,
+  type LLMParams,
+  buildCallContext,
+  toLLMParams,
+  trackedComplete
+} from "../call-context.js";

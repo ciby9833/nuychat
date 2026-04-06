@@ -14,6 +14,18 @@ export function emitWaAccountUpdated(input: {
   accountStatus: string;
   connectionState: string;
   loginPhase: string;
+  uiStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
+  syncStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
   sessionRef?: string | null;
   heartbeatAt?: string | null;
   qrCode?: string | null;
@@ -30,6 +42,8 @@ export function emitWaAccountUpdated(input: {
     accountStatus: input.accountStatus,
     connectionState: input.connectionState,
     loginPhase: input.loginPhase,
+    uiStatus: input.uiStatus,
+    syncStatus: input.syncStatus,
     sessionRef: input.sessionRef ?? null,
     heartbeatAt: input.heartbeatAt ?? null,
     qrCode: input.qrCode ?? null,
@@ -58,6 +72,37 @@ export function emitWaMessageUpdated(input: {
     providerMessageId: input.providerMessageId ?? null,
     deliveryStatus: input.deliveryStatus,
     receiptSummary: input.receiptSummary ?? null,
+    occurredAt: input.occurredAt ?? new Date().toISOString()
+  });
+}
+
+export function emitWaConversationUpdated(input: {
+  tenantId: string;
+  waAccountId: string;
+  conversation: {
+    waConversationId: string;
+    waAccountId: string;
+    chatJid: string;
+    conversationType: string;
+    subject: string | null;
+    displayName: string | null;
+    contactJid: string | null;
+    contactName: string | null;
+    contactPhoneE164: string | null;
+    conversationStatus: string;
+    currentReplierMembershipId: string | null;
+    currentReplierName: string | null;
+    accountDisplayName: string | null;
+    lastMessageAt: string | null;
+    lastMessagePreview: string | null;
+    unreadCount: number;
+  };
+  occurredAt?: string;
+}) {
+  realtimeEventBus.emitEvent("wa.conversation.updated", {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    conversation: input.conversation,
     occurredAt: input.occurredAt ?? new Date().toISOString()
   });
 }

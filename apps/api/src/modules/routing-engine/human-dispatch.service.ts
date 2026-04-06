@@ -423,7 +423,7 @@ async function loadCandidateEvaluations(
     .join("agent_shifts as ash", function joinShifts() {
       this.on("ash.agent_id", "=", "ap.agent_id").andOn("ash.tenant_id", "=", "ap.tenant_id");
     })
-    .join("shift_schedules as ss", function joinSchedules() {
+    .leftJoin("shift_schedules as ss", function joinSchedules() {
       this.on("ss.shift_id", "=", "ash.shift_id").andOn("ss.tenant_id", "=", "ash.tenant_id");
     })
     .leftJoin("agent_breaks as ab", function joinBreaks() {
@@ -523,8 +523,8 @@ async function loadCandidateEvaluations(
       timezone: String(row.timezone ?? "Asia/Jakarta"),
       shiftDate: normalizeShiftDate(row.shift_date, String(row.timezone ?? "Asia/Jakarta")),
       shiftStatus: String(row.shift_status ?? "off"),
-      shiftStartTime: String(row.start_time),
-      shiftEndTime: String(row.end_time),
+      shiftStartTime: typeof row.start_time === "string" ? row.start_time : "",
+      shiftEndTime: typeof row.end_time === "string" ? row.end_time : "",
       activeBreak: row.break_id !== null && row.break_id !== undefined,
       activeAssignments: loadByAgent.get(String(row.agent_id)) ?? 0,
       reservedAssignments: reservedByAgent.get(String(row.agent_id)) ?? 0,
@@ -543,17 +543,23 @@ function isCandidateEligible(candidate: AgentCandidateRow, now: Date): boolean {
   if (candidate.activeBreak) return false;
   if (candidate.shiftStatus !== "scheduled") return false;
   if (candidate.maxConcurrency <= 0) return false;
+  if (!hasShiftWindow(candidate)) return true;
   return isWithinShift(now, candidate.timezone, candidate.shiftDate, candidate.shiftStartTime, candidate.shiftEndTime);
 }
 
 function explainCandidateIneligibleReason(candidate: AgentCandidateRow, now: Date): string | null {
   if (candidate.activeBreak) return "agent_on_break";
   if (candidate.shiftStatus !== "scheduled") return "agent_not_scheduled";
+  if (!hasShiftWindow(candidate)) return null;
   if (!isWithinShift(now, candidate.timezone, candidate.shiftDate, candidate.shiftStartTime, candidate.shiftEndTime)) {
     return "outside_shift_window";
   }
   if (candidate.maxConcurrency <= 0) return "agent_concurrency_disabled";
   return null;
+}
+
+function hasShiftWindow(candidate: Pick<AgentCandidateRow, "shiftStartTime" | "shiftEndTime">): boolean {
+  return Boolean(candidate.shiftStartTime && candidate.shiftEndTime);
 }
 
 function isWithinShift(now: Date, timezone: string, shiftDate: string, startTime: string, endTime: string): boolean {

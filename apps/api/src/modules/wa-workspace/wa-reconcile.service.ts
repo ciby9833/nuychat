@@ -49,6 +49,9 @@ export async function resolveGapsForArrivedMessage(
   trx: Knex.Transaction,
   input: { tenantId: string; waConversationId: string; providerMessageId: string }
 ) {
+  if (typeof input.providerMessageId !== "string" || !input.providerMessageId.trim()) {
+    return [];
+  }
   return resolveWaMessageGapsByTarget(trx, input);
 }
 

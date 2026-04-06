@@ -213,11 +213,14 @@ export class OrchestratorService {
           }
         : await smartPlanCapabilities({
             provider: aiSettings.provider,
+            providerName,
             model,
             messages: chatHistory,
             temperature: aiSettings.temperature,
             maxTokens: aiSettings.maxTokens,
-            skills: plannerSkills
+            skills: plannerSkills,
+            db,
+            tenantId: input.tenantId
           });
     const validatedSuggestions = continuationSkill
       ? {
@@ -613,6 +616,8 @@ export class OrchestratorService {
       const pointBRevision = await sandbox.runPointB({
         finalContent,
         proposedAction: aiDecision.action,
+        proposedIntent: aiDecision.intent,
+        proposedSentiment: aiDecision.sentiment,
         runVerifiedFacts,
         factSnapshot,
         skillsInvoked,

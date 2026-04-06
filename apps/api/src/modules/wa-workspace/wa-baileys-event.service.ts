@@ -17,6 +17,8 @@ import {
 } from "./runtime/baileys-message.mapper.js";
 import {
   findWaMessageByProviderId,
+  getWaConversationListItem,
+  incrementWaConversationUnread,
   insertRawEvent,
   insertWaMessage,
   insertWaMessageAttachment,
@@ -26,7 +28,7 @@ import {
   upsertWaConversationMember
 } from "./wa-conversation.repository.js";
 import { createMissingReferenceGap, resolveGapsForArrivedMessage } from "./wa-reconcile.service.js";
-import { emitWaMessageUpdated } from "./wa-realtime.service.js";
+import { emitWaConversationUpdated, emitWaMessageUpdated } from "./wa-realtime.service.js";
 
 async function ingestSingleMessage(
   trx: Knex.Transaction,
@@ -60,8 +62,30 @@ async function ingestSingleMessage(
     chatJid: remoteJid,
     conversationType: mapped.conversationType,
     subject: mapped.subject ?? null,
-    contactJid: mapped.contactJid ?? null
+    contactJid: mapped.contactJid ?? null,
+    contactName: mapped.contactName ?? null,
+    contactPhoneE164: mapped.contactPhoneE164 ?? null
   });
+
+  const existingMessage = await findWaMessageByProviderId(trx, {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    providerMessageId
+  });
+  if (existingMessage) {
+    const conversationListItem = await getWaConversationListItem(trx, {
+      tenantId: input.tenantId,
+      waConversationId: conversation.waConversationId
+    });
+    if (conversationListItem) {
+      emitWaConversationUpdated({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        conversation: conversationListItem
+      });
+    }
+    return;
+  }
 
   const savedMessage = await insertWaMessage(trx, {
     tenantId: input.tenantId,
@@ -79,6 +103,14 @@ async function ingestSingleMessage(
     providerPayload: input.message as unknown as Record<string, unknown>,
     deliveryStatus: mapBaileysDeliveryStatus(input.message.status) ?? "received"
   });
+
+  if (mapped.direction === "inbound") {
+    await incrementWaConversationUnread(trx, {
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      chatJid: remoteJid
+    });
+  }
 
   await resolveGapsForArrivedMessage(trx, {
     tenantId: input.tenantId,
@@ -158,6 +190,18 @@ async function ingestSingleMessage(
         sourceProviderMessageId: providerMessageId
       });
     }
+  }
+
+  const conversationListItem = await getWaConversationListItem(trx, {
+    tenantId: input.tenantId,
+    waConversationId: conversation.waConversationId
+  });
+  if (conversationListItem) {
+    emitWaConversationUpdated({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      conversation: conversationListItem
+    });
   }
 }
 

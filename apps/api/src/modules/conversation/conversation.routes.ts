@@ -35,6 +35,8 @@ import {
   recordSkillInvocation
 } from "../skills/runtime-governance.service.js";
 import { trackEvent } from "../analytics/analytics.service.js";
+import { recordAIUsage } from "../ai/usage-meter.service.js";
+import type { ProviderName } from "../../../../../packages/ai-sdk/src/index.js";
 import { CaseTaskService } from "../tasks/case-task.service.js";
 import { loadConversationPreview } from "./conversation-preview.service.js";
 import {
@@ -624,11 +626,14 @@ export async function conversationRoutes(app: FastifyInstance) {
 
       const capabilitySuggestions = await suggestCapabilities({
         provider: aiSettings.provider,
+        providerName: aiSettings.providerName,
         model: aiSettings.model,
         messages: plannerMessages,
         temperature: aiSettings.temperature,
         maxTokens: aiSettings.maxTokens,
-        skills: availableSkills
+        skills: availableSkills,
+        db: trx,
+        tenantId
       });
 
       const validatedSuggestions = await validateCapabilitySuggestions(trx, {
@@ -655,9 +660,12 @@ export async function conversationRoutes(app: FastifyInstance) {
 
       const args = await extractSkillAssistArgs({
         provider: aiSettings.provider,
+        providerName: aiSettings.providerName,
         model: aiSettings.model,
         temperature: aiSettings.temperature,
         maxTokens: aiSettings.maxTokens,
+        db: trx,
+        tenantId,
         skill: assistedSkill,
         messages: plannerMessages,
         sourceMessageText: sourceMessage.text,
@@ -757,9 +765,12 @@ export async function conversationRoutes(app: FastifyInstance) {
       // of raw pipe-delimited text from the Python script.
       const displayResult = await formatSkillResultForDisplay({
         provider: aiSettings.provider,
+        providerName: aiSettings.providerName,
         model: aiSettings.model,
         temperature: aiSettings.temperature,
         maxTokens: aiSettings.maxTokens,
+        db: trx,
+        tenantId,
         rawResult: result,
         sourceMessageText: sourceMessage.text,
         customerContext
@@ -2262,13 +2273,16 @@ async function formatSkillResultForDisplay(input: {
     responseFormat: "json_object";
     temperature: number;
     maxTokens: number;
-  }) => Promise<{ content: string }> };
+  }) => Promise<{ content: string; inputTokens: number; outputTokens: number }> };
+  providerName: string;
   model: string;
   temperature: number;
   maxTokens: number;
   rawResult: Record<string, unknown>;
   sourceMessageText: string;
   customerContext?: string | null;
+  db: Knex.Transaction;
+  tenantId: string;
 }): Promise<Record<string, unknown>> {
   const existingReply =
     typeof input.rawResult.customerReply === "string" ? input.rawResult.customerReply.trim() : "";
@@ -2292,11 +2306,11 @@ async function formatSkillResultForDisplay(input: {
         content: [
           "You are a customer service assistant. Convert a raw skill execution result into a structured display format.",
           "Return valid JSON only with this shape:",
-          '{',
+          "{",
           '  "customerReply": "<clean professional message the agent can send to the customer>",',
           '  "timeline": [',
           '    { "time": "YYYY-MM-DD HH:mm:ss", "status": "...", "description": "...", "location": "..." }',
-          '  ]',
+          "  ]",
           '}',
           "",
           "Rules:",
@@ -2318,6 +2332,16 @@ async function formatSkillResultForDisplay(input: {
     responseFormat: "json_object",
     temperature: Math.min(0.3, input.temperature),
     maxTokens: Math.min(input.maxTokens, 900)
+  });
+
+  await recordAIUsage(input.db, {
+    tenantId: input.tenantId,
+    provider: input.providerName as ProviderName,
+    model: input.model,
+    feature: "skill_execution",
+    inputTokens: formatted.inputTokens,
+    outputTokens: formatted.outputTokens,
+    metadata: { stage: "format_result" }
   });
 
   const parsed = parseJsonObject(formatted.content);
@@ -2509,10 +2533,13 @@ async function extractSkillAssistArgs(input: {
     responseFormat: "json_object";
     temperature: number;
     maxTokens: number;
-  }) => Promise<{ content: string }> };
+  }) => Promise<{ content: string; inputTokens: number; outputTokens: number }> };
+  providerName: string;
   model: string;
   temperature: number;
   maxTokens: number;
+  db: Knex.Transaction;
+  tenantId: string;
   skill: {
     name: string;
     description: string | null;
@@ -2577,6 +2604,16 @@ async function extractSkillAssistArgs(input: {
     });
 
     extracted = normalizeExtractedSkillArgs(parseJsonObject(result.content), input.skill.inputSchema);
+
+    await recordAIUsage(input.db, {
+      tenantId: input.tenantId,
+      provider: input.providerName as ProviderName,
+      model: input.model,
+      feature: "skill_execution",
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      metadata: { stage: "extract_args", skillName: input.skill.name }
+    });
   } catch {
     extracted = {};
   }

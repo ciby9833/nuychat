@@ -24,7 +24,8 @@
  *   - Point B clarify: LLM call only when evidence is critically insufficient
  */
 
-import type { AIMessage, AIProvider } from "../../../../../../packages/ai-sdk/src/index.js";
+import type { AIMessage } from "../../../../../../packages/ai-sdk/src/index.js";
+import type { LLMParams } from "../call-context.js";
 import type { HarnessSandbox } from "./types.js";
 import type { VerifiedFact, FactSnapshot } from "../fact-layer.service.js";
 import type { ReviserOutcome } from "../reviser/types.js";
@@ -115,21 +116,20 @@ export class SandboxState {
   async runPointB(input: {
     finalContent: string;
     proposedAction: string;
+    proposedIntent: string | null;
+    proposedSentiment: "positive" | "neutral" | "negative" | "angry" | null;
     runVerifiedFacts: VerifiedFact[];
     factSnapshot: FactSnapshot;
     skillsInvoked: string[];
     loopMessages: AIMessage[];
     chatHistory: AIMessage[];
-    llm: {
-      provider: AIProvider;
-      model: string;
-      temperature: number;
-      maxTokens: number;
-    };
+    llm: LLMParams;
   }): Promise<ReviserOutcome> {
     const verdict = evaluatePointB({
       finalContent: input.finalContent,
       proposedAction: input.proposedAction,
+      proposedIntent: input.proposedIntent,
+      proposedSentiment: input.proposedSentiment,
       runVerifiedFacts: input.runVerifiedFacts,
       factSnapshot: input.factSnapshot,
       skillsInvoked: input.skillsInvoked,

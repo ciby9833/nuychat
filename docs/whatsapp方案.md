@@ -4,6 +4,9 @@
 
 | 版本 | 日期 | 作者 | 变更 |
 | --- | --- | --- | --- |
+| v1.7 | 2026-04-06 | Codex | 会话列表改为后端统一提供联系人名、联系人电话、未读数与新消息变更；新增 `wa_conversations.contact_name/contact_phone_e164/unread_count`，接入 Baileys `contacts.upsert / contacts.update / chats.upsert / chats.update / messages.upsert`，工作台不再自行推断标题与未读态 |
+| v1.6 | 2026-04-06 | Codex | 修正 Baileys runtime 接入参数：登录后改用桌面 browser + `syncFullHistory=true`，补 `getMessage` 回查已存消息，并为 `history/chats/groups` 初始化同步增加兜底收口，避免账号长期卡在 `同步消息` |
+| v1.5 | 2026-04-06 | Codex | 统一账号列表、健康接口、登录任务、实时事件的状态枚举为同一套 `uiStatus/actions/syncStatus`；登录弹窗在 `connected` 即关闭，后台同步阶段改在列表与工作台展示，并按 `history/chats/groups` 事件细分为 `syncing_history / syncing_chats / syncing_groups / ready` |
 | v1.4 | 2026-04-06 | Codex | 登录状态机补全：管理端扫码弹窗改为实时展示 `qr_required / qr_scanned / connecting / syncing / connected / failed`，状态从 Baileys `connection.update` 持续写入 `wa_account_sessions.session_meta` 并通过 `wa.account.updated` 推送；首次扫码配对成功后按 Baileys `isNewLogin` 语义自动重启 socket 完成最终登录 |
 | v1.3 | 2026-04-05 | Codex | Phase E 开始实施：新增 `wa.account.updated` / `wa.message.updated` 实时推送，`message-receipt.update` 已落 `wa_message_receipts`，Baileys 多文件 session 新增 DB 快照表 `wa_baileys_auth_snapshots`，管理端扫码弹窗与 WA 工作台改为 websocket 驱动 |
 | v1.2 | 2026-04-05 | Codex | Phase C/D 已开始实施：Baileys `messages.upsert` / `messages.update` 已接入 WA 入库链路，出站 worker 切到 `sendMessage`，扫码/连接/creds 状态通过 session 表实时反映给管理端与工作台 |
@@ -161,6 +164,9 @@ sequenceDiagram
 | `wa_account_sessions` | `session_provider` | 默认值改为 `baileys` |
 | `wa_account_sessions` | `session_meta` | 保存 `credsUpdatedAt`、`qrCode`、`disconnectReason` |
 | `wa_baileys_auth_snapshots` | `snapshot_payload` | 保存多文件 auth state 的最新 DB 快照 |
+| `wa_conversations` | `contact_name` | 直接会话联系人名称，优先来自 `contacts.upsert/update`，缺失时回退 `pushName` |
+| `wa_conversations` | `contact_phone_e164` | 直接会话手机号，统一给工作台展示 |
+| `wa_conversations` | `unread_count` | 当前 WA 设备视角未读数，用于列表红点与新消息提示 |
 | `wa_messages` | `provider_payload` | 保留，用于 Baileys 原始事件存档 |
 | `wa_message_receipts` | 全表 | 保存用户级 delivered/read/played 明细 |
 
@@ -262,11 +268,23 @@ flowchart TD
    - `qr_required`: 显示二维码
    - `qr_scanned`: 已扫码，等待手机确认
    - `connecting`: 正在建立连接
-   - `syncing`: 正在同步聊天和群组
    - `connected`: 登录成功，自动关闭弹窗
    - `failed`: 登录失败，要求重新扫码
-7. 首次扫码配对成功后，若 Baileys 发出 `isNewLogin: true`，服务端自动保存 creds 并重启当前 socket，继续完成最终登录
-8. `creds.update` 先写多文件目录，再把目录快照同步到 `wa_baileys_auth_snapshots`
+7. 弹窗只承载登录态，不承载后台同步态；一旦账号进入 `connected`，后续 `history/chats/groups` 初始化同步改在账号列表和 WA 工作台通过 `syncStatus` 展示
+8. 后端统一输出：
+   - `uiStatus`: 登录与在线展示态
+   - `syncStatus`: 后台同步阶段
+   - `actions`: 当前账号可执行动作
+9. `syncStatus` 的细分规则：
+   - `syncing_history`: 已登录，正在同步历史消息
+   - `syncing_chats`: 已登录，正在同步聊天列表
+   - `syncing_groups`: 已登录，正在同步群聊/群成员
+   - `ready`: 初始化同步完成
+10. 首次扫码配对成功后，若 Baileys 发出 `isNewLogin: true`，服务端自动保存 creds 并重启当前 socket，继续完成最终登录
+11. `creds.update` 先写多文件目录，再把目录快照同步到 `wa_baileys_auth_snapshots`
+12. 为了拿到完整初始化同步事件，socket 按 Baileys 官方建议使用桌面 browser，并开启 `syncFullHistory`
+13. `getMessage` 通过已落库消息回查，避免消息重试/补发场景缺失消息体
+14. 若 `messaging-history.set / chats.update / groups.update` 在初始化窗口内未全部到达，运行时会按当前已知状态自动收口同步阶段，避免账号永久卡在 `同步消息`
 
 #### 4.4.2 入站消息流程
 
@@ -298,13 +316,15 @@ flowchart TD
 | 事件 | 用途 | 消费端 |
 | --- | --- | --- |
 | `wa.account.updated` | 二维码、连接态、断线、重连 | 租户管理端、WA 工作台 |
+| `wa.conversation.updated` | 联系人名称、手机号、未读数、最新摘要、新消息到达 | WA 工作台 |
 | `wa.message.updated` | 出站 ack/read/played 更新 | WA 工作台 |
 
 说明：
 
 - 继续复用现有 Socket.IO tenant room
 - 不额外引入新网关
-- 管理端扫码弹窗不再依赖 5 秒健康轮询
+- 管理端扫码弹窗只处理登录态；连接成功后立即关闭
+- 后台同步态由账号列表与 WA 工作台持续展示，不阻塞用户操作
 6. 若引用消息缺失，记录 `wa_message_gaps`
 7. 写入记忆、QA、SLA、任务信号
 
@@ -369,6 +389,7 @@ flowchart TD
 界面要求：
 
 - 展示号码在线状态
+- 展示统一 `uiStatus / syncStatus`
 - 支持扫码登录
 - 支持协同成员分配
 - 支持负责人设置
@@ -377,6 +398,9 @@ flowchart TD
 #### 4.6.2 工作台
 
 - `WA 工作台 / 会话列表 / 消息详情 / 右侧上下文`
+- 账号筛选直接消费后端统一返回的 `uiStatus / syncStatus / actions`
+- 会话列表直接消费后端返回的 `displayName / contactPhoneE164 / unreadCount / lastMessagePreview`
+- 实时变化通过 `wa.conversation.updated` 触发列表与当前会话刷新，前端不自行推断姓名、电话、未读数
 - 展示当前谁在回复
 - 不可回复者只能查看或提示
 - 支持文本、图片、文件、引用回复、reaction

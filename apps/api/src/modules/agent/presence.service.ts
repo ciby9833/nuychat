@@ -14,6 +14,7 @@ type PresenceRow = {
   agent_id: string;
   status: string | null;
   presence_state: string | null;
+  max_concurrency: string | number | null;
   last_heartbeat_at: string | Date | null;
   last_activity_at: string | Date | null;
   presence_recovery_due_at: string | Date | null;
@@ -153,29 +154,37 @@ export class PresenceService {
       .count<{ agent_id: string; break_count: string }[]>("break_id as break_count")
       .as("ab");
 
-    const activeAssignments = trx("conversations")
-      .where({ tenant_id: tenantId, status: "human_active", current_handler_type: "human" })
-      .whereNotNull("current_handler_id")
+    const unreadCustomerConversations = trx("messages as m")
+      .join("conversations as c", function joinConversations() {
+        this.on("c.conversation_id", "=", "m.conversation_id").andOn("c.tenant_id", "=", "m.tenant_id");
+      })
+      .where("m.tenant_id", tenantId)
+      .where("m.direction", "inbound")
+      .where("m.sender_type", "customer")
+      .whereNull("m.read_at")
+      .whereNotNull("c.assigned_agent_id")
+      .whereIn("c.status", ["open", "queued", "human_active", "bot_active"])
       .modify((query) => {
         if (agentIds && agentIds.length > 0) {
-          query.whereIn("current_handler_id", agentIds);
+          query.whereIn("c.assigned_agent_id", agentIds);
         }
       })
-      .groupBy("current_handler_id")
-      .select("current_handler_id")
-      .count<{ current_handler_id: string; active_count: string }[]>("conversation_id as active_count")
+      .groupBy("c.assigned_agent_id")
+      .select("c.assigned_agent_id")
+      .countDistinct<{ assigned_agent_id: string; active_count: string }[]>("m.conversation_id as active_count")
       .as("qa");
 
     const query = trx("agent_profiles as ap")
       .leftJoin(activeBreaks, "ab.agent_id", "ap.agent_id")
-      .leftJoin(activeAssignments, function joinActiveAssignments() {
-        this.on(trx.raw("qa.current_handler_id::uuid") as unknown as string, "=", trx.ref("ap.agent_id"));
+      .leftJoin(unreadCustomerConversations, function joinUnreadCustomerConversations() {
+        this.on(trx.raw("qa.assigned_agent_id::uuid") as unknown as string, "=", trx.ref("ap.agent_id"));
       })
       .where("ap.tenant_id", tenantId)
       .select(
         "ap.agent_id",
         "ap.status",
         "ap.presence_state",
+        "ap.max_concurrency",
         "ap.last_heartbeat_at",
         "ap.last_activity_at",
         "ap.presence_recovery_due_at",
@@ -219,12 +228,13 @@ export class PresenceService {
 
 function derivePresenceState(row: PresenceRow, now: Date): PresenceState {
   const manualStatus = normalizeManualStatus(row.status) ?? "offline";
+  const maxConcurrency = Number(row.max_concurrency ?? 0);
   const heartbeatAt = toDate(row.last_heartbeat_at);
   const activityAt = toDate(row.last_activity_at);
   const recoveryDueAt = toDate(row.presence_recovery_due_at);
   const previousState = normalizePresenceState(row.presence_state);
   const activeBreaks = Number(row.break_count ?? 0);
-  const activeAssignments = Number(row.active_count ?? 0);
+  const unreadCustomerConversations = Number(row.active_count ?? 0);
 
   if (manualStatus === "offline") return "offline";
   if (!heartbeatAt || now.getTime() - heartbeatAt.getTime() > HEARTBEAT_TIMEOUT_MS) return "offline";
@@ -235,7 +245,11 @@ function derivePresenceState(row: PresenceRow, now: Date): PresenceState {
     return "away";
   }
 
-  if (manualStatus === "busy" || activeAssignments > 0) {
+  if (manualStatus === "busy") {
+    return "busy";
+  }
+
+  if (maxConcurrency > 0 && unreadCustomerConversations > maxConcurrency) {
     return "busy";
   }
 

@@ -14,7 +14,7 @@ import { createConversationTimeoutWorker } from "./workers/conversation-timeout.
 import { createWaOutboundWorker } from "./workers/wa-outbound.worker.js";
 import { initClickhouseTables } from "./infra/clickhouse/client.js";
 import { customerProfileRefreshQueue } from "./infra/queue/queues.js";
-import { recoverOverdueAssignmentAcceptTimeouts } from "./modules/sla/conversation-sla.service.js";
+import { recoverOverdueAssignmentAcceptTimeouts, recoverOverdueFollowUpTimeouts } from "./modules/sla/conversation-sla.service.js";
 
 const port = readRequiredIntEnv("PORT");
 const host = readRequiredEnv("HOST");
@@ -39,6 +39,13 @@ void recoverOverdueAssignmentAcceptTimeouts()
   })
   .catch((error) => {
     app.log.warn({ err: error }, "Failed to recover overdue assignment reassign timers");
+  });
+void recoverOverdueFollowUpTimeouts()
+  .then((count) => {
+    if (count > 0) app.log.info({ recovered: count }, "Recovered overdue follow-up timers");
+  })
+  .catch((error) => {
+    app.log.warn({ err: error }, "Failed to recover overdue follow-up timers");
   });
 void customerProfileRefreshQueue.add(
   "customer-profile.refresh",
