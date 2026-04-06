@@ -106,7 +106,7 @@ export function useWaWorkspace(session: Session | null) {
     if (!session?.accessToken || !session.waSeatEnabled) return;
 
     const socket = io(API_BASE_URL, {
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       auth: {
         token: session.accessToken

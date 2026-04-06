@@ -583,7 +583,7 @@ export function useWorkspaceDashboard() {
     if (!session) return;
 
     const socket = io(API_BASE_URL, {
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,

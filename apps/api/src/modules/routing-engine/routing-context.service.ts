@@ -1,6 +1,9 @@
 import type { Knex } from "knex";
 
+import { HumanDispatchService } from "./human-dispatch.service.js";
 import type { RoutingContext } from "./types.js";
+
+const humanDispatchService = new HumanDispatchService();
 
 export class RoutingContextService {
   async build(
@@ -79,6 +82,13 @@ export class RoutingContextService {
       throw new Error(`Current case not found for conversation: ${input.conversationId}`);
     }
 
+    const preserveHumanOwner = await shouldPreserveHumanOwner(db, {
+      tenantId: input.tenantId,
+      conversationStatus: conversation.status,
+      currentOwnerType: currentCase.current_owner_type,
+      assignedAgentId: conversation.assigned_agent_id
+    });
+
     return {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
@@ -105,7 +115,7 @@ export class RoutingContextService {
       currentHandlerType: mapCaseOwnerType(currentCase.current_owner_type) ?? conversation.current_handler_type ?? null,
       currentHandlerId: currentCase.current_owner_id ?? conversation.current_handler_id ?? null,
       assignedAgentId: conversation.assigned_agent_id ?? null,
-      preserveHumanOwner: currentCase.current_owner_type === "agent" && conversation.status === "human_active" && Boolean(conversation.assigned_agent_id),
+      preserveHumanOwner,
       excludedAgentIds: input.excludedAgentIds ?? [],
       existingAssignment: assignment
         ? {
@@ -138,4 +148,24 @@ function parseStringArray(value: unknown): string[] {
     }
   }
   return [];
+}
+
+async function shouldPreserveHumanOwner(
+  db: Knex | Knex.Transaction,
+  input: {
+    tenantId: string;
+    conversationStatus: string;
+    currentOwnerType: string | null;
+    assignedAgentId: string | null;
+  }
+): Promise<boolean> {
+  if (input.currentOwnerType !== "agent") return false;
+  if (input.conversationStatus !== "human_active") return false;
+  if (!input.assignedAgentId) return false;
+
+  const availability = await humanDispatchService.inspectAgentAvailability(db, {
+    tenantId: input.tenantId,
+    agentId: input.assignedAgentId
+  });
+  return Boolean(availability?.eligible);
 }

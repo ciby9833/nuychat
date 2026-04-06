@@ -135,7 +135,7 @@ export function WaAccountsPane({
     if (!session?.accessToken) return;
 
     const socket = io(API_BASE, {
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       auth: {
         token: session.accessToken
@@ -281,6 +281,50 @@ export function WaAccountsPane({
       cancelled = true;
     };
   }, [loginTask, qrCountdownMs, refreshingLoginTask]);
+
+  useEffect(() => {
+    if (!loginTask) return;
+
+    let cancelled = false;
+    const syncHealth = async () => {
+      try {
+        const next = await getWaAccountHealth(loginTask.waAccountId);
+        if (cancelled || !next.session) return;
+
+        setHealth((current) => current && current.waAccountId === next.waAccountId ? next : current);
+
+        const isConnected = next.accountStatus === "online" || next.session.connectionState === "open" || next.session.loginPhase === "connected";
+        if (isConnected) {
+          setLoginTask((current) => current?.waAccountId === next.waAccountId ? null : current);
+          void message.success(`WA账号 ${loginTask.accountName} 已连接成功`);
+          onReload();
+          return;
+        }
+
+        setLoginTask((current) => current?.waAccountId === next.waAccountId
+          ? {
+              ...current,
+              qrCode: next.session?.qrCode ?? current.qrCode,
+              loginPhase: next.session?.loginPhase ?? current.loginPhase,
+              connectionState: next.session?.connectionState ?? current.connectionState,
+              disconnectReason: next.session?.disconnectReason ?? current.disconnectReason
+            }
+          : current);
+      } catch {
+        // ignore polling failures and wait for next cycle
+      }
+    };
+
+    void syncHealth();
+    const timer = window.setInterval(() => {
+      void syncHealth();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loginTask, onReload]);
 
   const countdownLabel = (() => {
     const totalSeconds = Math.ceil(qrCountdownMs / 1000);
