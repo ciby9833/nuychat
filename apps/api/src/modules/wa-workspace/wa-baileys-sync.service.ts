@@ -30,24 +30,29 @@ async function applyContactProjection(
   trx: Parameters<Parameters<typeof withTenantTransaction>[1]>[0],
   input: { tenantId: string; waAccountId: string; contact: Partial<Contact> }
 ) {
-  const chatKeys = [input.contact.id, input.contact.lid, input.contact.phoneNumber ? `${input.contact.phoneNumber}@s.whatsapp.net` : null]
+  const pnJid = input.contact.phoneNumber ? `${input.contact.phoneNumber}@s.whatsapp.net` : null;
+  const chatKeys = [input.contact.id, input.contact.lid, pnJid]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
   if (chatKeys.length === 0) return;
 
   const resolvedName = resolveContactName(input.contact);
   const resolvedPhone = normalizePhoneE164(asString(input.contact.phoneNumber));
 
-  // Persist into wa_contacts so the workbench can show a contacts/friend list.
-  // Use the most specific individual JID as the primary key for the contact record.
+  // Persist into wa_contacts using the same stable identity family our
+  // conversations and group members use at runtime:
+  // - prefer LID when present
+  // - otherwise use PN JID
+  // - fall back to Baileys contact.id only if it is already an individual JID
   const primaryJid =
-    (input.contact.id && !input.contact.id.endsWith("@g.us") ? input.contact.id : null) ??
     input.contact.lid ??
-    (input.contact.phoneNumber ? `${input.contact.phoneNumber}@s.whatsapp.net` : null);
+    pnJid ??
+    (input.contact.id && !input.contact.id.endsWith("@g.us") ? input.contact.id : null);
   if (primaryJid) {
     await upsertWaContact(trx, {
       tenantId: input.tenantId,
       waAccountId: input.waAccountId,
       contactJid: primaryJid,
+      aliasJids: chatKeys,
       phoneE164: resolvedPhone,
       displayName: resolvedName,
       notifyName: asString(input.contact.notify),

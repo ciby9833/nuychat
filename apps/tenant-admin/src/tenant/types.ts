@@ -494,6 +494,12 @@ export type WaAccountListItem = {
   memberCount: number;
   lastConnectedAt: string | null;
   lastDisconnectedAt: string | null;
+  status: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
   session: {
     sessionRef: string;
     connectionState: string;
@@ -532,6 +538,12 @@ export type WaAccountHealth = {
   providerKey: string;
   lastConnectedAt: string | null;
   lastDisconnectedAt: string | null;
+  status: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
   uiStatus: {
     code: string;
     label: string;

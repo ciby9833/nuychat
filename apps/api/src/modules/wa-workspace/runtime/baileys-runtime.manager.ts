@@ -98,6 +98,7 @@ function mapConnectionState(
 ): string {
   if (update.qr) return "qr_required";
   if (update.connection === "open") return "open";
+  if (previous.connectionState === "open" && update.connection === "connecting") return "open";
   if (update.connection === "connecting") return "connecting";
   if (update.connection === "close") return "close";
   return previous.connectionState || "idle";
@@ -119,6 +120,9 @@ function deriveLoginPhase(
   if (update.connection === "open") {
     if (update.receivedPendingNotifications === true) return "connected";
     return "syncing";
+  }
+  if (current.connectionState === "open" && update.connection === "connecting") {
+    return current.receivedPendingNotifications === true ? "connected" : "syncing";
   }
   if (update.connection === "connecting" || current.connectionState === "connecting") {
     if (current.qrCode || current.loginPhase === "qr_required") return "qr_scanned";
@@ -209,7 +213,7 @@ async function persistSessionState(
         provider_key: "baileys",
         account_status: accountStatus,
         last_connected_at: input.connectionState === "open" ? trx.fn.now() : trx.raw("last_connected_at"),
-        last_disconnected_at: input.connectionState === "open" ? trx.raw("last_disconnected_at") : trx.fn.now(),
+        last_disconnected_at: input.connectionState === "close" ? trx.fn.now() : trx.raw("last_disconnected_at"),
         updated_at: trx.fn.now()
       });
   });
@@ -411,7 +415,7 @@ async function buildSocket(input: {
       receivedPendingNotifications: entry.receivedPendingNotifications
     });
 
-    if (entry.loginPhase === "connected" || entry.loginPhase === "syncing") {
+    if (entry.connectionState === "open" && (entry.loginPhase === "connected" || entry.loginPhase === "syncing")) {
       scheduleSyncFinalization(entry);
     }
 

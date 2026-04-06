@@ -7,7 +7,7 @@
  * - 仅处理持久化，不做权限与业务编排。
  */
 import type { Knex } from "knex";
-import { deriveWaAccountStatus, deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
+import { deriveWaAccountStatus, deriveWaActions, deriveWaStatus, deriveWaSyncStatus, deriveWaUiStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
 
 function parseSessionMeta(value: unknown): Record<string, unknown> | null {
   try {
@@ -47,6 +47,10 @@ function mapAccount(row: Record<string, unknown>) {
     accountStatus,
     session: normalizedSession
   });
+  const status = deriveWaStatus({
+    accountStatus,
+    session: normalizedSession
+  });
   const syncStatus = deriveWaSyncStatus({
     uiStatusCode: uiStatus.code,
     session: normalizedSession
@@ -67,6 +71,7 @@ function mapAccount(row: Record<string, unknown>) {
     lastConnectedAt,
     lastDisconnectedAt: row.last_disconnected_at ? new Date(String(row.last_disconnected_at)).toISOString() : null,
     session: normalizedSession,
+    status,
     uiStatus,
     syncStatus,
     actions: deriveWaActions({ lastConnectedAt, session: normalizedSession })

@@ -10,7 +10,7 @@ import type { Knex } from "knex";
 
 import { normalizeNonEmptyString } from "../tenant/tenant-admin.shared.js";
 import { waProviderAdapter } from "./provider/provider-registry.js";
-import { deriveWaAccountStatus, deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
+import { deriveWaAccountStatus, deriveWaActions, deriveWaStatus, deriveWaSyncStatus, deriveWaUiStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
 import {
   createWaLoginTask,
   getWaAccountById,
@@ -116,7 +116,12 @@ export async function createAdminLoginTask(
         accountStatus: String(account.accountStatus),
         session
       });
+      const status = deriveWaStatus({
+        accountStatus: String(account.accountStatus),
+        session
+      });
       return {
+        status,
         uiStatus,
         syncStatus: deriveWaSyncStatus({
           uiStatusCode: uiStatus.code,
@@ -203,8 +208,13 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
         accountStatus: effectiveAccountStatus,
         session: sessionSummary
       });
+      const status = deriveWaStatus({
+        accountStatus: effectiveAccountStatus,
+        session: sessionSummary
+      });
       return {
         session: sessionView,
+        status,
         uiStatus,
         syncStatus: deriveWaSyncStatus({
           uiStatusCode: uiStatus.code,

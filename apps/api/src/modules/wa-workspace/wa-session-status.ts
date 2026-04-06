@@ -12,7 +12,6 @@ export type WaUiStatusCode =
   | "qr_required"
   | "qr_scanned"
   | "connecting"
-  | "syncing"
   | "connected"
   | "session_expired"
   | "failed"
@@ -20,6 +19,15 @@ export type WaUiStatusCode =
 
 export type WaUiStatus = {
   code: WaUiStatusCode;
+  label: string;
+  detail: string;
+  tone: "default" | "warning" | "success" | "danger" | "processing";
+};
+
+export type WaStatusCode = WaUiStatusCode;
+
+export type WaStatus = {
+  code: WaStatusCode;
   label: string;
   detail: string;
   tone: "default" | "warning" | "success" | "danger" | "processing";
@@ -52,12 +60,7 @@ export type WaSessionSnapshot = {
 
 export function normalizeWaSessionSnapshot<T extends WaSessionSnapshot | null>(session: T): T {
   if (!session) return session;
-  const syncReady =
-    Boolean(session.historySyncedAt) &&
-    Boolean(session.chatsSyncedAt) &&
-    (!session.hasGroupChats || Boolean(session.groupsSyncedAt));
-
-  if (session.connectionState === "open" && syncReady) {
+  if (session.connectionState === "open") {
     return {
       ...session,
       loginPhase: "connected"
@@ -71,23 +74,13 @@ export function deriveWaAccountStatus(input: {
   storedAccountStatus?: string | null;
   session: WaSessionSnapshot | null;
 }) {
-  const session = normalizeWaSessionSnapshot(input.session);
-  if (!session) {
-    return input.storedAccountStatus ?? "offline";
-  }
-  if (session.connectionState === "open") {
-    return "online";
-  }
-  if (["qr_required", "qr_scanned", "connecting", "syncing"].includes(session.loginPhase ?? "")) {
-    return "pending_login";
-  }
-  if (session.disconnectReason === "401") {
-    return "offline";
-  }
-  if (["close", "idle"].includes(session.connectionState)) {
-    return "offline";
-  }
-  return input.storedAccountStatus ?? "offline";
+  const status = deriveWaStatus({
+    accountStatus: input.storedAccountStatus ?? "offline",
+    session: input.session
+  });
+  if (status.code === "connected") return "online";
+  if (["qr_required", "qr_scanned", "connecting"].includes(status.code)) return "pending_login";
+  return "offline";
 }
 
 export function deriveWaUiStatus(input: {
@@ -135,13 +128,6 @@ export function deriveWaUiStatus(input: {
         detail: "系统正在与 WhatsApp 建立会话。",
         tone: "processing"
       };
-    case "syncing":
-      return {
-        code: "connected",
-        label: "在线",
-        detail: "账号已登录，后台正在继续同步数据。",
-        tone: "success"
-      };
     case "connected":
       return {
         code: "connected",
@@ -178,40 +164,12 @@ export function deriveWaSyncStatus(input: {
   uiStatusCode: WaUiStatusCode;
   session: WaSessionSnapshot | null;
 }): WaSyncStatus {
-  const session = normalizeWaSessionSnapshot(input.session);
-  if (input.uiStatusCode !== "connected" || !session) {
+  if (input.uiStatusCode !== "connected") {
     return {
       code: "none",
       label: "未同步",
       detail: "当前账号未进入后台同步阶段。",
       tone: "default"
-    };
-  }
-
-  if (!session.historySyncedAt) {
-    return {
-      code: "syncing_history",
-      label: "同步消息",
-      detail: "已登录成功，正在同步历史消息。",
-      tone: "processing"
-    };
-  }
-
-  if (!session.chatsSyncedAt) {
-    return {
-      code: "syncing_chats",
-      label: "同步会话",
-      detail: "正在同步聊天列表与联系人会话。",
-      tone: "processing"
-    };
-  }
-
-  if (session.hasGroupChats && !session.groupsSyncedAt) {
-    return {
-      code: "syncing_groups",
-      label: "同步群组",
-      detail: "正在同步群聊和群成员数据。",
-      tone: "processing"
     };
   }
 
@@ -223,13 +181,27 @@ export function deriveWaSyncStatus(input: {
   };
 }
 
+export function deriveWaStatus(input: {
+  accountStatus: string;
+  session: WaSessionSnapshot | null;
+}): WaStatus {
+  return deriveWaUiStatus(input);
+}
+
 export function deriveWaActions(input: {
   lastConnectedAt: string | null;
   session: WaSessionSnapshot | null;
 }) {
   const session = normalizeWaSessionSnapshot(input.session);
-  const loginInProgress = ["qr_required", "qr_scanned", "connecting", "syncing"].includes(session?.loginPhase ?? "");
-  const connected = session?.connectionState === "open" && session?.loginPhase === "connected";
+  const status = deriveWaStatus({
+    accountStatus: deriveWaAccountStatus({
+      storedAccountStatus: null,
+      session
+    }),
+    session
+  });
+  const loginInProgress = ["qr_required", "qr_scanned", "connecting"].includes(status.code);
+  const connected = status.code === "connected";
   const sessionExpired = session?.disconnectReason === "401";
   const canReconnect = Boolean(input.lastConnectedAt) && !loginInProgress && !sessionExpired;
   const canLogout = Boolean(session) && !loginInProgress;

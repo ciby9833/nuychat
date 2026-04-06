@@ -370,10 +370,6 @@ export function WaAccountsPane({
     ((loginTask.uiStatus.code === "qr_required" && !loginTask.qrCode) ||
       !["qr_required", "connected", "failed", "session_expired"].includes(loginTask.uiStatus.code))
   );
-  const resolveRowStatus = (row: WaAccountListItem) => (
-    row.uiStatus.code === "connected" ? row.syncStatus : row.uiStatus
-  );
-
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -381,7 +377,7 @@ export function WaAccountsPane({
           <Typography.Text strong>独立 WA 账号池</Typography.Text>
           <Typography.Text type="secondary">账号数 {waAccounts.length}</Typography.Text>
           <Typography.Text type="secondary">
-            在线 {waAccounts.filter((item) => item.accountStatus === "online").length}
+            在线 {waAccounts.filter((item) => item.status.code === "connected").length}
           </Typography.Text>
         </Space>
         <Space>
@@ -420,8 +416,7 @@ export function WaAccountsPane({
               title: "状态",
               width: 120,
               render: (_, row) => {
-                const status = resolveRowStatus(row);
-                return <Tag color={mapToneToTagColor(status.tone)}>{status.label}</Tag>;
+                return <Tag color={mapToneToTagColor(row.status.tone)}>{row.status.label}</Tag>;
               }
             },
             {
@@ -682,10 +677,9 @@ export function WaAccountsPane({
       >
         {health ? (
           <Space direction="vertical" size={8} style={{ width: "100%", marginTop: 12 }}>
-            <Typography.Text>账号状态: {health.accountStatus}</Typography.Text>
             <Typography.Text>Provider: {health.providerKey}</Typography.Text>
-            <Typography.Text>展示状态: {health.uiStatus.label}</Typography.Text>
-            <Typography.Text>同步状态: {health.syncStatus.label}</Typography.Text>
+            <Typography.Text>当前状态: {health.status.label}</Typography.Text>
+            <Typography.Text type="secondary">{health.status.detail}</Typography.Text>
             <Typography.Text>最近连接: {health.lastConnectedAt ? new Date(health.lastConnectedAt).toLocaleString() : "暂无"}</Typography.Text>
             <Typography.Text>最近掉线: {health.lastDisconnectedAt ? new Date(health.lastDisconnectedAt).toLocaleString() : "暂无"}</Typography.Text>
             <Typography.Text>连接态: {health.session?.connectionState ?? "暂无session"}</Typography.Text>
@@ -694,8 +688,6 @@ export function WaAccountsPane({
             <Typography.Text>重连次数: {health.session?.autoReconnectCount ?? 0}</Typography.Text>
             <Typography.Text>登录入口: {health.session?.loginMode ?? "暂无"}</Typography.Text>
             <Typography.Text>掉线原因: {health.session?.disconnectReason ?? "暂无"}</Typography.Text>
-            <Typography.Text>手机确认: {health.session?.phoneConnected == null ? "暂无" : health.session.phoneConnected ? "已连接" : "未连接"}</Typography.Text>
-            <Typography.Text>在线态: {health.session?.isOnline == null ? "暂无" : health.session.isOnline ? "在线" : "离线"}</Typography.Text>
           </Space>
         ) : (
           <Typography.Text type="secondary">加载中...</Typography.Text>

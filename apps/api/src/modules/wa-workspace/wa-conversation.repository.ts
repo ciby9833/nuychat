@@ -821,8 +821,8 @@ export async function upsertWaConversation(
       .where({ wa_conversation_id: existing.wa_conversation_id })
       .update({
         subject: input.subject ?? existing.subject ?? null,
-        contact_jid: resolvedType === "group" ? (existing.contact_jid ?? null) : (input.contactJid ?? existing.contact_jid ?? null),
-        contact_name: resolvedType === "group" ? (existing.contact_name ?? null) : (input.contactName ?? existing.contact_name ?? null),
+        contact_jid: resolvedType === "group" ? null : (input.contactJid ?? existing.contact_jid ?? null),
+        contact_name: resolvedType === "group" ? null : (input.contactName ?? existing.contact_name ?? null),
         contact_phone_e164:
           resolvedType === "group"
             ? null
@@ -1144,32 +1144,65 @@ export async function upsertWaContact(
     tenantId: string;
     waAccountId: string;
     contactJid: string;
+    aliasJids?: string[];
     phoneE164?: string | null;
     displayName?: string | null;
     notifyName?: string | null;
     verifiedName?: string | null;
   }
 ) {
+  const aliasJids = Array.from(new Set([input.contactJid, ...(input.aliasJids ?? [])]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)));
   const updates: Record<string, unknown> = { updated_at: trx.fn.now() };
   if (input.phoneE164) updates.phone_e164 = input.phoneE164;
   if (input.displayName) updates.display_name = input.displayName;
   if (input.notifyName) updates.notify_name = input.notifyName;
   if (input.verifiedName) updates.verified_name = input.verifiedName;
 
-  const [row] = await trx("wa_contacts")
-    .insert({
+  const existingRows = await trx("wa_contacts")
+    .where({
       tenant_id: input.tenantId,
-      wa_account_id: input.waAccountId,
-      contact_jid: input.contactJid,
-      phone_e164: input.phoneE164 ?? null,
-      display_name: input.displayName ?? null,
-      notify_name: input.notifyName ?? null,
-      verified_name: input.verifiedName ?? null,
-      is_wa_contact: true
+      wa_account_id: input.waAccountId
     })
-    .onConflict(["tenant_id", "wa_account_id", "contact_jid"])
-    .merge(updates)
-    .returning("*");
+    .andWhere((builder) => {
+      builder.whereIn("contact_jid", aliasJids);
+      if (input.phoneE164) builder.orWhere("phone_e164", input.phoneE164);
+    })
+    .orderByRaw("case when contact_jid = ? then 0 else 1 end", [input.contactJid])
+    .orderBy("updated_at", "desc")
+    .select("*");
+
+  let row: Record<string, unknown>;
+  if (existingRows.length > 0) {
+    const primary = existingRows[0] as Record<string, unknown>;
+    const [updated] = await trx("wa_contacts")
+      .where({ contact_id: primary.contact_id })
+      .update(updates)
+      .returning("*");
+    row = updated as Record<string, unknown>;
+
+    const duplicateIds = existingRows
+      .slice(1)
+      .map((item) => String(item.contact_id))
+      .filter(Boolean);
+    if (duplicateIds.length > 0) {
+      await trx("wa_contacts").whereIn("contact_id", duplicateIds).delete();
+    }
+  } else {
+    const [inserted] = await trx("wa_contacts")
+      .insert({
+        tenant_id: input.tenantId,
+        wa_account_id: input.waAccountId,
+        contact_jid: input.contactJid,
+        phone_e164: input.phoneE164 ?? null,
+        display_name: input.displayName ?? null,
+        notify_name: input.notifyName ?? null,
+        verified_name: input.verifiedName ?? null,
+        is_wa_contact: true
+      })
+      .returning("*");
+    row = inserted as Record<string, unknown>;
+  }
   return row as Record<string, unknown>;
 }
 
