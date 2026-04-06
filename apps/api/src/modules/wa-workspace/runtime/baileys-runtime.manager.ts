@@ -42,6 +42,7 @@ type RuntimeEntry = {
   isOnline: boolean | null;
   phoneConnected: boolean | null;
   receivedPendingNotifications: boolean | null;
+  restartRequested: boolean;
   recentHistory: Map<string, ReturnType<typeof mapBaileysMessageToInbound>[]>;
 };
 
@@ -70,6 +71,7 @@ function deriveLoginPhase(
   previous: Pick<RuntimeEntry, "qrCode" | "loginPhase" | "receivedPendingNotifications">
 ): string {
   if (typeof update.qr === "string" && update.qr.length > 0) return "qr_required";
+  if (update.isNewLogin) return "syncing";
   if (update.connection === "close") return "failed";
   if (update.connection === "open") {
     if (update.receivedPendingNotifications === true) return "connected";
@@ -225,6 +227,7 @@ async function buildSocket(input: {
     isOnline: null,
     phoneConnected: null,
     receivedPendingNotifications: null,
+    restartRequested: false,
     recentHistory: new Map()
   };
 
@@ -264,10 +267,31 @@ async function buildSocket(input: {
       receivedPendingNotifications: entry.receivedPendingNotifications
     });
 
+    if (update.isNewLogin) {
+      entry.restartRequested = true;
+      await authState.saveCreds();
+      await persistBaileysAuthSnapshot(input.tenantId, input.waAccountId, authState.sessionPath);
+      runtimes.delete(runtimeKey(input.tenantId, input.waAccountId));
+      try {
+        socket.end(new Error("pairing restart required"));
+      } catch {
+        // ignore
+      }
+      void ensureBaileysRuntime({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        instanceKey: input.instanceKey,
+        loginMode: entry.activeLoginMode,
+        forceNew: true
+      }).catch(() => undefined);
+      return;
+    }
+
     if (update.connection === "close") {
       const shouldReconnect =
         config.autoReconnect &&
-        disconnectCode !== DisconnectReason.loggedOut;
+        disconnectCode !== DisconnectReason.loggedOut &&
+        !entry.restartRequested;
       if (shouldReconnect) {
         runtimes.delete(runtimeKey(input.tenantId, input.waAccountId));
         void ensureBaileysRuntime({

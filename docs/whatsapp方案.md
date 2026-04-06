@@ -4,7 +4,7 @@
 
 | 版本 | 日期 | 作者 | 变更 |
 | --- | --- | --- | --- |
-| v1.4 | 2026-04-06 | Codex | 登录状态机补全：管理端扫码弹窗改为实时展示 `qr_required / qr_scanned / connecting / syncing / connected / failed`，状态从 Baileys `connection.update` 持续写入 `wa_account_sessions.session_meta` 并通过 `wa.account.updated` 推送 |
+| v1.4 | 2026-04-06 | Codex | 登录状态机补全：管理端扫码弹窗改为实时展示 `qr_required / qr_scanned / connecting / syncing / connected / failed`，状态从 Baileys `connection.update` 持续写入 `wa_account_sessions.session_meta` 并通过 `wa.account.updated` 推送；首次扫码配对成功后按 Baileys `isNewLogin` 语义自动重启 socket 完成最终登录 |
 | v1.3 | 2026-04-05 | Codex | Phase E 开始实施：新增 `wa.account.updated` / `wa.message.updated` 实时推送，`message-receipt.update` 已落 `wa_message_receipts`，Baileys 多文件 session 新增 DB 快照表 `wa_baileys_auth_snapshots`，管理端扫码弹窗与 WA 工作台改为 websocket 驱动 |
 | v1.2 | 2026-04-05 | Codex | Phase C/D 已开始实施：Baileys `messages.upsert` / `messages.update` 已接入 WA 入库链路，出站 worker 切到 `sendMessage`，扫码/连接/creds 状态通过 session 表实时反映给管理端与工作台 |
 | v1.1 | 2026-04-05 | Codex | Phase B 开始实施：已接入 Baileys 依赖，新增 runtime 骨架，登录/重连链路切换到项目内 Baileys manager，移除 Evolution webhook 路径 |
@@ -265,7 +265,8 @@ flowchart TD
    - `syncing`: 正在同步聊天和群组
    - `connected`: 登录成功，自动关闭弹窗
    - `failed`: 登录失败，要求重新扫码
-7. `creds.update` 先写多文件目录，再把目录快照同步到 `wa_baileys_auth_snapshots`
+7. 首次扫码配对成功后，若 Baileys 发出 `isNewLogin: true`，服务端自动保存 creds 并重启当前 socket，继续完成最终登录
+8. `creds.update` 先写多文件目录，再把目录快照同步到 `wa_baileys_auth_snapshots`
 
 #### 4.4.2 入站消息流程
 
