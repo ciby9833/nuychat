@@ -20,6 +20,17 @@ import {
   upsertWaAccountSession
 } from "./wa-account.repository.js";
 
+function parseSessionMeta(value: unknown): Record<string, unknown> | null {
+  try {
+    if (!value) return null;
+    return typeof value === "string"
+      ? JSON.parse(value) as Record<string, unknown>
+      : value as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 function buildInstanceKey(displayName: string) {
   return `wa-${displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "account"}`;
 }
@@ -64,6 +75,7 @@ export async function createAdminLoginTask(
     sessionRef: ticket.sessionRef,
     loginMode: input.loginMode,
     connectionState: "qr_required",
+    loginPhase: "qr_required",
     qrCode: ticket.qrCode
   });
 
@@ -114,6 +126,7 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
     lastDisconnectedAt: account.last_disconnected_at ? new Date(account.last_disconnected_at).toISOString() : null,
     session: session
       ? {
+          ...(parseSessionMeta(session.session_meta) ?? {}),
           connectionState: session.connection_state,
           sessionRef: session.session_ref,
           loginMode: session.login_mode,
@@ -121,14 +134,8 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
           disconnectReason: session.disconnect_reason ?? null,
           autoReconnectCount: Number(session.auto_reconnect_count ?? 0),
           qrCode: (() => {
-            try {
-              const meta = typeof session.session_meta === "string"
-                ? JSON.parse(session.session_meta)
-                : (session.session_meta as Record<string, unknown> | null);
-              return typeof meta?.qrCode === "string" ? meta.qrCode : null;
-            } catch {
-              return null;
-            }
+            const meta = parseSessionMeta(session.session_meta);
+            return typeof meta?.qrCode === "string" ? meta.qrCode : null;
           })()
         }
       : null

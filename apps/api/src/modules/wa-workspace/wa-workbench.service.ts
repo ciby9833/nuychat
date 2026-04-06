@@ -89,6 +89,7 @@ export async function createWorkbenchLoginTask(
     sessionRef: ticket.sessionRef,
     loginMode: "employee_scan",
     connectionState: "qr_required",
+    loginPhase: "qr_required",
     qrCode: ticket.qrCode
   });
 

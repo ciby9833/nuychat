@@ -13,11 +13,15 @@ export function emitWaAccountUpdated(input: {
   waAccountId: string;
   accountStatus: string;
   connectionState: string;
+  loginPhase: string;
   sessionRef?: string | null;
   heartbeatAt?: string | null;
   qrCode?: string | null;
   disconnectReason?: string | null;
   autoReconnectCount?: number;
+  isOnline?: boolean | null;
+  phoneConnected?: boolean | null;
+  receivedPendingNotifications?: boolean | null;
   occurredAt?: string;
 }) {
   realtimeEventBus.emitEvent("wa.account.updated", {
@@ -25,11 +29,15 @@ export function emitWaAccountUpdated(input: {
     waAccountId: input.waAccountId,
     accountStatus: input.accountStatus,
     connectionState: input.connectionState,
+    loginPhase: input.loginPhase,
     sessionRef: input.sessionRef ?? null,
     heartbeatAt: input.heartbeatAt ?? null,
     qrCode: input.qrCode ?? null,
     disconnectReason: input.disconnectReason ?? null,
     autoReconnectCount: input.autoReconnectCount ?? 0,
+    isOnline: input.isOnline ?? null,
+    phoneConnected: input.phoneConnected ?? null,
+    receivedPendingNotifications: input.receivedPendingNotifications ?? null,
     occurredAt: input.occurredAt ?? new Date().toISOString()
   });
 }

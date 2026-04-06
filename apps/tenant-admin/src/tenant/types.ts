@@ -504,12 +504,16 @@ export type WaAccountHealth = {
   lastDisconnectedAt: string | null;
   session: {
     connectionState: string;
+    loginPhase?: string | null;
     sessionRef: string;
     loginMode: string;
     heartbeatAt: string | null;
     disconnectReason: string | null;
     autoReconnectCount: number;
     qrCode: string | null;
+    isOnline?: boolean | null;
+    phoneConnected?: boolean | null;
+    receivedPendingNotifications?: boolean | null;
   } | null;
 };
 

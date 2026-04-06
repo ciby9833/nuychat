@@ -95,6 +95,7 @@ export async function upsertWaAccountSession(
     sessionRef: string;
     loginMode: string;
     connectionState: string;
+    loginPhase?: string;
     qrCode?: string | null;
   }
 ) {
@@ -112,7 +113,10 @@ export async function upsertWaAccountSession(
         login_mode: input.loginMode,
         connection_state: input.connectionState,
         last_qr_at: trx.fn.now(),
-        session_meta: JSON.stringify({ qrCode: input.qrCode ?? null }),
+        session_meta: JSON.stringify({
+          qrCode: input.qrCode ?? null,
+          loginPhase: input.loginPhase ?? input.connectionState
+        }),
         updated_at: trx.fn.now()
       })
       .returning("*");
@@ -128,7 +132,10 @@ export async function upsertWaAccountSession(
       login_mode: input.loginMode,
       connection_state: input.connectionState,
       last_qr_at: trx.fn.now(),
-      session_meta: JSON.stringify({ qrCode: input.qrCode ?? null })
+      session_meta: JSON.stringify({
+        qrCode: input.qrCode ?? null,
+        loginPhase: input.loginPhase ?? input.connectionState
+      })
     })
     .returning("*");
   return row;

@@ -89,11 +89,15 @@ type WaAccountUpdatedEvent = RealtimeEventBase & {
   waAccountId: string;
   accountStatus: string;
   connectionState: string;
+  loginPhase: string;
   sessionRef: string | null;
   heartbeatAt: string | null;
   qrCode: string | null;
   disconnectReason: string | null;
   autoReconnectCount: number;
+  isOnline: boolean | null;
+  phoneConnected: boolean | null;
+  receivedPendingNotifications: boolean | null;
   occurredAt: string;
 };
 

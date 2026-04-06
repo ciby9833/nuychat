@@ -2,7 +2,7 @@
 // 菜单路径: 系统设置 -> 坐席与成员管理 -> WA账号管理。
 // 交互: 调用 WA 管理端 API，依赖成员列表完成负责人/可见成员分配。
 
-import { LinkOutlined, MessageOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import { CheckCircleFilled, LinkOutlined, LoadingOutlined, MessageOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
   Button,
   Form,
@@ -11,6 +11,7 @@ import {
   QRCode,
   Select,
   Space,
+  Spin,
   Table,
   Tag,
   Typography,
@@ -47,7 +48,29 @@ type LoginTaskModalState = {
   accountName: string;
   qrCode: string;
   expiresAt: string;
+  loginPhase: string;
+  connectionState: string;
+  disconnectReason: string | null;
 } | null;
+
+function getLoginPhaseMeta(loginPhase: string | null | undefined) {
+  switch (loginPhase) {
+    case "qr_required":
+      return { title: "使用 WhatsApp 扫码登录", detail: "请在手机 WhatsApp 中扫码。", color: "default" as const };
+    case "qr_scanned":
+      return { title: "已扫码，等待手机确认", detail: "请在手机上确认继续登录。", color: "processing" as const };
+    case "connecting":
+      return { title: "正在建立连接", detail: "系统正在与 WhatsApp 建立会话。", color: "processing" as const };
+    case "syncing":
+      return { title: "正在同步聊天和群组", detail: "首次登录可能需要几十秒。", color: "processing" as const };
+    case "connected":
+      return { title: "登录成功", detail: "账号已连接，可进入 WA 工作台处理会话。", color: "success" as const };
+    case "failed":
+      return { title: "登录失败", detail: "连接已中断，请重新发起扫码。", color: "error" as const };
+    default:
+      return { title: "等待登录状态", detail: "正在获取当前账号会话状态。", color: "default" as const };
+  }
+}
 
 export function WaAccountsPane({
   waAccounts,
@@ -100,7 +123,10 @@ export function WaAccountsPane({
       waAccountId: account.waAccountId,
       accountName: account.displayName,
       qrCode: task.qrCode,
-      expiresAt: task.expiresAt
+      expiresAt: task.expiresAt,
+      loginPhase: "qr_required",
+      connectionState: "qr_required",
+      disconnectReason: null
     });
   };
 
@@ -120,11 +146,15 @@ export function WaAccountsPane({
       waAccountId: string;
       accountStatus: string;
       connectionState: string;
+      loginPhase: string;
       qrCode: string | null;
       heartbeatAt: string | null;
       disconnectReason: string | null;
       autoReconnectCount: number;
       sessionRef: string | null;
+      isOnline: boolean | null;
+      phoneConnected: boolean | null;
+      receivedPendingNotifications: boolean | null;
     }) => {
       let connectedAccountName: string | null = null;
 
@@ -137,20 +167,28 @@ export function WaAccountsPane({
                 ? {
                     ...current.session,
                     connectionState: event.connectionState,
+                    loginPhase: event.loginPhase,
                     heartbeatAt: event.heartbeatAt,
                     disconnectReason: event.disconnectReason,
                     autoReconnectCount: event.autoReconnectCount,
                     sessionRef: event.sessionRef ?? current.session.sessionRef,
-                    qrCode: event.qrCode ?? current.session.qrCode
+                    qrCode: event.qrCode ?? current.session.qrCode,
+                    isOnline: event.isOnline,
+                    phoneConnected: event.phoneConnected,
+                    receivedPendingNotifications: event.receivedPendingNotifications
                   }
                 : {
                     connectionState: event.connectionState,
+                    loginPhase: event.loginPhase,
                     sessionRef: event.sessionRef ?? "",
                     loginMode: "admin_scan",
                     heartbeatAt: event.heartbeatAt,
                     disconnectReason: event.disconnectReason,
                     autoReconnectCount: event.autoReconnectCount,
-                    qrCode: event.qrCode
+                    qrCode: event.qrCode,
+                    isOnline: event.isOnline,
+                    phoneConnected: event.phoneConnected,
+                    receivedPendingNotifications: event.receivedPendingNotifications
                   }
             }
           : current);
@@ -166,10 +204,19 @@ export function WaAccountsPane({
         if (event.qrCode && event.qrCode !== current.qrCode) {
           return {
             ...current,
-            qrCode: event.qrCode
+            qrCode: event.qrCode,
+            loginPhase: event.loginPhase,
+            connectionState: event.connectionState,
+            disconnectReason: event.disconnectReason
           };
         }
-        return current;
+        return {
+          ...current,
+          qrCode: event.qrCode ?? current.qrCode,
+          loginPhase: event.loginPhase,
+          connectionState: event.connectionState,
+          disconnectReason: event.disconnectReason
+        };
       });
 
       if (connectedAccountName) {
@@ -200,7 +247,7 @@ export function WaAccountsPane({
   }, [loginTask]);
 
   useEffect(() => {
-    if (!loginTask || refreshingLoginTask || qrCountdownMs > 0) return;
+    if (!loginTask || loginTask.loginPhase !== "qr_required" || refreshingLoginTask || qrCountdownMs > 0) return;
 
     let cancelled = false;
     setRefreshingLoginTask(true);
@@ -212,7 +259,10 @@ export function WaAccountsPane({
             ? {
                 ...current,
                 qrCode: nextTask.qrCode,
-                expiresAt: nextTask.expiresAt
+                expiresAt: nextTask.expiresAt,
+                loginPhase: "qr_required",
+                connectionState: "qr_required",
+                disconnectReason: null
               }
             : current);
         }
@@ -239,6 +289,9 @@ export function WaAccountsPane({
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   })();
   const isImageQrCode = typeof loginTask?.qrCode === "string" && loginTask.qrCode.startsWith("data:image/");
+  const loginPhaseMeta = getLoginPhaseMeta(loginTask?.loginPhase);
+  const shouldShowQr = loginTask?.loginPhase === "qr_required";
+  const showLoadingState = loginTask?.loginPhase && loginTask.loginPhase !== "qr_required" && loginTask.loginPhase !== "connected" && loginTask.loginPhase !== "failed";
 
   return (
     <>
@@ -404,22 +457,39 @@ export function WaAccountsPane({
       >
         {loginTask ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, paddingTop: 8 }}>
-            {isImageQrCode ? (
-              <img
-                src={loginTask.qrCode}
-                alt={`WA QR ${loginTask.accountName}`}
-                style={{ width: 280, height: 280, objectFit: "contain", borderRadius: 12, border: "1px solid #f0f0f0", background: "#fff", padding: 8 }}
-              />
+            {shouldShowQr ? (
+              isImageQrCode ? (
+                <img
+                  src={loginTask.qrCode}
+                  alt={`WA QR ${loginTask.accountName}`}
+                  style={{ width: 280, height: 280, objectFit: "contain", borderRadius: 12, border: "1px solid #f0f0f0", background: "#fff", padding: 8 }}
+                />
+              ) : (
+                <QRCode value={loginTask.qrCode} size={280} />
+              )
+            ) : showLoadingState ? (
+              <div style={{ width: 280, height: 280, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 12, border: "1px solid #f0f0f0", background: "#fafafa" }}>
+                <Spin indicator={<LoadingOutlined style={{ fontSize: 36 }} spin />} />
+              </div>
+            ) : loginTask.loginPhase === "connected" ? (
+              <div style={{ width: 280, height: 280, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 12, border: "1px solid #f0f0f0", background: "#f6ffed" }}>
+                <CheckCircleFilled style={{ fontSize: 48, color: "#52c41a" }} />
+              </div>
             ) : (
-              <QRCode value={loginTask.qrCode} size={280} />
+              <div style={{ width: 280, height: 280, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 12, border: "1px solid #f0f0f0", background: "#fff2f0" }}>
+                <Typography.Text type="danger">请重新扫码</Typography.Text>
+              </div>
             )}
-            <Typography.Text>使用 WhatsApp 扫码登录</Typography.Text>
-            <Tag color={refreshingLoginTask ? "processing" : qrCountdownMs <= 15000 ? "gold" : "default"}>
-              {refreshingLoginTask ? "二维码刷新中" : `将在 ${countdownLabel} 后刷新`}
-            </Tag>
-            <Typography.Paragraph copyable={{ text: loginTask.qrCode }} style={{ width: "100%", marginBottom: 0, wordBreak: "break-all" }}>
-              如果二维码无法识别，可复制原始二维码串用于排查。
-            </Typography.Paragraph>
+            <Typography.Text strong>{loginPhaseMeta.title}</Typography.Text>
+            <Typography.Text type="secondary">{loginPhaseMeta.detail}</Typography.Text>
+            {shouldShowQr ? (
+              <Tag color={refreshingLoginTask ? "processing" : qrCountdownMs <= 15000 ? "gold" : "default"}>
+                {refreshingLoginTask ? "二维码刷新中" : `将在 ${countdownLabel} 后刷新`}
+              </Tag>
+            ) : null}
+            {loginTask.disconnectReason ? (
+              <Typography.Text type="danger">掉线原因: {loginTask.disconnectReason}</Typography.Text>
+            ) : null}
           </div>
         ) : null}
       </Modal>
@@ -476,10 +546,13 @@ export function WaAccountsPane({
             <Typography.Text>最近连接: {health.lastConnectedAt ? new Date(health.lastConnectedAt).toLocaleString() : "暂无"}</Typography.Text>
             <Typography.Text>最近掉线: {health.lastDisconnectedAt ? new Date(health.lastDisconnectedAt).toLocaleString() : "暂无"}</Typography.Text>
             <Typography.Text>连接态: {health.session?.connectionState ?? "暂无session"}</Typography.Text>
+            <Typography.Text>登录阶段: {health.session?.loginPhase ?? "暂无"}</Typography.Text>
             <Typography.Text>心跳时间: {health.session?.heartbeatAt ? new Date(health.session.heartbeatAt).toLocaleString() : "暂无"}</Typography.Text>
             <Typography.Text>重连次数: {health.session?.autoReconnectCount ?? 0}</Typography.Text>
             <Typography.Text>登录入口: {health.session?.loginMode ?? "暂无"}</Typography.Text>
             <Typography.Text>掉线原因: {health.session?.disconnectReason ?? "暂无"}</Typography.Text>
+            <Typography.Text>手机确认: {health.session?.phoneConnected == null ? "暂无" : health.session.phoneConnected ? "已连接" : "未连接"}</Typography.Text>
+            <Typography.Text>在线态: {health.session?.isOnline == null ? "暂无" : health.session.isOnline ? "在线" : "离线"}</Typography.Text>
           </Space>
         ) : (
           <Typography.Text type="secondary">加载中...</Typography.Text>

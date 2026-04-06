@@ -36,8 +36,12 @@ type RuntimeEntry = {
   sessionRef: string;
   qrCode: string | null;
   connectionState: string;
+  loginPhase: string;
   lastDisconnectReason: string | null;
   activeLoginMode: string;
+  isOnline: boolean | null;
+  phoneConnected: boolean | null;
+  receivedPendingNotifications: boolean | null;
   recentHistory: Map<string, ReturnType<typeof mapBaileysMessageToInbound>[]>;
 };
 
@@ -61,21 +65,43 @@ function mapConnectionState(update: Partial<ConnectionState>): string {
   return "idle";
 }
 
+function deriveLoginPhase(
+  update: Partial<ConnectionState>,
+  previous: Pick<RuntimeEntry, "qrCode" | "loginPhase" | "receivedPendingNotifications">
+): string {
+  if (typeof update.qr === "string" && update.qr.length > 0) return "qr_required";
+  if (update.connection === "close") return "failed";
+  if (update.connection === "open") {
+    if (update.receivedPendingNotifications === true) return "connected";
+    return "syncing";
+  }
+  if (update.connection === "connecting") {
+    if (previous.qrCode || previous.loginPhase === "qr_required") return "qr_scanned";
+    return "connecting";
+  }
+  if (previous.receivedPendingNotifications === true) return "connected";
+  return previous.loginPhase || "idle";
+}
+
 async function persistSessionState(
   tenantId: string,
   waAccountId: string,
   input: {
     sessionRef: string;
     connectionState: string;
+    loginPhase: string;
     loginMode: string;
     qrCode?: string | null;
     disconnectReason?: string | null;
+    isOnline?: boolean | null;
+    phoneConnected?: boolean | null;
+    receivedPendingNotifications?: boolean | null;
   }
 ) {
   const occurredAt = new Date().toISOString();
   const accountStatus =
-    input.connectionState === "open" ? "online" :
-    input.connectionState === "qr_required" ? "pending_login" :
+    input.loginPhase === "connected" ? "online" :
+    input.loginPhase === "qr_required" || input.loginPhase === "qr_scanned" || input.loginPhase === "syncing" || input.loginPhase === "connecting" ? "pending_login" :
     "offline";
 
   await withTenantTransaction(tenantId, async (trx) => {
@@ -85,8 +111,12 @@ async function persistSessionState(
       .first<Record<string, unknown> | undefined>();
 
     const sessionMeta = {
+      loginPhase: input.loginPhase,
       qrCode: input.qrCode ?? null,
-      disconnectReason: input.disconnectReason ?? null
+      disconnectReason: input.disconnectReason ?? null,
+      isOnline: input.isOnline ?? null,
+      phoneConnected: input.phoneConnected ?? null,
+      receivedPendingNotifications: input.receivedPendingNotifications ?? null
     };
 
     if (existing) {
@@ -134,10 +164,14 @@ async function persistSessionState(
     waAccountId,
     accountStatus,
     connectionState: input.connectionState,
+    loginPhase: input.loginPhase,
     sessionRef: input.sessionRef,
     heartbeatAt: occurredAt,
     qrCode: input.qrCode ?? null,
     disconnectReason: input.disconnectReason ?? null,
+    isOnline: input.isOnline ?? null,
+    phoneConnected: input.phoneConnected ?? null,
+    receivedPendingNotifications: input.receivedPendingNotifications ?? null,
     occurredAt
   });
 }
@@ -185,8 +219,12 @@ async function buildSocket(input: {
     sessionRef,
     qrCode: null,
     connectionState: "connecting",
+    loginPhase: "connecting",
     lastDisconnectReason: null,
     activeLoginMode: input.loginMode,
+    isOnline: null,
+    phoneConnected: null,
+    receivedPendingNotifications: null,
     recentHistory: new Map()
   };
 
@@ -198,16 +236,32 @@ async function buildSocket(input: {
 
   socket.ev.on("connection.update", async (update) => {
     entry.connectionState = mapConnectionState(update);
-    entry.qrCode = typeof update.qr === "string" ? update.qr : entry.qrCode;
+    entry.loginPhase = deriveLoginPhase(update, entry);
+    entry.qrCode = typeof update.qr === "string"
+      ? update.qr
+      : entry.loginPhase === "qr_required"
+        ? entry.qrCode
+        : null;
+    entry.isOnline = typeof update.isOnline === "boolean" ? update.isOnline : entry.isOnline;
+    entry.phoneConnected = typeof update.legacy?.phoneConnected === "boolean"
+      ? update.legacy.phoneConnected
+      : entry.phoneConnected;
+    entry.receivedPendingNotifications = typeof update.receivedPendingNotifications === "boolean"
+      ? update.receivedPendingNotifications
+      : entry.receivedPendingNotifications;
     const disconnectCode = Number(update.lastDisconnect?.error?.output?.statusCode ?? 0);
     entry.lastDisconnectReason = disconnectCode ? String(disconnectCode) : null;
 
     await persistSessionState(input.tenantId, input.waAccountId, {
       sessionRef: entry.sessionRef,
       connectionState: entry.connectionState,
+      loginPhase: entry.loginPhase,
       loginMode: entry.activeLoginMode,
       qrCode: entry.qrCode,
-      disconnectReason: entry.lastDisconnectReason
+      disconnectReason: entry.lastDisconnectReason,
+      isOnline: entry.isOnline,
+      phoneConnected: entry.phoneConnected,
+      receivedPendingNotifications: entry.receivedPendingNotifications
     });
 
     if (update.connection === "close") {
