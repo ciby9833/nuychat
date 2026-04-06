@@ -165,6 +165,7 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
         loginPhase: typeof meta?.loginPhase === "string" ? meta.loginPhase : null,
         disconnectReason: session.disconnect_reason ? String(session.disconnect_reason) : null,
         qrCodeAvailable: typeof meta?.qrCode === "string" && meta.qrCode.length > 0,
+        heartbeatAt: session.heartbeat_at ? new Date(session.heartbeat_at).toISOString() : null,
         historySyncedAt: typeof meta?.historySyncedAt === "string" ? meta.historySyncedAt : null,
         chatsSyncedAt: typeof meta?.chatsSyncedAt === "string" ? meta.chatsSyncedAt : null,
         groupsSyncedAt: typeof meta?.groupsSyncedAt === "string" ? meta.groupsSyncedAt : null,

@@ -32,6 +32,7 @@ function mapAccount(row: Record<string, unknown>) {
         disconnectReason: row.session_disconnect_reason ? String(row.session_disconnect_reason) : null,
         loginPhase: typeof sessionMeta?.loginPhase === "string" ? sessionMeta.loginPhase : null,
         qrCodeAvailable: typeof sessionMeta?.qrCode === "string" && sessionMeta.qrCode.length > 0,
+        heartbeatAt: row.session_heartbeat_at ? new Date(String(row.session_heartbeat_at)).toISOString() : null,
         historySyncedAt: typeof sessionMeta?.historySyncedAt === "string" ? sessionMeta.historySyncedAt : null,
         chatsSyncedAt: typeof sessionMeta?.chatsSyncedAt === "string" ? sessionMeta.chatsSyncedAt : null,
         groupsSyncedAt: typeof sessionMeta?.groupsSyncedAt === "string" ? sessionMeta.groupsSyncedAt : null,
@@ -110,6 +111,14 @@ async function loadWaAccounts(
         order by ${LATEST_SESSION_ORDER_SQL}
         limit 1
       ) as session_connection_state`),
+      trx.raw(`(
+        select s.heartbeat_at
+        from wa_account_sessions s
+        where s.tenant_id = a.tenant_id
+          and s.wa_account_id = a.wa_account_id
+        order by ${LATEST_SESSION_ORDER_SQL}
+        limit 1
+      ) as session_heartbeat_at`),
       trx.raw(`(
         select s.login_mode
         from wa_account_sessions s

@@ -52,11 +52,23 @@ export type WaSessionSnapshot = {
   loginPhase: string | null;
   disconnectReason: string | null;
   qrCodeAvailable: boolean;
+  heartbeatAt?: string | null;
   historySyncedAt?: string | null;
   chatsSyncedAt?: string | null;
   groupsSyncedAt?: string | null;
   hasGroupChats?: boolean | null;
 };
+
+const STALE_PENDING_SESSION_MS = 2 * 60 * 1000;
+
+function isStalePendingSession(session: WaSessionSnapshot | null) {
+  if (!session) return false;
+  if (!["connecting", "qr_required", "qr_scanned"].includes(session.loginPhase ?? "")) return false;
+  if (!session.heartbeatAt) return true;
+  const heartbeatAt = new Date(session.heartbeatAt).getTime();
+  if (!Number.isFinite(heartbeatAt)) return true;
+  return Date.now() - heartbeatAt > STALE_PENDING_SESSION_MS;
+}
 
 export function normalizeWaSessionSnapshot<T extends WaSessionSnapshot | null>(session: T): T {
   if (!session) return session;
@@ -103,6 +115,15 @@ export function deriveWaUiStatus(input: {
       label: "会话失效",
       detail: "当前登录已失效，需要重新扫码登录。",
       tone: "danger"
+    };
+  }
+
+  if (isStalePendingSession(session)) {
+    return {
+      code: "offline",
+      label: "离线",
+      detail: "上一次登录未完成，需重新扫码登录。",
+      tone: "default"
     };
   }
 
