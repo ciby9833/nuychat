@@ -37,7 +37,22 @@ export class RoutingContextService {
         } | undefined>(),
       db("queue_assignments")
         .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
-        .select("department_id", "team_id", "assigned_agent_id", "assignment_strategy", "priority", "status", "handoff_required", "handoff_reason")
+        .select(
+          "department_id",
+          "team_id",
+          "assigned_agent_id",
+          "assignment_strategy",
+          "priority",
+          "status",
+          "handoff_required",
+          "handoff_reason",
+          "service_request_mode",
+          "queue_mode",
+          "queue_position",
+          "estimated_wait_sec",
+          "ai_fallback_allowed",
+          "locked_human_side"
+        )
         .first<{
           department_id: string | null;
           team_id: string | null;
@@ -47,6 +62,12 @@ export class RoutingContextService {
           status: string | null;
           handoff_required: boolean | null;
           handoff_reason: string | null;
+          service_request_mode: string | null;
+          queue_mode: string | null;
+          queue_position: number | string | null;
+          estimated_wait_sec: number | string | null;
+          ai_fallback_allowed: boolean | null;
+          locked_human_side: boolean | null;
         } | undefined>(),
       db("conversation_memory_snapshots")
         .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
@@ -128,11 +149,28 @@ export class RoutingContextService {
             priority: assignment.priority ?? null,
             status: assignment.status ?? null,
             handoffRequired: Boolean(assignment.handoff_required),
-            handoffReason: assignment.handoff_reason ?? null
+            handoffReason: assignment.handoff_reason ?? null,
+            serviceRequestMode: assignment.service_request_mode === "human_requested" ? "human_requested" : "normal",
+            queueMode: normalizeQueueMode(assignment.queue_mode),
+            queuePosition: assignment.queue_position === null || assignment.queue_position === undefined
+              ? null
+              : Number(assignment.queue_position),
+            estimatedWaitSec: assignment.estimated_wait_sec === null || assignment.estimated_wait_sec === undefined
+              ? null
+              : Number(assignment.estimated_wait_sec),
+            aiFallbackAllowed: Boolean(assignment.ai_fallback_allowed),
+            lockedHumanSide: Boolean(assignment.locked_human_side)
           }
         : null
     };
   }
+}
+
+function normalizeQueueMode(value: string | null | undefined): "none" | "assigned_waiting" | "pending_unavailable" {
+  if (value === "assigned_waiting" || value === "pending_unavailable") {
+    return value;
+  }
+  return "none";
 }
 
 function mapCaseOwnerType(value: string | null): "system" | "ai" | "human" | null {

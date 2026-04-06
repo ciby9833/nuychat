@@ -31,7 +31,12 @@ export async function buildConversationUpdatedSnapshot(
       "c.assigned_agent_id",
       "c.last_message_preview",
       db.raw("coalesce(uc.unread_count, 0)::int as unread_count"),
-      "qa.status as queue_status"
+      "qa.status as queue_status",
+      "qa.service_request_mode",
+      "qa.queue_mode",
+      "qa.queue_position",
+      "qa.estimated_wait_sec",
+      "qa.locked_human_side"
     )
     .where({
       "c.tenant_id": tenantId,
@@ -43,6 +48,11 @@ export async function buildConversationUpdatedSnapshot(
       last_message_preview: string | null;
       unread_count: number | string | null;
       queue_status: string | null;
+      service_request_mode: string | null;
+      queue_mode: string | null;
+      queue_position: number | string | null;
+      estimated_wait_sec: number | string | null;
+      locked_human_side: boolean | null;
     }>();
 
   return {
@@ -50,7 +60,12 @@ export async function buildConversationUpdatedSnapshot(
     queueStatus: row?.queue_status ?? undefined,
     assignedAgentId: row?.assigned_agent_id ?? null,
     lastMessagePreview: row?.last_message_preview ?? null,
-    unreadCount: Number(row?.unread_count ?? 0)
+    unreadCount: Number(row?.unread_count ?? 0),
+    serviceRequestMode: row?.service_request_mode === "human_requested" ? "human_requested" : "normal",
+    queueMode: row?.queue_mode === "assigned_waiting" || row?.queue_mode === "pending_unavailable" ? row.queue_mode : "none",
+    queuePosition: row?.queue_position === null || row?.queue_position === undefined ? null : Number(row.queue_position),
+    estimatedWaitSec: row?.estimated_wait_sec === null || row?.estimated_wait_sec === undefined ? null : Number(row.estimated_wait_sec),
+    lockedHumanSide: Boolean(row?.locked_human_side)
   };
 }
 

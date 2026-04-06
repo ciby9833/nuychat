@@ -20,6 +20,7 @@ import {
   insertWaMessageAttachment,
   patchWaConversationChatState,
   patchWaConversationContactProfile,
+  patchWaConversationMemberProfile,
   upsertWaConversation,
   upsertWaConversationMember
 } from "./wa-conversation.repository.js";
@@ -138,6 +139,9 @@ export async function ingestBaileysHistorySet(input: {
     for (const raw of input.messages) {
       const mapped = mapBaileysMessageToInbound(raw);
       if (!mapped) continue;
+      const pushName = typeof raw.pushName === "string" && raw.pushName.trim()
+        ? raw.pushName.trim()
+        : null;
 
       const existing = await findWaMessageByProviderId(trx, {
         tenantId: input.tenantId,
@@ -188,6 +192,14 @@ export async function ingestBaileysHistorySet(input: {
           storageUrl: mapped.attachment.storageUrl ?? null,
           previewUrl: mapped.attachment.previewUrl ?? null,
           providerPayload: raw as unknown as Record<string, unknown>
+        });
+      }
+      if (mapped.conversationType === "group" && mapped.participantJid) {
+        await upsertWaConversationMember(trx, {
+          tenantId: input.tenantId,
+          waConversationId: conversation.waConversationId,
+          participantJid: mapped.participantJid,
+          displayName: pushName
         });
       }
       inserted += 1;
@@ -340,6 +352,11 @@ export async function ingestBaileysContactsUpsert(input: {
         contactName: resolveContactName(contact),
         contactPhoneE164: normalizePhoneE164(asString(contact.phoneNumber))
       });
+      await patchWaConversationMemberProfile(trx, {
+        tenantId: input.tenantId,
+        participantKeys: chatKeys,
+        displayName: resolveContactName(contact)
+      });
       for (const row of rows) {
         const listItem = await getWaConversationListItem(trx, {
           tenantId: input.tenantId,
@@ -374,6 +391,11 @@ export async function ingestBaileysContactsUpdate(input: {
         chatKeys,
         contactName: resolveContactName(contact),
         contactPhoneE164: normalizePhoneE164(asString(contact.phoneNumber))
+      });
+      await patchWaConversationMemberProfile(trx, {
+        tenantId: input.tenantId,
+        participantKeys: chatKeys,
+        displayName: resolveContactName(contact)
       });
       for (const row of rows) {
         const listItem = await getWaConversationListItem(trx, {

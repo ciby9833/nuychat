@@ -12,7 +12,7 @@ import type { AnyMessageContent, WAMessage } from "@whiskeysockets/baileys";
 
 import { withTenantTransaction } from "../../../infra/db/client.js";
 import { mapBaileysDeliveryStatus } from "./baileys-message.mapper.js";
-import { ensureBaileysRuntime, getBaileysRuntime } from "./baileys-runtime.manager.js";
+import { ensureBaileysRuntime, getBaileysRuntime, restartBaileysRuntime } from "./baileys-runtime.manager.js";
 
 async function buildQuotedMessage(
   tenantId: string,
@@ -71,15 +71,29 @@ export async function sendBaileysMessage(input: {
   reactionTargetId?: string;
   quotedMessageId?: string | null;
 }) {
-  let runtime = getBaileysRuntime(input.tenantId, input.waAccountId);
-  if (!runtime) {
-    runtime = await ensureBaileysRuntime({
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      instanceKey: input.instanceKey,
-      loginMode: "worker_send"
-    });
-  }
+  const ensureRuntime = async (forceRestart = false) => {
+    if (forceRestart) {
+      await restartBaileysRuntime({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        instanceKey: input.instanceKey,
+        loginMode: "worker_send_retry"
+      });
+    }
+    let runtime = getBaileysRuntime(input.tenantId, input.waAccountId);
+    if (!runtime || runtime.connectionState === "close") {
+      runtime = await ensureBaileysRuntime({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        instanceKey: input.instanceKey,
+        loginMode: "worker_send",
+        forceNew: forceRestart
+      });
+    }
+    return runtime;
+  };
+
+  let runtime = await ensureRuntime(false);
 
   const quoted = await buildQuotedMessage(input.tenantId, input.waAccountId, input.chatJid, input.quotedMessageId);
 
@@ -122,7 +136,17 @@ export async function sendBaileysMessage(input: {
     };
   }
 
-  const response = await runtime.socket.sendMessage(input.chatJid, content, quoted ? { quoted } : undefined);
+  let response;
+  try {
+    response = await runtime.socket.sendMessage(input.chatJid, content, quoted ? { quoted } : undefined);
+  } catch (error) {
+    if (error instanceof Error && /Connection Closed/i.test(error.message)) {
+      runtime = await ensureRuntime(true);
+      response = await runtime.socket.sendMessage(input.chatJid, content, quoted ? { quoted } : undefined);
+    } else {
+      throw error;
+    }
+  }
 
   return {
     providerMessageId: response?.key?.id ?? crypto.randomUUID(),

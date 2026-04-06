@@ -43,6 +43,7 @@ export class RoutingDecisionService {
     ]);
 
     const override = resolveOverride(context);
+    const serviceRequestMode = resolveServiceRequestMode(context, override.reason);
     const selectedOwnerType = resolveOwnerSide(mode, context, override, {
       humanLoadPct: humanCapacity.loadPct,
       humanAvailableAgents: humanCapacity.eligibleAgents,
@@ -76,6 +77,11 @@ export class RoutingDecisionService {
 
     const fallbackDecision = await buildFallbackDecision(db, context, policy.humanTarget, matchedRule);
     const action = resolvePlanAction(selectedOwnerType, humanDecision.assignedAgentId);
+    const queueMode = resolveQueueMode(action, selectedOwnerType);
+    const queuePosition = selectedOwnerType === "human" ? humanDecision.queuePosition : null;
+    const estimatedWaitSec = selectedOwnerType === "human" ? humanDecision.estimatedWaitSec : null;
+    const lockedHumanSide = serviceRequestMode === "human_requested";
+    const aiFallbackAllowed = serviceRequestMode === "human_requested";
     const decisionReason = describeDecisionReason({
       mode,
       selectedOwnerType,
@@ -111,7 +117,13 @@ export class RoutingDecisionService {
         conversationStatus: selectedOwnerType === "human" ? "queued" : "open",
         queueStatus: selectedOwnerType === "human" ? humanDecision.status : "pending",
         handoffRequired: false,
-        selectedOwnerType
+        selectedOwnerType,
+        serviceRequestMode,
+        queueMode,
+        queuePosition,
+        estimatedWaitSec,
+        aiFallbackAllowed,
+        lockedHumanSide
       },
       trace: {
         issueSummary: context.issueSummary,
@@ -211,7 +223,13 @@ export class RoutingDecisionService {
         conversationStatus: selectedOwnerType === "ai" ? "open" : "queued",
         queueStatus: selectedOwnerType === "ai" ? "pending" : (selectedHumanAgentId ? "assigned" : "pending"),
         handoffRequired: selectedOwnerType !== "ai",
-        selectedOwnerType
+        selectedOwnerType,
+        serviceRequestMode: "normal",
+        queueMode: selectedOwnerType === "human" ? (selectedHumanAgentId ? "assigned_waiting" : "pending_unavailable") : "none",
+        queuePosition: selectedOwnerType === "human" ? humanDecision.queuePosition : null,
+        estimatedWaitSec: selectedOwnerType === "human" ? humanDecision.estimatedWaitSec : null,
+        aiFallbackAllowed: false,
+        lockedHumanSide: false
       },
       trace: {
         issueSummary: context.issueSummary,
@@ -310,7 +328,13 @@ export class RoutingDecisionService {
         conversationStatus: "queued",
         queueStatus: humanDecision.assignedAgentId ? "assigned" : "pending",
         handoffRequired: true,
-        selectedOwnerType: "human"
+        selectedOwnerType: "human",
+        serviceRequestMode: "human_requested",
+        queueMode: humanDecision.assignedAgentId ? "assigned_waiting" : "pending_unavailable",
+        queuePosition: humanDecision.queuePosition,
+        estimatedWaitSec: humanDecision.estimatedWaitSec,
+        aiFallbackAllowed: true,
+        lockedHumanSide: true
       },
       trace: {
         issueSummary: context.issueSummary,
@@ -348,6 +372,29 @@ export class RoutingDecisionService {
       }
     };
   }
+}
+
+function resolveServiceRequestMode(
+  context: RoutingContext,
+  overrideReason: string | null
+): "normal" | "human_requested" {
+  if (context.existingAssignment?.lockedHumanSide || context.existingAssignment?.handoffRequired) {
+    return "human_requested";
+  }
+  if (overrideReason === "human_handoff_queue_active" || overrideReason === "customer_requested_human") {
+    return "human_requested";
+  }
+  return "normal";
+}
+
+function resolveQueueMode(
+  action: RoutingPlanAction,
+  selectedOwnerType: RoutingOwnerSide
+): "none" | "assigned_waiting" | "pending_unavailable" {
+  if (selectedOwnerType !== "human") return "none";
+  if (action === "assign_specific_owner") return "assigned_waiting";
+  if (action === "enqueue_for_human") return "pending_unavailable";
+  return "none";
 }
 
 async function findMatchedRule(db: Knex | Knex.Transaction, context: RoutingContext): Promise<RoutingRuleRow | null> {
@@ -566,7 +613,13 @@ function buildPreservedHumanPlan(context: RoutingContext): RoutingPlan {
       conversationStatus: "human_active",
       queueStatus: "assigned",
       handoffRequired: false,
-      selectedOwnerType: "human"
+      selectedOwnerType: "human",
+      serviceRequestMode: context.existingAssignment?.serviceRequestMode ?? "normal",
+      queueMode: context.existingAssignment?.queueMode ?? "assigned_waiting",
+      queuePosition: context.existingAssignment?.queuePosition ?? null,
+      estimatedWaitSec: context.existingAssignment?.estimatedWaitSec ?? null,
+      aiFallbackAllowed: context.existingAssignment?.aiFallbackAllowed ?? false,
+      lockedHumanSide: context.existingAssignment?.lockedHumanSide ?? false
     },
     trace: {
       issueSummary: context.issueSummary,

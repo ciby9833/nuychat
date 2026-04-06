@@ -72,6 +72,15 @@ export function WaChatPanel(props: WaChatPanelProps) {
   const formatMessageTime = (message: WaMessageItem) =>
     new Date(message.providerTs || message.createdAt).toLocaleString();
 
+  const renderDeliveryMeta = (message: WaMessageItem) => {
+    if (message.direction !== "outbound") return null;
+    if (message.receiptSummary?.latestStatus === "read" || message.deliveryStatus === "read") return "已读";
+    if (message.receiptSummary?.latestStatus === "delivered" || message.deliveryStatus === "delivered") return "已送达";
+    if (message.deliveryStatus === "failed") return "失败";
+    if (message.deliveryStatus === "pending") return "发送中";
+    return null;
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#efeae2]">
       <div className="border-b border-[#d7dbdf] bg-[#f0f2f5] px-4 py-3">
@@ -122,15 +131,25 @@ export function WaChatPanel(props: WaChatPanelProps) {
           {detail?.messages.map((message) => {
             const mine = message.direction === "outbound";
             const preview = message.bodyText || message.attachments[0]?.fileName || message.messageType;
+            const quotedTarget = message.quotedMessageId
+              ? detail.messages.find((item) => item.providerMessageId === message.quotedMessageId || item.waMessageId === message.quotedMessageId) ?? null
+              : null;
+            const senderLabel = mine
+              ? null
+              : detail.conversation.conversationType === "group"
+                ? (message.senderDisplayName || quotedTarget?.senderDisplayName || quotedTarget?.senderJid || message.participantJid || message.senderJid || null)
+                : null;
+            const deliveryMeta = renderDeliveryMeta(message);
             return (
               <div key={message.waMessageId} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[72%] rounded-[14px] px-3 py-2 shadow-sm ${mine ? "bg-[#d9fdd3] text-[#111b21]" : "bg-white text-[#111b21]"}`}>
-                  <div className="text-[11px] text-[#667781]">
-                    {mine ? "员工" : message.participantJid || message.senderJid || "联系人"}
-                  </div>
+                  {senderLabel ? <div className="text-[11px] text-[#667781]">{senderLabel}</div> : null}
                   {message.quotedMessageId ? (
                     <div className={`mt-2 rounded-xl border-l-4 px-3 py-2 text-xs ${mine ? "border-[#53bdeb] bg-white/50" : "border-[#00a884] bg-[#f0f2f5]"}`}>
-                      回复了一条消息
+                      <div className="text-[11px] font-medium text-[#667781]">回复了一条消息</div>
+                      <div className="mt-1 truncate text-[#111b21]">
+                        {quotedTarget?.bodyText || quotedTarget?.attachments[0]?.fileName || "引用消息"}
+                      </div>
                     </div>
                   ) : null}
                   {message.bodyText ? <div className="mt-2 whitespace-pre-wrap text-sm">{message.bodyText}</div> : null}
@@ -147,10 +166,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                   ))}
                   <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-[#667781]">
                     <span>{formatMessageTime(message)}</span>
-                    <span>
-                      {message.receiptSummary?.latestStatus ?? message.deliveryStatus}
-                      {message.receiptSummary?.totalReceipts ? ` · ${message.receiptSummary.totalReceipts}` : ""}
-                    </span>
+                    <span>{deliveryMeta}</span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[#667781] opacity-70">
                     <button type="button" className="rounded-full px-2 py-1 hover:bg-black/5" onClick={() => onReplyToMessage(message.providerMessageId || message.waMessageId, preview)}>↩</button>

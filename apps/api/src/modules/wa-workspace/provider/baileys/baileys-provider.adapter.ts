@@ -8,11 +8,14 @@
  */
 import {
   createBaileysLoginTicket,
+  fetchBaileysGroupMetadata,
   getBaileysHistorySnapshot,
+  markBaileysConversationRead,
   restartBaileysRuntime
 } from "../../runtime/baileys-runtime.manager.js";
 import { sendBaileysMessage } from "../../runtime/baileys-send.service.js";
 import type {
+  WaProviderGroupMetadataResult,
   WaLoginSessionTicket,
   WaProviderAdapter,
   WaProviderHistoryResult,
@@ -38,6 +41,28 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
       waAccountId: input.waAccountId,
       instanceKey: input.instanceKey,
       loginMode: "admin_scan"
+    });
+  }
+
+  async markConversationRead(input: {
+    tenantId?: string;
+    waAccountId?: string;
+    instanceKey: string;
+    keys: Array<{
+      remoteJid: string;
+      id: string;
+      participant?: string | null;
+      fromMe?: boolean;
+    }>;
+  }): Promise<{ ok: true }> {
+    if (!input.tenantId || !input.waAccountId) {
+      throw new Error("tenantId and waAccountId are required for Baileys markConversationRead");
+    }
+    return markBaileysConversationRead({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      instanceKey: input.instanceKey,
+      keys: input.keys
     });
   }
 
@@ -136,5 +161,22 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
           }),
       nextCursor: null
     };
+  }
+
+  async fetchGroupMetadata(input: {
+    tenantId?: string;
+    waAccountId?: string;
+    instanceKey: string;
+    chatJid: string;
+  }): Promise<WaProviderGroupMetadataResult | null> {
+    if (!input.tenantId || !input.waAccountId) {
+      throw new Error("tenantId and waAccountId are required for Baileys fetchGroupMetadata");
+    }
+    return fetchBaileysGroupMetadata({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      instanceKey: input.instanceKey,
+      chatJid: input.chatJid
+    });
   }
 }

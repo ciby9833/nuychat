@@ -560,6 +560,12 @@ async function releaseConversationToHumanQueue(input: {
         assignment_reason: resolvedHandoffTarget.reason,
         handoff_required: true,
         handoff_reason: input.reason,
+        service_request_mode: "human_requested",
+        queue_mode: resolvedHandoffTarget.assignedAgentId ? "assigned_waiting" : "pending_unavailable",
+        queue_position: null,
+        estimated_wait_sec: null,
+        ai_fallback_allowed: true,
+        locked_human_side: true,
         updated_at: trx.fn.now()
       });
 

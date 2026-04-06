@@ -60,6 +60,7 @@ export function createRealtimeGateway(app: FastifyInstance) {
     subscribe("message.updated"),
     subscribe("task.updated"),
     subscribe("wa.account.updated"),
+    subscribe("wa.conversation.updated"),
     subscribe("wa.message.updated")
   ];
 

@@ -54,6 +54,12 @@ export type RoutingPlan = {
     queueStatus: "pending" | "assigned" | "resolved";
     handoffRequired: boolean;
     selectedOwnerType: RoutingOwnerSide;
+    serviceRequestMode: "normal" | "human_requested";
+    queueMode: "none" | "assigned_waiting" | "pending_unavailable";
+    queuePosition: number | null;
+    estimatedWaitSec: number | null;
+    aiFallbackAllowed: boolean;
+    lockedHumanSide: boolean;
   };
   trace: {
     issueSummary: {
@@ -150,5 +156,11 @@ export type RoutingContext = {
     status: string | null;
     handoffRequired: boolean;
     handoffReason: string | null;
+    serviceRequestMode: "normal" | "human_requested";
+    queueMode: "none" | "assigned_waiting" | "pending_unavailable";
+    queuePosition: number | null;
+    estimatedWaitSec: number | null;
+    aiFallbackAllowed: boolean;
+    lockedHumanSide: boolean;
   } | null;
 };

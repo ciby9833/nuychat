@@ -41,6 +41,9 @@ async function ingestSingleMessage(
 ) {
   const mapped = mapBaileysMessageToInbound(input.message);
   if (!mapped) return;
+  const pushName = typeof input.message.pushName === "string" && input.message.pushName.trim()
+    ? input.message.pushName.trim()
+    : null;
 
   const remoteJid = mapped.chatJid;
   const providerMessageId = mapped.providerMessageId;
@@ -122,7 +125,8 @@ async function ingestSingleMessage(
     await upsertWaConversationMember(trx, {
       tenantId: input.tenantId,
       waConversationId: conversation.waConversationId,
-      participantJid: mapped.participantJid
+      participantJid: mapped.participantJid,
+      displayName: pushName
     });
   }
 

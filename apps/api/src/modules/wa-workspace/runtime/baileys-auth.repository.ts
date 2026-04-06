@@ -37,8 +37,15 @@ export async function persistBaileysAuthSnapshot(tenantId: string, waAccountId: 
   const snapshotPayload: Record<string, unknown> = {};
 
   for (const fileName of fileNames) {
-    const content = await fs.readFile(path.join(sessionPath, fileName), "utf8");
-    snapshotPayload[fileName] = JSON.parse(content);
+    try {
+      const content = await fs.readFile(path.join(sessionPath, fileName), "utf8");
+      snapshotPayload[fileName] = JSON.parse(content);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
   }
 
   await withTenantTransaction(tenantId, async (trx) => {

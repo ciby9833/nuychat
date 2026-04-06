@@ -269,6 +269,12 @@ export function createConversationTimeoutWorker() {
               status: "resolved",
               handoff_required: false,
               handoff_reason: null,
+              service_request_mode: "normal",
+              queue_mode: "none",
+              queue_position: null,
+              estimated_wait_sec: null,
+              ai_fallback_allowed: false,
+              locked_human_side: false,
               updated_at: new Date()
             });
 

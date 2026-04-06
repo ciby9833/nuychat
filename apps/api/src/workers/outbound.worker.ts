@@ -161,6 +161,10 @@ export function createOutboundWorker() {
               assigned_agent_id: job.data.message.agentId,
               handoff_required: false,
               handoff_reason: null,
+              queue_mode: "assigned_waiting",
+              queue_position: null,
+              estimated_wait_sec: null,
+              locked_human_side: false,
               updated_at: trx.fn.now()
             });
         }

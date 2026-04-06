@@ -14,6 +14,12 @@ export class QueueAssignmentService {
       priority: number;
       status: string;
       reason?: string | null;
+      serviceRequestMode?: "normal" | "human_requested";
+      queueMode?: "none" | "assigned_waiting" | "pending_unavailable";
+      queuePosition?: number | null;
+      estimatedWaitSec?: number | null;
+      aiFallbackAllowed?: boolean;
+      lockedHumanSide?: boolean;
     }
   ) {
     const [assignment] = await db("queue_assignments")
@@ -27,7 +33,13 @@ export class QueueAssignmentService {
         assignment_strategy: input.strategy,
         priority: input.priority,
         status: input.status,
-        assignment_reason: input.reason ?? null
+        assignment_reason: input.reason ?? null,
+        service_request_mode: input.serviceRequestMode ?? "normal",
+        queue_mode: input.queueMode ?? "none",
+        queue_position: input.queuePosition ?? null,
+        estimated_wait_sec: input.estimatedWaitSec ?? null,
+        ai_fallback_allowed: input.aiFallbackAllowed ?? false,
+        locked_human_side: input.lockedHumanSide ?? false
       })
       .onConflict(["conversation_id"])
       .merge({
@@ -39,6 +51,12 @@ export class QueueAssignmentService {
         priority: input.priority,
         status: input.status,
         assignment_reason: input.reason ?? null,
+        service_request_mode: input.serviceRequestMode ?? "normal",
+        queue_mode: input.queueMode ?? "none",
+        queue_position: input.queuePosition ?? null,
+        estimated_wait_sec: input.estimatedWaitSec ?? null,
+        ai_fallback_allowed: input.aiFallbackAllowed ?? false,
+        locked_human_side: input.lockedHumanSide ?? false,
         updated_at: db.fn.now()
       })
       .returning(["assignment_id"]);
@@ -54,7 +72,13 @@ export class QueueAssignmentService {
         assignedAgentId: input.assignedAgentId,
         assignedAiAgentId: input.assignedAiAgentId ?? null,
         status: input.status,
-        reason: input.reason ?? null
+        reason: input.reason ?? null,
+        serviceRequestMode: input.serviceRequestMode ?? "normal",
+        queueMode: input.queueMode ?? "none",
+        queuePosition: input.queuePosition ?? null,
+        estimatedWaitSec: input.estimatedWaitSec ?? null,
+        aiFallbackAllowed: input.aiFallbackAllowed ?? false,
+        lockedHumanSide: input.lockedHumanSide ?? false
       }
     });
 

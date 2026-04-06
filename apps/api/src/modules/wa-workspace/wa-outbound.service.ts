@@ -45,70 +45,95 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
       .first<Record<string, unknown> | undefined>();
     if (!conversation) throw new Error("WA conversation not found");
 
-    const provider = getWaProviderAdapter();
-    const result =
-      payload.jobType === "send_media"
-        ? await provider.sendMedia({
-            tenantId: payload.tenantId,
-            waAccountId: payload.waAccountId,
-            instanceKey: String(account.instance_key),
-            to: String(conversation.chat_jid),
-            mediaType: payload.mediaType ?? "document",
-            mimeType: payload.mimeType ?? "application/octet-stream",
-            fileName: payload.fileName ?? "attachment",
-            mediaUrl: payload.mediaUrl ?? "",
-            caption: payload.text ?? null,
-            quotedMessageId: payload.quotedMessageId ?? null,
-            delayMs: payload.delayMs ?? 0
-          })
-        : payload.jobType === "send_reaction"
-          ? await provider.sendReaction({
-              tenantId: payload.tenantId,
-              waAccountId: payload.waAccountId,
-              instanceKey: String(account.instance_key),
-              remoteJid: payload.remoteJid ?? String(conversation.chat_jid),
-              targetMessageId: payload.reactionTargetId ?? "",
-              emoji: payload.emoji ?? ""
-            })
-          : await provider.sendText({
+    try {
+      const provider = getWaProviderAdapter();
+      const result =
+        payload.jobType === "send_media"
+          ? await provider.sendMedia({
               tenantId: payload.tenantId,
               waAccountId: payload.waAccountId,
               instanceKey: String(account.instance_key),
               to: String(conversation.chat_jid),
-              text: payload.text ?? "",
+              mediaType: payload.mediaType ?? "document",
+              mimeType: payload.mimeType ?? "application/octet-stream",
+              fileName: payload.fileName ?? "attachment",
+              mediaUrl: payload.mediaUrl ?? "",
+              caption: payload.text ?? null,
               quotedMessageId: payload.quotedMessageId ?? null,
               delayMs: payload.delayMs ?? 0
-            });
+            })
+          : payload.jobType === "send_reaction"
+            ? await provider.sendReaction({
+                tenantId: payload.tenantId,
+                waAccountId: payload.waAccountId,
+                instanceKey: String(account.instance_key),
+                remoteJid: payload.remoteJid ?? String(conversation.chat_jid),
+                targetMessageId: payload.reactionTargetId ?? "",
+                emoji: payload.emoji ?? ""
+              })
+            : await provider.sendText({
+                tenantId: payload.tenantId,
+                waAccountId: payload.waAccountId,
+                instanceKey: String(account.instance_key),
+                to: String(conversation.chat_jid),
+                text: payload.text ?? "",
+                quotedMessageId: payload.quotedMessageId ?? null,
+                delayMs: payload.delayMs ?? 0
+              });
 
-    await trx("wa_outbound_jobs")
-      .where({ job_id: payload.jobId })
-      .update({
-        send_status: "sent",
-        last_error: null,
-        updated_at: trx.fn.now(),
-        payload: JSON.stringify({
-          ...(typeof jobRow.payload === "string" ? JSON.parse(jobRow.payload) : (jobRow.payload as Record<string, unknown> ?? {})),
-          sendResult: result
-        })
+      await trx("wa_outbound_jobs")
+        .where({ job_id: payload.jobId })
+        .update({
+          send_status: "sent",
+          last_error: null,
+          updated_at: trx.fn.now(),
+          payload: JSON.stringify({
+            ...(typeof jobRow.payload === "string" ? JSON.parse(jobRow.payload) : (jobRow.payload as Record<string, unknown> ?? {})),
+            sendResult: result
+          })
+        });
+
+      await trx("wa_messages")
+        .where({ tenant_id: payload.tenantId, wa_message_id: payload.waMessageId })
+        .update({
+          provider_message_id: result.providerMessageId,
+          delivery_status: result.deliveryStatus,
+          provider_payload: JSON.stringify(result.providerPayload),
+          updated_at: trx.fn.now()
+        });
+
+      emitWaMessageUpdated({
+        tenantId: payload.tenantId,
+        waConversationId: payload.waConversationId,
+        waMessageId: payload.waMessageId,
+        providerMessageId: result.providerMessageId,
+        deliveryStatus: result.deliveryStatus
       });
 
-    await trx("wa_messages")
-      .where({ tenant_id: payload.tenantId, wa_message_id: payload.waMessageId })
-      .update({
-        provider_message_id: result.providerMessageId,
-        delivery_status: result.deliveryStatus,
-        provider_payload: JSON.stringify(result.providerPayload),
-        updated_at: trx.fn.now()
+      return { sent: true, providerMessageId: result.providerMessageId };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await trx("wa_outbound_jobs")
+        .where({ job_id: payload.jobId })
+        .update({
+          send_status: "failed",
+          last_error: message,
+          updated_at: trx.fn.now()
+        });
+      await trx("wa_messages")
+        .where({ tenant_id: payload.tenantId, wa_message_id: payload.waMessageId })
+        .update({
+          delivery_status: "failed",
+          updated_at: trx.fn.now()
+        });
+      emitWaMessageUpdated({
+        tenantId: payload.tenantId,
+        waConversationId: payload.waConversationId,
+        waMessageId: payload.waMessageId,
+        providerMessageId: null,
+        deliveryStatus: "failed"
       });
-
-    emitWaMessageUpdated({
-      tenantId: payload.tenantId,
-      waConversationId: payload.waConversationId,
-      waMessageId: payload.waMessageId,
-      providerMessageId: result.providerMessageId,
-      deliveryStatus: result.deliveryStatus
-    });
-
-    return { sent: true, providerMessageId: result.providerMessageId };
+      throw error;
+    }
   });
 }

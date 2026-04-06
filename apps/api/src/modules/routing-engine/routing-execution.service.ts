@@ -23,7 +23,13 @@ export class RoutingExecutionService {
       strategy: plan.target.strategy,
       priority: plan.target.priority,
       status: plan.statusPlan.queueStatus,
-      reason: plan.trace.decision.reason
+      reason: plan.trace.decision.reason,
+      serviceRequestMode: plan.statusPlan.serviceRequestMode,
+      queueMode: plan.statusPlan.queueMode,
+      queuePosition: plan.statusPlan.queuePosition,
+      estimatedWaitSec: plan.statusPlan.estimatedWaitSec,
+      aiFallbackAllowed: plan.statusPlan.aiFallbackAllowed,
+      lockedHumanSide: plan.statusPlan.lockedHumanSide
     });
 
     await ownershipService.applyTransition(db, buildInboundOwnershipTransition(plan));

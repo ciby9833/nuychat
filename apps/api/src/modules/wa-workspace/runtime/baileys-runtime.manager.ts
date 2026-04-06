@@ -356,9 +356,17 @@ async function buildSocket(input: {
   };
 
   socket.ev.on("creds.update", async (_creds: Partial<AuthenticationCreds>) => {
-    await authState.saveCreds();
-    await persistBaileysAuthSnapshot(input.tenantId, input.waAccountId, authState.sessionPath);
-    await touchCredsUpdate(input.tenantId, input.waAccountId);
+    try {
+      await authState.saveCreds();
+      await persistBaileysAuthSnapshot(input.tenantId, input.waAccountId, authState.sessionPath);
+      await touchCredsUpdate(input.tenantId, input.waAccountId);
+    } catch (error) {
+      console.error("[wa-baileys] creds.update persistence failed", {
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        error
+      });
+    }
   });
 
   socket.ev.on("connection.update", async (update) => {
@@ -655,6 +663,29 @@ export function getBaileysHistorySnapshot(input: {
   return bucket.slice(-(input.limit ?? 50));
 }
 
+export async function fetchBaileysGroupMetadata(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+  chatJid: string;
+}) {
+  const runtime = await ensureBaileysRuntime({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    instanceKey: input.instanceKey,
+    loginMode: "group_metadata"
+  });
+  const metadata = await runtime.socket.groupMetadata(input.chatJid);
+  return {
+    subject: typeof metadata.subject === "string" ? metadata.subject : null,
+    participants: (metadata.participants ?? []).map((participant) => ({
+      jid: participant.id,
+      displayName: null,
+      isAdmin: participant.admin === "admin" || participant.admin === "superadmin"
+    }))
+  };
+}
+
 export async function createBaileysLoginTicket(input: {
   tenantId: string;
   waAccountId: string;
@@ -749,4 +780,37 @@ export async function restartBaileysRuntime(input: {
   });
 
   return { connectionState: runtime.connectionState };
+}
+
+export async function markBaileysConversationRead(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+  keys: Array<{
+    remoteJid: string;
+    id: string;
+    participant?: string | null;
+    fromMe?: boolean;
+  }>;
+}): Promise<{ ok: true }> {
+  const keys = input.keys
+    .filter((item) => item.remoteJid && item.id)
+    .map((item) => ({
+      remoteJid: item.remoteJid,
+      id: item.id,
+      participant: item.participant ?? undefined,
+      fromMe: item.fromMe ?? false
+    }));
+  if (keys.length === 0) {
+    return { ok: true };
+  }
+
+  const runtime = await ensureBaileysRuntime({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    instanceKey: input.instanceKey,
+    loginMode: "mark_read"
+  });
+  await runtime.socket.readMessages(keys);
+  return { ok: true };
 }

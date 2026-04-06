@@ -116,6 +116,7 @@ export type WaMessageItem = {
   messageType: string;
   messageScene: string;
   senderJid: string | null;
+  senderDisplayName: string | null;
   senderMemberId: string | null;
   senderRole: string;
   participantJid: string | null;

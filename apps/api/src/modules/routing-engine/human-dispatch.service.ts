@@ -24,6 +24,7 @@ type AgentCandidateRow = {
   activeBreak: boolean;
   activeAssignments: number;
   reservedAssignments: number;
+  unreadCustomerConversations: number;
   todayNewCaseCount: number;
   lastAssignedAt: string | null;
 };
@@ -41,6 +42,8 @@ export type HumanDispatchDecision = {
   priority: number;
   status: "pending" | "assigned";
   reason: string;
+  queuePosition: number | null;
+  estimatedWaitSec: number | null;
   audit: {
     routingRuleId: string | null;
     routingRuleName: string | null;
@@ -342,6 +345,8 @@ async function assignWithinScope(
       priority: input.priority,
       status: "pending",
       reason: "no-eligible-agent",
+      queuePosition: null,
+      estimatedWaitSec: null,
       audit: {
         routingRuleId: input.auditSource.ruleId,
         routingRuleName: input.auditSource.ruleName,
@@ -364,6 +369,8 @@ async function assignWithinScope(
     priority: input.priority,
     status: selected ? "assigned" : "pending",
     reason: selected ? input.fallbackReason : "no-eligible-agent",
+    queuePosition: selected ? selected.unreadCustomerConversations : null,
+    estimatedWaitSec: null,
     audit: {
       routingRuleId: input.auditSource.ruleId,
       routingRuleName: input.auditSource.ruleName,
@@ -392,6 +399,7 @@ async function assignWithinScope(
             departmentName: candidate.departmentName,
             activeAssignments: candidate.activeAssignments,
             reservedAssignments: candidate.reservedAssignments,
+            unreadCustomerConversations: candidate.unreadCustomerConversations,
             todayNewCaseCount: candidate.todayNewCaseCount,
             maxConcurrency: candidate.maxConcurrency,
             lastAssignedAt: candidate.lastAssignedAt
@@ -468,7 +476,7 @@ async function loadCandidateEvaluations(
 
   const agentIds = [...new Set(currentDayRows.map((row) => String(row.agent_id)))];
   const jakartaDate = formatLocalDate(now, "Asia/Jakarta");
-  const [loadRows, reservedRows, lastAssignedRows, todayNewCaseRows] = await Promise.all([
+  const [loadRows, reservedRows, lastAssignedRows, todayNewCaseRows, unreadRows] = await Promise.all([
     db("conversations")
       .where({ tenant_id: tenantId, status: "human_active", current_handler_type: "human" })
       .whereIn("current_handler_id", agentIds)
@@ -497,13 +505,27 @@ async function loadCandidateEvaluations(
       .whereIn(db.raw("target_snapshot->>'agentId'") as unknown as string, agentIds)
       .groupByRaw("target_snapshot->>'agentId'")
       .select(db.raw("target_snapshot->>'agentId' as agent_id"))
-      .countDistinct<{ agent_id: string; today_new_case_count: string }[]>("case_id as today_new_case_count")
+      .countDistinct<{ agent_id: string; today_new_case_count: string }[]>("case_id as today_new_case_count"),
+    db("messages as m")
+      .join("conversations as c", function joinConversations() {
+        this.on("c.conversation_id", "=", "m.conversation_id").andOn("c.tenant_id", "=", "m.tenant_id");
+      })
+      .where("m.tenant_id", tenantId)
+      .where("m.direction", "inbound")
+      .where("m.sender_type", "customer")
+      .whereNull("m.read_at")
+      .whereIn("c.assigned_agent_id", agentIds)
+      .whereIn("c.status", ["open", "queued", "human_active", "bot_active"])
+      .groupBy("c.assigned_agent_id")
+      .select("c.assigned_agent_id")
+      .countDistinct<{ assigned_agent_id: string; unread_count: string }[]>("m.conversation_id as unread_count")
   ]);
 
   const loadByAgent = new Map(loadRows.map((row) => [row.current_handler_id, Number(row.active_count ?? 0)]));
   const reservedByAgent = new Map(reservedRows.map((row) => [row.assigned_agent_id, Number(row.reserved_count ?? 0)]));
   const lastAssignedByAgent = new Map(lastAssignedRows.map((row) => [row.assigned_agent_id, row.last_assigned_at ?? null]));
   const todayNewCasesByAgent = new Map(todayNewCaseRows.map((row) => [row.agent_id, Number(row.today_new_case_count ?? 0)]));
+  const unreadByAgent = new Map(unreadRows.map((row) => [row.assigned_agent_id, Number(row.unread_count ?? 0)]));
 
   return dedupeCandidateRows(
     currentDayRows
@@ -528,6 +550,7 @@ async function loadCandidateEvaluations(
       activeBreak: row.break_id !== null && row.break_id !== undefined,
       activeAssignments: loadByAgent.get(String(row.agent_id)) ?? 0,
       reservedAssignments: reservedByAgent.get(String(row.agent_id)) ?? 0,
+      unreadCustomerConversations: unreadByAgent.get(String(row.agent_id)) ?? 0,
       todayNewCaseCount: todayNewCasesByAgent.get(String(row.agent_id)) ?? 0,
       lastAssignedAt: lastAssignedByAgent.get(String(row.agent_id)) ?? null
     }))
