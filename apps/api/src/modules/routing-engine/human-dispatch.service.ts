@@ -659,9 +659,9 @@ async function loadHandleDurationSnapshot(
           .whereRaw("resolved_at > created_at")
           .groupBy("resolved_by_agent_id")
           .select("resolved_by_agent_id")
-          .avg<{ resolved_by_agent_id: string; avg_handle_sec: string | number | null }[]>(
-            db.raw("EXTRACT(EPOCH FROM (resolved_at - created_at)) as avg_handle_sec")
-          ),
+          .avg<{ resolved_by_agent_id: string; avg_handle_sec: string | number | null }[]>({
+            avg_handle_sec: db.raw("EXTRACT(EPOCH FROM (resolved_at - created_at))")
+          }),
     db("conversation_cases")
       .where({
         tenant_id: tenantId
@@ -669,9 +669,9 @@ async function loadHandleDurationSnapshot(
       .whereNotNull("resolved_at")
       .where("resolved_at", ">=", cutoff)
       .whereRaw("resolved_at > created_at")
-      .avg<{ avg_handle_sec: string | number | null }[]>(
-        db.raw("EXTRACT(EPOCH FROM (resolved_at - created_at)) as avg_handle_sec")
-      )
+      .avg<{ avg_handle_sec: string | number | null }[]>({
+        avg_handle_sec: db.raw("EXTRACT(EPOCH FROM (resolved_at - created_at))")
+      })
       .first()
   ]);
 
