@@ -8,10 +8,11 @@
  * - 为 reconcile 与工作台会话详情提供更完整的历史和群信息。
  */
 import type { Chat, Contact, GroupMetadata, ParticipantAction, WAMessage } from "@whiskeysockets/baileys";
+import type makeWASocket from "@whiskeysockets/baileys";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
 import { emitWaAccountUpdated } from "./wa-realtime.service.js";
-import { deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
+import { deriveWaStatus } from "./wa-session-status.js";
 import { mapBaileysMessageToInbound } from "./runtime/baileys-message.mapper.js";
 import {
   findWaMessageByProviderId,
@@ -182,21 +183,16 @@ async function updateSessionSyncMeta(
     groupsSyncedAt: typeof meta?.groupsSyncedAt === "string" ? meta.groupsSyncedAt : null,
     hasGroupChats: typeof meta?.hasGroupChats === "boolean" ? meta.hasGroupChats : null
   };
-  const uiStatus = deriveWaUiStatus({
+  const status = deriveWaStatus({
     accountStatus: String(account.account_status ?? "offline"),
     session: sessionSummary
   });
   emitWaAccountUpdated({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
-    accountStatus: String(account.account_status ?? "offline"),
+    status,
     connectionState: sessionSummary.connectionState,
     loginPhase: sessionSummary.loginPhase ?? "idle",
-    uiStatus,
-    syncStatus: deriveWaSyncStatus({
-      uiStatusCode: uiStatus.code,
-      session: sessionSummary
-    }),
     sessionRef: sessionRow.session_ref ? String(sessionRow.session_ref) : null,
     heartbeatAt: sessionRow.heartbeat_at ? new Date(String(sessionRow.heartbeat_at)).toISOString() : null,
     qrCode: typeof meta?.qrCode === "string" ? meta.qrCode : null,
@@ -439,4 +435,119 @@ export async function ingestBaileysContactsUpdate(input: {
     }
     return { ok: true, count: input.contacts.length };
   });
+}
+
+/**
+ * 主动拉取所有已知群组的最新元数据（群名、成员列表、管理员）。
+ * 在账号连接就绪（receivedPendingNotifications = true）后延迟调用，
+ * 补偿初始 groups.update 事件可能漏掉的群信息。
+ * 每个群之间插入 300ms 延迟，避免 WhatsApp 限频。
+ */
+export async function syncAllGroupsForAccount(
+  socket: ReturnType<typeof makeWASocket>,
+  tenantId: string,
+  waAccountId: string
+): Promise<void> {
+  // Get all known group JIDs for this account from our DB
+  const groupJids = await withTenantTransaction(tenantId, async (trx) => {
+    const rows = await trx("wa_conversations")
+      .where({ tenant_id: tenantId, wa_account_id: waAccountId, conversation_type: "group" })
+      .select("chat_jid");
+    return rows.map((row) => String(row.chat_jid)).filter((jid) => jid.endsWith("@g.us"));
+  });
+
+  if (groupJids.length === 0) return;
+  console.info("[wa-sync] proactive group metadata sync", { tenantId, waAccountId, count: groupJids.length });
+
+  for (const jid of groupJids) {
+    try {
+      const metadata = await socket.groupMetadata(jid);
+      await ingestBaileysGroupsUpdate({ tenantId, waAccountId, groups: [metadata] });
+    } catch (error) {
+      console.warn("[wa-sync] groupMetadata fetch failed for", jid, { error });
+    }
+    // Brief pause to avoid rate-limiting
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  console.info("[wa-sync] proactive group metadata sync complete", { tenantId, waAccountId });
+}
+
+/**
+ * 批量获取并存储联系人和群的头像 URL。
+ * 在后台异步运行，失败不影响主流程。
+ * 仅拉取距上次更新超过 7 天的头像（避免频繁刷新）。
+ */
+export async function syncAvatarsForAccount(
+  socket: ReturnType<typeof makeWASocket>,
+  tenantId: string,
+  waAccountId: string
+): Promise<void> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Contacts with stale/missing avatars
+  const contactJids = await withTenantTransaction(tenantId, async (trx) => {
+    const rows = await trx("wa_contacts")
+      .where({ tenant_id: tenantId, wa_account_id: waAccountId })
+      .andWhere((b) => {
+        b.whereNull("avatar_fetched_at").orWhere("avatar_fetched_at", "<", sevenDaysAgo);
+      })
+      .select("contact_jid")
+      .limit(50); // process at most 50 per sync cycle
+    return rows.map((row) => String(row.contact_jid));
+  });
+
+  // Group conversations with stale/missing avatars
+  const groupJids = await withTenantTransaction(tenantId, async (trx) => {
+    const rows = await trx("wa_conversations")
+      .where({ tenant_id: tenantId, wa_account_id: waAccountId, conversation_type: "group" })
+      .andWhere((b) => {
+        b.whereNull("avatar_fetched_at").orWhere("avatar_fetched_at", "<", sevenDaysAgo);
+      })
+      .select("chat_jid", "wa_conversation_id")
+      .limit(50);
+    return rows.map((row) => ({ jid: String(row.chat_jid), convId: String(row.wa_conversation_id) }));
+  });
+
+  const allJids = [
+    ...contactJids.map((jid) => ({ jid, type: "contact" as const })),
+    ...groupJids.map(({ jid, convId }) => ({ jid, type: "group" as const, convId }))
+  ];
+
+  if (allJids.length === 0) return;
+  console.info("[wa-sync] avatar sync started", { tenantId, waAccountId, count: allJids.length });
+
+  for (const item of allJids) {
+    try {
+      const url = await socket.profilePictureUrl(item.jid, "image");
+      if (item.type === "contact") {
+        await withTenantTransaction(tenantId, async (trx) => {
+          await trx("wa_contacts")
+            .where({ tenant_id: tenantId, wa_account_id: waAccountId, contact_jid: item.jid })
+            .update({ avatar_url: url, avatar_fetched_at: trx.fn.now(), updated_at: trx.fn.now() });
+        });
+      } else {
+        await withTenantTransaction(tenantId, async (trx) => {
+          await trx("wa_conversations")
+            .where({ tenant_id: tenantId, wa_account_id: waAccountId, chat_jid: item.jid })
+            .update({ avatar_url: url, avatar_fetched_at: trx.fn.now(), updated_at: trx.fn.now() });
+        });
+      }
+    } catch {
+      // profilePictureUrl throws when privacy settings block it — mark as attempted
+      await withTenantTransaction(tenantId, async (trx) => {
+        if (item.type === "contact") {
+          await trx("wa_contacts")
+            .where({ tenant_id: tenantId, wa_account_id: waAccountId, contact_jid: item.jid })
+            .update({ avatar_fetched_at: trx.fn.now(), updated_at: trx.fn.now() });
+        } else {
+          await trx("wa_conversations")
+            .where({ tenant_id: tenantId, wa_account_id: waAccountId, chat_jid: item.jid })
+            .update({ avatar_fetched_at: trx.fn.now(), updated_at: trx.fn.now() });
+        }
+      });
+    }
+    // Rate limit: 500ms between each request
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  console.info("[wa-sync] avatar sync complete", { tenantId, waAccountId });
 }

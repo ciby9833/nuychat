@@ -40,6 +40,27 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     return withTenantTransaction(auth.tenantId, async (trx) => listWorkbenchAccounts(trx, auth));
   });
 
+  // ─── Manual sync ────────────────────────────────────────────────────────────
+  // Trigger an immediate re-sync of group metadata and avatars for the given account.
+  // Useful when the user notices stale names / missing group members.
+  app.post("/api/wa/workbench/accounts/:waAccountId/sync", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { waAccountId } = req.params as { waAccountId: string };
+    const { getBaileysRuntime } = await import("./runtime/baileys-runtime.manager.js");
+    const { syncAllGroupsForAccount, syncAvatarsForAccount } = await import("./wa-baileys-sync.service.js");
+    const runtime = getBaileysRuntime(auth.tenantId, waAccountId);
+    if (!runtime || runtime.connectionState !== "open") {
+      throw app.httpErrors.serviceUnavailable("WhatsApp account is not connected");
+    }
+    // Run in background — return immediately so the UI isn't blocked
+    void syncAllGroupsForAccount(runtime.socket, auth.tenantId, waAccountId)
+      .then(() => syncAvatarsForAccount(runtime.socket, auth.tenantId, waAccountId))
+      .catch((error) => {
+        app.log.error({ waAccountId, error }, "[wa-sync] manual sync failed");
+      });
+    return { ok: true, message: "同步已在后台启动" };
+  });
+
   app.post("/api/wa/workbench/accounts/:waAccountId/login-task", async (req) => {
     const auth = requireWaSeatAccess(app, req);
     const runtime = getWaRuntimeStatus();
@@ -156,19 +177,23 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("clientMessageId is required");
     }
     const messageType = typeof body.type === "string" ? body.type : "text";
+    const quotedMessageId = typeof body.quotedMessageId === "string" ? body.quotedMessageId.trim() || null : null;
     const result = await withTenantTransaction(auth.tenantId, async (trx) => {
       if (messageType === "text") {
+        // Allow empty text when quoting — the quote provides the context.
         if (typeof body.text !== "string" || !body.text.trim()) {
-          throw app.httpErrors.badRequest("text is required");
+          if (!quotedMessageId) {
+            throw app.httpErrors.badRequest("text is required when not quoting a message");
+          }
         }
         return enqueueWorkbenchTextMessage(trx, {
           tenantId: auth.tenantId,
           membershipId: auth.membershipId,
           role: auth.role,
           waConversationId,
-          clientMessageId: body.clientMessageId.trim(),
-          text: body.text.trim(),
-          quotedMessageId: typeof body.quotedMessageId === "string" ? body.quotedMessageId.trim() || null : null
+          clientMessageId: body.clientMessageId!.trim(),
+          text: (body.text ?? "").trim(),
+          quotedMessageId
         });
       }
 
@@ -296,9 +321,55 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
       document: "documentMessage",
       sticker: "stickerMessage"
     };
+    const mimeType = result.mime_type ? String(result.mime_type) : "application/octet-stream";
+    const fileName = result.file_name ? String(result.file_name) : null;
+
     const msgContent = (payload?.message as Record<string, unknown> | null)?.[contentKeyMap[attachmentType]] as Record<string, unknown> | null;
+
+    // ── Shared local-disk helper ─────────────────────────────────────────────
+    // Outbound messages we sent ourselves have storage_url = "/uploads/<uuid>.<ext>".
+    // Baileys stores that same "/uploads/..." path as imageMessage.url in provider_payload.
+    // We must NEVER pass a local path to downloadContentFromMessage — it would try to open
+    // "/uploads/..." as a file path from root and crash with ENOENT + unhandled ReadStream error.
+    const asStr = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+    async function serveLocalFile(localPath: string): Promise<typeof reply> {
+      const { readFile } = await import("node:fs/promises");
+      const { getUploadsDir } = await import("../../infra/storage/upload.service.js");
+      const nodePath = await import("node:path");
+      const diskPath = nodePath.default.join(getUploadsDir(), nodePath.default.basename(localPath));
+      const buffer = await readFile(diskPath);
+      void reply.header("Content-Type", mimeType);
+      void reply.header("Cache-Control", "private, max-age=86400");
+      if (fileName) void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
+      return reply.send(buffer);
+    }
+
+    // ── Case 1: no provider_payload / msgContent (e.g. failed outbound) ─────
     if (!msgContent) {
+      const storageUrl = asStr(result.storage_url);
+      if (storageUrl?.startsWith("/uploads/")) {
+        try {
+          return await serveLocalFile(storageUrl);
+        } catch (error) {
+          app.log.error({ attachmentId, storageUrl, error }, "[wa-media-proxy] local file read failed");
+          throw app.httpErrors.notFound("Local upload file not found");
+        }
+      }
       throw app.httpErrors.notFound("Media content not available in stored payload");
+    }
+
+    // ── Case 2: msgContent present but URL is a local upload path ───────────
+    // This happens for successfully sent outbound messages: Baileys echoes back the message
+    // with the same "/uploads/..." URL we passed it. Serving from disk avoids the ENOENT crash.
+    const contentUrl = asStr(msgContent["url"]) ?? asStr(msgContent["staticUrl"]);
+    if (contentUrl?.startsWith("/uploads/")) {
+      try {
+        return await serveLocalFile(contentUrl);
+      } catch (error) {
+        app.log.error({ attachmentId, contentUrl, error }, "[wa-media-proxy] local file read failed");
+        throw app.httpErrors.notFound("Local upload file not found");
+      }
     }
 
     // Buffers become { type:"Buffer", data:[...] } or {0:1,1:2,...} after JSON round-trip.
@@ -323,10 +394,26 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
       fileSha256: toBuffer(msgContent["fileSha256"])
     };
 
+    // ── Case 3: no mediaKey — WhatsApp Channels/Newsletters (staticUrl, public) ──
     if (!reconstructed.mediaKey) {
-      throw app.httpErrors.badGateway("Media key missing — cannot decrypt");
+      if (!contentUrl) {
+        throw app.httpErrors.badGateway("Media key missing and no plain URL available — cannot serve media");
+      }
+      try {
+        const res = await fetch(contentUrl);
+        if (!res.ok) throw new Error(`Upstream ${res.status}`);
+        const buffer = Buffer.from(await res.arrayBuffer());
+        void reply.header("Content-Type", res.headers.get("content-type") ?? mimeType);
+        void reply.header("Cache-Control", "public, max-age=86400");
+        if (fileName) void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
+        return reply.send(buffer);
+      } catch (error) {
+        app.log.error({ attachmentId, contentUrl, error }, "[wa-media-proxy] plain-url fetch failed");
+        throw app.httpErrors.badGateway("Failed to fetch public media URL");
+      }
     }
 
+    // ── Case 4: encrypted WhatsApp CDN URL — decrypt via Baileys ────────────
     try {
       const { downloadContentFromMessage } = await import("@whiskeysockets/baileys");
       const stream = await downloadContentFromMessage(
@@ -340,14 +427,9 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
       }
       const buffer = Buffer.concat(chunks);
 
-      const mimeType = result.mime_type ? String(result.mime_type) : "application/octet-stream";
-      const fileName = result.file_name ? String(result.file_name) : null;
-
       void reply.header("Content-Type", mimeType);
       void reply.header("Cache-Control", "private, max-age=86400");
-      if (fileName) {
-        void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
-      }
+      if (fileName) void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
       return reply.send(buffer);
     } catch (error) {
       app.log.error({ attachmentId, error }, "[wa-media-proxy] decrypt/download failed");

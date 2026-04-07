@@ -13,7 +13,6 @@ export type WaAccountItem = {
   displayName: string;
   phoneE164: string | null;
   providerKey: string;
-  accountStatus: string;
   riskLevel: string;
   primaryOwnerMembershipId: string | null;
   primaryOwnerName: string | null;
@@ -29,13 +28,7 @@ export type WaAccountItem = {
     loginPhase: string | null;
     qrCodeAvailable: boolean;
   } | null;
-  uiStatus: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
-  syncStatus: {
+  status: {
     code: string;
     label: string;
     detail: string;
@@ -67,6 +60,7 @@ export type WaConversationItem = {
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
+  avatarUrl: string | null;
 };
 
 export type WaConversationMember = {
@@ -155,6 +149,7 @@ export type WaContactItem = {
   displayName: string | null;
   notifyName: string | null;
   verifiedName: string | null;
+  avatarUrl: string | null;
   createdAt: string;
   updatedAt: string;
 };

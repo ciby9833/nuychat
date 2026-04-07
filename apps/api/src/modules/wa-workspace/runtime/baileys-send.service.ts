@@ -7,12 +7,90 @@
  * - 对上返回 provider-neutral 的发送结果，供 wa-outbound.service 回写消息状态。
  */
 import crypto from "node:crypto";
+import path from "node:path";
 
 import type { AnyMessageContent, WAMessage } from "@whiskeysockets/baileys";
 
 import { withTenantTransaction } from "../../../infra/db/client.js";
+import { getUploadsDir } from "../../../infra/storage/upload.service.js";
 import { mapBaileysDeliveryStatus } from "./baileys-message.mapper.js";
 import { ensureBaileysRuntime, getBaileysRuntime, restartBaileysRuntime } from "./baileys-runtime.manager.js";
+
+/**
+ * Baileys receives a `url` field for media messages and resolves it internally.
+ * When the URL is a relative local upload path like "/uploads/xxx.png", Baileys
+ * calls createReadStream("/uploads/xxx.png") which fails with ENOENT because the
+ * real uploads directory is at UPLOADS_DIR (e.g. "data/uploads/").
+ *
+ * Convert any "/uploads/..." path to the real absolute disk path so Baileys can
+ * open the file. HTTP/HTTPS URLs are returned unchanged.
+ */
+function resolveMediaUrl(url: string): string {
+  if (url.startsWith("/uploads/")) {
+    return path.join(getUploadsDir(), path.basename(url));
+  }
+  return url;
+}
+
+/**
+ * Cleans a WAMessage["message"] object that was round-tripped through JSON storage.
+ *
+ * When Node.js Buffer objects are serialized to JSON they become
+ * `{"type":"Buffer","data":[...]}` plain objects.  Baileys calls
+ * `proto.Message.fromObject()` on quoted message content, and protobufjs
+ * cannot reconstruct `bytes` fields from that plain-object form — it either
+ * silently produces empty buffers or throws, causing the entire send to fail.
+ *
+ * For quoted-message context we only need human-readable fields (text, caption,
+ * mimetype, dimensions, duration …).  Binary blobs (mediaKey, file hashes,
+ * jpeg thumbnail, waveform …) are not needed for a reply preview, so we strip
+ * them before handing the content to Baileys.
+ */
+function sanitizeMessageForQuote(rawMsg: unknown): WAMessage["message"] {
+  if (!rawMsg || typeof rawMsg !== "object") {
+    return { conversation: "[引用消息]" };
+  }
+
+  // Shallow-copy the top-level message object.
+  const msg = { ...(rawMsg as Record<string, unknown>) };
+
+  // Binary fields that Baileys stores on every media message type but that are
+  // not needed for a quoted-message preview.
+  const binaryFields = [
+    "jpegThumbnail",
+    "thumbnailDirectPath",
+    "thumbnailEncSha256",
+    "thumbnailSha256",
+    "mediaKey",
+    "mediaKeyTimestamp",
+    "fileEncSha256",
+    "fileSha256",
+    "streamingSidecarBytes",
+    "waveform",
+    "ptt",       // boolean, not binary, but safe to keep — listed here for completeness
+  ] as const;
+
+  const mediaMessageTypes = [
+    "imageMessage",
+    "videoMessage",
+    "audioMessage",
+    "documentMessage",
+    "stickerMessage",
+    "gifMessage",
+  ];
+
+  for (const mediaType of mediaMessageTypes) {
+    if (msg[mediaType] && typeof msg[mediaType] === "object") {
+      const mediaContent = { ...(msg[mediaType] as Record<string, unknown>) };
+      for (const field of binaryFields) {
+        delete mediaContent[field];
+      }
+      msg[mediaType] = mediaContent;
+    }
+  }
+
+  return msg as WAMessage["message"];
+}
 
 async function buildQuotedMessage(
   tenantId: string,
@@ -29,28 +107,46 @@ async function buildQuotedMessage(
       .andWhere((builder) => {
         builder.where("provider_message_id", quotedMessageId).orWhere("wa_message_id", quotedMessageId);
       })
-      .select("provider_message_id", "direction", "provider_payload")
+      .select("provider_message_id", "direction", "participant_jid", "sender_jid", "provider_payload")
       .orderBy("created_at", "desc")
       .first<Record<string, unknown> | undefined>()
   );
-  if (!row) return undefined;
+  if (!row) {
+    console.warn("[baileys-send] buildQuotedMessage: message not found", { quotedMessageId });
+    return undefined;
+  }
 
+  // Must use the WhatsApp provider message ID, not our internal UUID.
   const providerMessageId =
     typeof row.provider_message_id === "string" && row.provider_message_id.trim()
       ? row.provider_message_id.trim()
-      : quotedMessageId;
+      : null;
+  if (!providerMessageId) {
+    // Message hasn't been delivered to WhatsApp yet (still pending/failed). Skip the quote.
+    console.warn("[baileys-send] buildQuotedMessage: no provider_message_id yet", { quotedMessageId });
+    return undefined;
+  }
+
   const payload = typeof row.provider_payload === "string"
     ? JSON.parse(String(row.provider_payload))
     : (row.provider_payload as Record<string, unknown> | null);
-  const message = payload && typeof payload === "object" && payload.message && typeof payload.message === "object"
-    ? (payload.message as WAMessage["message"])
-    : { conversation: "" };
+
+  // Strip binary blobs that cannot survive JSON round-trip so Baileys can
+  // serialize the quoted context info without errors.
+  const message = sanitizeMessageForQuote(payload?.message);
+
+  // For group messages, Baileys requires `participant` in the key.
+  const isGroup = chatJid.endsWith("@g.us");
+  const participant = isGroup
+    ? ((row.participant_jid ? String(row.participant_jid) : null) ?? (row.sender_jid ? String(row.sender_jid) : null) ?? undefined)
+    : undefined;
 
   return {
     key: {
       remoteJid: chatJid,
       id: providerMessageId,
-      fromMe: String(row.direction) === "outbound"
+      fromMe: String(row.direction) === "outbound",
+      ...(participant ? { participant } : {})
     },
     message
   };
@@ -102,15 +198,18 @@ export async function sendBaileysMessage(input: {
     if (!input.mediaUrl || !input.mediaType) {
       throw new Error("mediaUrl and mediaType are required");
     }
+    // Resolve "/uploads/..." relative paths to absolute disk paths so Baileys
+    // can read the file. HTTP/HTTPS URLs are returned unchanged.
+    const resolvedUrl = resolveMediaUrl(input.mediaUrl);
     if (input.mediaType === "image") {
-      content = { image: { url: input.mediaUrl }, caption: input.text ?? undefined, mimetype: input.mimeType ?? undefined };
+      content = { image: { url: resolvedUrl }, caption: input.text ?? undefined, mimetype: input.mimeType ?? undefined };
     } else if (input.mediaType === "video") {
-      content = { video: { url: input.mediaUrl }, caption: input.text ?? undefined, mimetype: input.mimeType ?? undefined };
+      content = { video: { url: resolvedUrl }, caption: input.text ?? undefined, mimetype: input.mimeType ?? undefined };
     } else if (input.mediaType === "audio") {
-      content = { audio: { url: input.mediaUrl }, mimetype: input.mimeType ?? undefined };
+      content = { audio: { url: resolvedUrl }, mimetype: input.mimeType ?? undefined };
     } else {
       content = {
-        document: { url: input.mediaUrl },
+        document: { url: resolvedUrl },
         mimetype: input.mimeType ?? "application/octet-stream",
         fileName: input.fileName ?? "attachment",
         caption: input.text ?? undefined

@@ -9,7 +9,8 @@ export type FeatureName =
   | "skill_planner"
   | "closure_evaluator"
   | "skill_execution"
-  | "memory_encoder";
+  | "memory_encoder"
+  | "routing_notice";
 
 type PriceCard = {
   inputPerMillionUsd: number;

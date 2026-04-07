@@ -10,7 +10,7 @@ import type { Knex } from "knex";
 
 import { normalizeNonEmptyString } from "../tenant/tenant-admin.shared.js";
 import { waProviderAdapter } from "./provider/provider-registry.js";
-import { deriveWaAccountStatus, deriveWaActions, deriveWaStatus, deriveWaSyncStatus, deriveWaUiStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
+import { deriveWaAccountStatus, deriveWaActions, deriveWaStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
 import {
   createWaLoginTask,
   getWaAccountById,
@@ -112,22 +112,15 @@ export async function createAdminLoginTask(
         groupsSyncedAt: null,
         hasGroupChats: null
       };
-      const uiStatus = deriveWaUiStatus({
-        accountStatus: String(account.accountStatus),
-        session
-      });
       const status = deriveWaStatus({
         accountStatus: String(account.accountStatus),
         session
       });
       return {
         status,
-        uiStatus,
-        syncStatus: deriveWaSyncStatus({
-          uiStatusCode: uiStatus.code,
-          session
-        }),
         actions: deriveWaActions({
+          status,
+          hasSession: true,
           lastConnectedAt: account.lastConnectedAt,
           session
         })
@@ -198,35 +191,23 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
     storedAccountStatus: String(account.account_status ?? "offline"),
     session: sessionSummary
   });
+  const status = deriveWaStatus({
+    accountStatus: effectiveAccountStatus,
+    session: sessionSummary
+  });
   return {
     waAccountId,
-    accountStatus: effectiveAccountStatus,
     providerKey: account.provider_key,
     lastConnectedAt: account.last_connected_at ? new Date(account.last_connected_at).toISOString() : null,
     lastDisconnectedAt: account.last_disconnected_at ? new Date(account.last_disconnected_at).toISOString() : null,
-    ...(function buildUi() {
-      const uiStatus = deriveWaUiStatus({
-        accountStatus: effectiveAccountStatus,
-        session: sessionSummary
-      });
-      const status = deriveWaStatus({
-        accountStatus: effectiveAccountStatus,
-        session: sessionSummary
-      });
-      return {
-        session: sessionView,
-        status,
-        uiStatus,
-        syncStatus: deriveWaSyncStatus({
-          uiStatusCode: uiStatus.code,
-          session: sessionSummary
-        }),
-        actions: deriveWaActions({
-          lastConnectedAt,
-          session: sessionSummary
-        })
-      };
-    })()
+    session: sessionView,
+    status,
+    actions: deriveWaActions({
+      status,
+      hasSession: Boolean(sessionSummary),
+      lastConnectedAt,
+      session: sessionSummary
+    })
   };
 }
 

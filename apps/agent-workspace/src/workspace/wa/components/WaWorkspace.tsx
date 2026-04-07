@@ -39,6 +39,8 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               loading={vm.loading}
               onSelectConversation={vm.selectConversation}
               onOpenContact={vm.openContactConversation}
+              onSync={() => { void vm.triggerSync(); }}
+              syncing={vm.syncing}
             />
           </div>
           <div className="min-h-0 bg-[#0b141a]">

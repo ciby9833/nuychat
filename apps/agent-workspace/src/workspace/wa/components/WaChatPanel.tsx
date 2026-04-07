@@ -6,7 +6,7 @@
  *              contact_card / 已撤回 / 未知类型降级兜底
  */
 
-import { type ChangeEvent, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { type ChangeEvent, type ClipboardEvent, useLayoutEffect, useRef, useState, useCallback } from "react";
 
 import { API_BASE_URL } from "../../api";
 import type { Session } from "../../types";
@@ -47,12 +47,17 @@ type WaChatPanelProps = {
  */
 function mediaProxyUrl(att: WaAttachment, token: string): string | null {
   const raw = att.storageUrl || att.previewUrl;
-  if (!raw) return null;
-  if (raw.startsWith("data:") || raw.startsWith("blob:")) return raw;
-  // WhatsApp CDN: encrypted, needs server-side decryption
-  if (raw.includes("mmg.whatsapp.net") || raw.includes(".enc?") || raw.includes("mms3=true")) {
+  // Always route through the media proxy when we have an attachmentId.
+  // The proxy handles both:
+  //   • encrypted WhatsApp CDN URLs (mmg.whatsapp.net/*.enc) — decrypts via Baileys
+  //   • plain public URLs (WhatsApp Channels/Newsletters staticUrl) — fetch-and-proxy
+  // This also covers the case where storageUrl is null for newsletter images: the proxy
+  // reads the stored provider_payload and extracts the staticUrl from there.
+  if (att.attachmentId) {
     return `${API_BASE_URL}/api/wa/media/${att.attachmentId}?token=${encodeURIComponent(token)}`;
   }
+  if (!raw) return null;
+  if (raw.startsWith("data:") || raw.startsWith("blob:")) return raw;
   return raw;
 }
 
@@ -448,6 +453,20 @@ export function WaChatPanel(props: WaChatPanelProps) {
       minute: "2-digit"
     });
 
+  // ── Paste handler ─────────────────────────────────────────────────────────
+
+  const handleComposerPaste = useCallback((e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) {
+      // Check if any of the pasted items are images (or other files)
+      const hasFile = Array.from(files).some((f) => f.size > 0);
+      if (hasFile) {
+        e.preventDefault();
+        onUploadFiles(files);
+      }
+    }
+  }, [onUploadFiles]);
+
   // ── Message body dispatcher ───────────────────────────────────────────────
 
   const renderMessageBody = (message: WaMessageItem, mine: boolean) => {
@@ -639,6 +658,14 @@ export function WaChatPanel(props: WaChatPanelProps) {
                       {/* Message body — dispatched by type */}
                       {renderMessageBody(message, mine)}
 
+                      {/* Failed send banner */}
+                      {mine && message.deliveryStatus === "failed" ? (
+                        <div className="mt-2 flex items-center gap-1.5 rounded-[6px] bg-[#f15c6d]/10 px-2 py-1.5 text-[12px] text-[#f15c6d]">
+                          <span>⚠️</span>
+                          <span className="font-medium">发送失败</span>
+                        </div>
+                      ) : null}
+
                       {/* Reactions chips below content */}
                       {!isSticker && message.reactions.length > 0 ? (
                         <ReactionsBar reactions={message.reactions} />
@@ -649,13 +676,17 @@ export function WaChatPanel(props: WaChatPanelProps) {
                         <div className="mt-1.5 flex items-center justify-between gap-3">
                           {/* Hover action buttons */}
                           <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                            <button
-                              type="button"
-                              className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
-                              onClick={() => onReplyToMessage(message.providerMessageId || message.waMessageId, previewText)}
-                            >
-                              回复
-                            </button>
+                            {/* Disable reply on failed outbound messages — they have no providerMessageId
+                                so Baileys cannot build a proper quote context. */}
+                            {!(mine && message.deliveryStatus === "failed" && !message.providerMessageId) && (
+                              <button
+                                type="button"
+                                className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
+                                onClick={() => onReplyToMessage(message.providerMessageId || message.waMessageId, previewText)}
+                              >
+                                回复
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
@@ -698,19 +729,55 @@ export function WaChatPanel(props: WaChatPanelProps) {
                 {quotedMessage.bodyText || quotedMessage.attachments[0]?.fileName || quotedMessage.messageType}
               </div>
             </div>
-            <button type="button" className="text-xs text-[#25d366]" onClick={onClearQuoted}>✕</button>
+            <button
+              type="button"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] text-[#25d366] hover:bg-white/10"
+              onClick={onClearQuoted}
+              title="取消引用"
+            >
+              ✕
+            </button>
           </div>
         ) : null}
 
         {uploadingAttachments.length > 0 ? (
           <div className="mb-3 flex flex-wrap gap-2">
-            {uploadingAttachments.map((att) => (
-              <div key={att.localId} className="flex items-center gap-2 rounded-full border border-[#4a5c66] bg-[#111b21] px-3 py-1 text-xs text-[#d1d7db]">
-                <span>{docIcon(att.mimeType, att.fileName)}</span>
-                <span className="max-w-[120px] truncate">{att.fileName}</span>
-                <button type="button" onClick={() => onRemoveAttachment(att.localId)} className="opacity-60 hover:opacity-100">✕</button>
-              </div>
-            ))}
+            {uploadingAttachments.map((att) => {
+              const isImage = att.mimeType.startsWith("image/");
+              const previewSrc = isImage ? `${API_BASE_URL}${att.url}` : null;
+              return (
+                <div
+                  key={att.localId}
+                  className="relative flex items-center gap-2 overflow-hidden rounded-[10px] border border-[#4a5c66] bg-[#111b21] text-xs text-[#d1d7db]"
+                >
+                  {previewSrc ? (
+                    /* Image thumbnail */
+                    <div className="relative h-16 w-16 shrink-0">
+                      <img
+                        src={previewSrc}
+                        alt={att.fileName}
+                        className="h-full w-full rounded-l-[9px] object-cover"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center text-xl">
+                      {docIcon(att.mimeType, att.fileName)}
+                    </div>
+                  )}
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5 pr-2">
+                    <span className="max-w-[120px] truncate font-medium">{att.fileName}</span>
+                    <span className="text-[10px] text-[#8696a0]">{att.mimeType.split("/")[1]?.toUpperCase()}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveAttachment(att.localId)}
+                    className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-[10px] text-white hover:bg-black/80"
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
           </div>
         ) : null}
 
@@ -723,7 +790,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
           <textarea
             value={composerText}
             onChange={(event) => onComposerTextChange(event.target.value)}
-            placeholder="输入消息内容"
+            placeholder="输入消息内容，或粘贴图片"
             rows={1}
             className="min-h-[44px] max-h-[140px] flex-1 resize-none rounded-[12px] border border-[#2a3942] bg-[#2a3942] px-4 py-3 text-sm text-[#e9edef] outline-none placeholder:text-[#8696a0]"
             onKeyDown={(e) => {
@@ -732,6 +799,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                 onSend();
               }
             }}
+            onPaste={handleComposerPaste}
           />
           <button
             type="button"

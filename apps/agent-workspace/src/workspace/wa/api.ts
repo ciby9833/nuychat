@@ -138,6 +138,14 @@ export function openWaWorkbenchContactConversation(
   );
 }
 
+export function triggerWaAccountSync(session: Session, waAccountId: string) {
+  return apiPostJson<{ ok: boolean; message: string }>(
+    `/api/wa/workbench/accounts/${waAccountId}/sync`,
+    {},
+    session
+  );
+}
+
 export async function uploadWaAttachment(session: Session, file: File) {
   const form = new FormData();
   form.append("file", file);

@@ -125,8 +125,15 @@ export function inferBaileysMessageType(message: WAMessage["message"] | null | u
 
 export function extractBaileysAttachment(message: WAMessage["message"] | null | undefined) {
   if (!message) return null;
+  // Helper: WhatsApp Channels/Newsletters use `staticUrl` (a public, non-encrypted URL)
+  // instead of `url` (encrypted CDN URL). Fall back to staticUrl when url is absent.
+  function mediaUrl(msg: Record<string, unknown>): string | null {
+    return asString(msg["url"]) ?? asString(msg["staticUrl"]);
+  }
+
   const image = message.imageMessage;
   if (image) {
+    const img = image as unknown as Record<string, unknown>;
     return {
       attachmentType: "image",
       mimeType: asString(image.mimetype),
@@ -135,12 +142,13 @@ export function extractBaileysAttachment(message: WAMessage["message"] | null | 
       width: asNumber(image.width),
       height: asNumber(image.height),
       durationMs: null,
-      storageUrl: asString(image.url),
+      storageUrl: mediaUrl(img),
       previewUrl: null
     } as const;
   }
   const video = message.videoMessage;
   if (video) {
+    const vid = video as unknown as Record<string, unknown>;
     return {
       attachmentType: "video",
       mimeType: asString(video.mimetype),
@@ -149,12 +157,13 @@ export function extractBaileysAttachment(message: WAMessage["message"] | null | 
       width: asNumber(video.width),
       height: asNumber(video.height),
       durationMs: asNumber(video.seconds) ? Number(video.seconds) * 1000 : null,
-      storageUrl: asString(video.url),
+      storageUrl: mediaUrl(vid),
       previewUrl: null
     } as const;
   }
   const audio = message.audioMessage;
   if (audio) {
+    const aud = audio as unknown as Record<string, unknown>;
     return {
       attachmentType: "audio",
       mimeType: asString(audio.mimetype),
@@ -163,12 +172,13 @@ export function extractBaileysAttachment(message: WAMessage["message"] | null | 
       width: null,
       height: null,
       durationMs: asNumber(audio.seconds) ? Number(audio.seconds) * 1000 : null,
-      storageUrl: asString(audio.url),
+      storageUrl: mediaUrl(aud),
       previewUrl: null
     } as const;
   }
   const document = message.documentMessage;
   if (document) {
+    const doc = document as unknown as Record<string, unknown>;
     return {
       attachmentType: "document",
       mimeType: asString(document.mimetype),
@@ -177,12 +187,13 @@ export function extractBaileysAttachment(message: WAMessage["message"] | null | 
       width: null,
       height: null,
       durationMs: null,
-      storageUrl: asString(document.url),
+      storageUrl: mediaUrl(doc),
       previewUrl: null
     } as const;
   }
   const sticker = message.stickerMessage;
   if (sticker) {
+    const stk = sticker as unknown as Record<string, unknown>;
     return {
       attachmentType: "sticker",
       mimeType: asString(sticker.mimetype) ?? "image/webp",
@@ -191,7 +202,7 @@ export function extractBaileysAttachment(message: WAMessage["message"] | null | 
       width: asNumber(sticker.width),
       height: asNumber(sticker.height),
       durationMs: null,
-      storageUrl: asString(sticker.url),
+      storageUrl: mediaUrl(stk),
       previewUrl: null
     } as const;
   }

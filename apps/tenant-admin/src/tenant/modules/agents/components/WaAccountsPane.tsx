@@ -49,7 +49,7 @@ type LoginTaskModalState = {
   accountName: string;
   qrCode: string;
   expiresAt: string;
-  uiStatus: {
+  status: {
     code: string;
     label: string;
     detail: string;
@@ -130,7 +130,7 @@ export function WaAccountsPane({
       accountName: account.displayName,
       qrCode: task.qrCode ?? "",
       expiresAt: task.expiresAt,
-      uiStatus: task.uiStatus,
+      status: task.status,
       disconnectReason: null
     });
   };
@@ -149,21 +149,14 @@ export function WaAccountsPane({
 
     socket.on("wa.account.updated", (event: {
       waAccountId: string;
-      accountStatus: string;
+      status: {
+        code: string;
+        label: string;
+        detail: string;
+        tone: "default" | "warning" | "success" | "danger" | "processing";
+      };
       connectionState: string;
       loginPhase: string;
-      uiStatus: {
-        code: string;
-        label: string;
-        detail: string;
-        tone: "default" | "warning" | "success" | "danger" | "processing";
-      };
-      syncStatus: {
-        code: string;
-        label: string;
-        detail: string;
-        tone: "default" | "warning" | "success" | "danger" | "processing";
-      };
       qrCode: string | null;
       heartbeatAt: string | null;
       disconnectReason: string | null;
@@ -179,7 +172,7 @@ export function WaAccountsPane({
         setHealth((current) => current && current.waAccountId === event.waAccountId
           ? {
               ...current,
-              accountStatus: event.accountStatus,
+              status: event.status,
               session: current.session
                 ? {
                     ...current.session,
@@ -213,7 +206,7 @@ export function WaAccountsPane({
 
       setLoginTask((current) => {
         if (!current || current.waAccountId !== event.waAccountId) return current;
-        const isConnected = event.accountStatus === "online" || event.connectionState === "open";
+        const isConnected = event.status.code === "connected";
         if (isConnected) {
           connectedAccountName = current.accountName;
           return null;
@@ -222,13 +215,13 @@ export function WaAccountsPane({
           return {
             ...current,
             qrCode: event.qrCode,
-            uiStatus: event.uiStatus,
+            status: event.status,
             disconnectReason: event.disconnectReason
           };
         }
         if (
           (event.qrCode ?? current.qrCode) === current.qrCode &&
-          event.uiStatus.code === current.uiStatus.code &&
+          event.status.code === current.status.code &&
           event.disconnectReason === current.disconnectReason
         ) {
           return current;
@@ -236,7 +229,7 @@ export function WaAccountsPane({
         return {
           ...current,
           qrCode: event.qrCode ?? current.qrCode,
-          uiStatus: event.uiStatus,
+          status: event.status,
           disconnectReason: event.disconnectReason
         };
       });
@@ -269,7 +262,7 @@ export function WaAccountsPane({
   }, [loginTask]);
 
   useEffect(() => {
-    if (!loginTask || loginTask.uiStatus.code !== "qr_required" || refreshingLoginTask || qrCountdownMs > 0) return;
+    if (!loginTask || loginTask.status.code !== "qr_required" || refreshingLoginTask || qrCountdownMs > 0) return;
 
     let cancelled = false;
     setRefreshingLoginTask(true);
@@ -282,7 +275,7 @@ export function WaAccountsPane({
                 ...current,
                 qrCode: nextTask.qrCode ?? current.qrCode,
                 expiresAt: nextTask.expiresAt,
-                uiStatus: nextTask.uiStatus,
+                status: nextTask.status,
                 disconnectReason: null
               }
             : current);
@@ -314,7 +307,7 @@ export function WaAccountsPane({
 
         setHealth((current) => current && current.waAccountId === next.waAccountId ? next : current);
 
-        const isConnected = next.uiStatus.code === "connected";
+        const isConnected = next.status.code === "connected";
         if (isConnected) {
           setLoginTask((current) => current?.waAccountId === next.waAccountId ? null : current);
           void message.success(`WA账号 ${loginTask.accountName} 已连接成功`);
@@ -328,7 +321,7 @@ export function WaAccountsPane({
               const nextDisconnectReason = next.session?.disconnectReason ?? current.disconnectReason;
               if (
                 nextQrCode === current.qrCode &&
-                next.uiStatus.code === current.uiStatus.code &&
+                next.status.code === current.status.code &&
                 nextDisconnectReason === current.disconnectReason
               ) {
                 return current;
@@ -336,7 +329,7 @@ export function WaAccountsPane({
               return {
                 ...current,
                 qrCode: nextQrCode,
-                uiStatus: next.uiStatus,
+                status: next.status,
                 disconnectReason: nextDisconnectReason
               };
             })()
@@ -364,11 +357,11 @@ export function WaAccountsPane({
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   })();
   const isImageQrCode = typeof loginTask?.qrCode === "string" && loginTask.qrCode.startsWith("data:image/");
-  const shouldShowQr = loginTask?.uiStatus.code === "qr_required" && Boolean(loginTask.qrCode);
+  const shouldShowQr = loginTask?.status.code === "qr_required" && Boolean(loginTask.qrCode);
   const showLoadingState = Boolean(
-    loginTask?.uiStatus.code &&
-    ((loginTask.uiStatus.code === "qr_required" && !loginTask.qrCode) ||
-      !["qr_required", "connected", "failed", "session_expired"].includes(loginTask.uiStatus.code))
+    loginTask?.status.code &&
+    ((loginTask.status.code === "qr_required" && !loginTask.qrCode) ||
+      !["qr_required", "connected", "failed", "session_expired"].includes(loginTask.status.code))
   );
   return (
     <>
@@ -554,7 +547,7 @@ export function WaAccountsPane({
         open={!!loginTask}
         footer={loginTask ? (
           <Space>
-            {["failed", "session_expired"].includes(loginTask.uiStatus.code) ? (
+            {["failed", "session_expired"].includes(loginTask.status.code) ? (
               <Button
                 type="primary"
                 loading={refreshingLoginTask}
@@ -569,7 +562,7 @@ export function WaAccountsPane({
                             ...current,
                             qrCode: nextTask.qrCode ?? "",
                             expiresAt: nextTask.expiresAt,
-                            uiStatus: nextTask.uiStatus,
+                            status: nextTask.status,
                             disconnectReason: null
                           }
                         : current);
@@ -607,7 +600,7 @@ export function WaAccountsPane({
               <div style={{ width: 280, height: 280, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 12, border: "1px solid #f0f0f0", background: "#fafafa" }}>
                 <Spin indicator={<LoadingOutlined style={{ fontSize: 36 }} spin />} />
               </div>
-            ) : loginTask.uiStatus.code === "connected" ? (
+            ) : loginTask.status.code === "connected" ? (
               <div style={{ width: 280, height: 280, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 12, border: "1px solid #f0f0f0", background: "#f6ffed" }}>
                 <CheckCircleFilled style={{ fontSize: 48, color: "#52c41a" }} />
               </div>
@@ -616,8 +609,8 @@ export function WaAccountsPane({
                 <Typography.Text type="danger">请重新扫码</Typography.Text>
               </div>
             )}
-            <Typography.Text strong>{loginTask.uiStatus.label}</Typography.Text>
-            <Typography.Text type="secondary">{loginTask.uiStatus.detail}</Typography.Text>
+            <Typography.Text strong>{loginTask.status.label}</Typography.Text>
+            <Typography.Text type="secondary">{loginTask.status.detail}</Typography.Text>
             {shouldShowQr ? (
               <Tag color={refreshingLoginTask ? "processing" : qrCountdownMs <= 15000 ? "gold" : "default"}>
                 {refreshingLoginTask ? "二维码刷新中" : `将在 ${countdownLabel} 后刷新`}

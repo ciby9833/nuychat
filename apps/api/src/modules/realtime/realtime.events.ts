@@ -92,21 +92,14 @@ type TicketSlaBreachedEvent = RealtimeEventBase & {
 type WaAccountUpdatedEvent = RealtimeEventBase & {
   tenantId: string;
   waAccountId: string;
-  accountStatus: string;
+  status: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
   connectionState: string;
   loginPhase: string;
-  uiStatus: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
-  syncStatus: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
   sessionRef: string | null;
   heartbeatAt: string | null;
   qrCode: string | null;

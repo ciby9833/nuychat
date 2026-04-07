@@ -26,6 +26,7 @@ import { realtimeEventBus } from "../modules/realtime/realtime.events.js";
 import { RoutingPlanRepository } from "../modules/routing-engine/routing-plan.repository.js";
 import { RoutingPlanStepService } from "../modules/routing-engine/routing-plan-step.service.js";
 import { RoutingContextService } from "../modules/routing-engine/routing-context.service.js";
+import { RoutingNoticeService } from "../modules/routing-engine/routing-notice.service.js";
 import { UnifiedRoutingEngineService } from "../modules/routing-engine/unified-routing-engine.service.js";
 import { scheduleAssignmentAcceptTimeout } from "../modules/sla/conversation-sla.service.js";
 import {
@@ -41,6 +42,7 @@ const routingPlanRepository = new RoutingPlanRepository();
 const routingPlanStepService = new RoutingPlanStepService();
 const routingContextService = new RoutingContextService();
 const unifiedRoutingEngineService = new UnifiedRoutingEngineService();
+const routingNoticeService = new RoutingNoticeService();
 
 function fitAiTraceReason(value: string | null | undefined) {
   if (!value) return null;
@@ -591,6 +593,14 @@ async function releaseConversationToHumanQueue(input: {
   await emitConversationUpdatedSnapshot(db, input.tenantId, input.conversationId, {
     occurredAt: new Date().toISOString()
   });
+
+  await queueHumanRoutingNotice({
+    tenantId: input.tenantId,
+    conversationId: input.conversationId,
+    channelId: input.conversation.channel_id as string,
+    channelType: input.channelType,
+    handoffTarget: resolvedHandoffTarget
+  });
 }
 
 async function resolveReservedHumanTarget(
@@ -630,4 +640,39 @@ async function resolveReservedHumanTarget(
     queuePosition: null,
     estimatedWaitSec: null
   };
+}
+
+async function queueHumanRoutingNotice(input: {
+  tenantId: string;
+  conversationId: string;
+  channelId: string;
+  channelType: string;
+  handoffTarget: ReservedHumanTarget;
+}) {
+  const scenario = input.handoffTarget.assignedAgentId ? "human_assigned" : "human_queue";
+  const notice = await withTenantTransaction(input.tenantId, async (trx) =>
+    routingNoticeService.buildNotice(trx, {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      scenario,
+      aiAgentName: "AI"
+    })
+  );
+
+  if (!notice) return;
+
+  await outboundQueue.add(
+    "outbound.routing_notice",
+    {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      channelId: input.channelId,
+      channelType: input.channelType,
+      message: {
+        text: notice.text,
+        aiAgentName: notice.aiAgentName
+      }
+    },
+    { removeOnComplete: 100, removeOnFail: 50 }
+  );
 }

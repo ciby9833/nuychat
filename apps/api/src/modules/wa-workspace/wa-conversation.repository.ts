@@ -48,6 +48,7 @@ function deriveConversationDisplayName(row: Record<string, unknown>) {
 type ResolvedContactProfile = {
   displayName: string | null;
   phoneE164: string | null;
+  avatarUrl: string | null;
 };
 
 function buildContactKey(waAccountId: string, identifier: string) {
@@ -81,7 +82,7 @@ async function loadWaContactProfiles(
         else builder.whereIn("phone_e164", phones);
       }
     })
-    .select("wa_account_id", "contact_jid", "phone_e164", "display_name", "notify_name", "verified_name")
+    .select("wa_account_id", "contact_jid", "phone_e164", "display_name", "notify_name", "verified_name", "avatar_url")
     .orderBy("updated_at", "desc");
 
   const map = new Map<string, ResolvedContactProfile>();
@@ -95,16 +96,17 @@ async function loadWaContactProfiles(
     const phoneE164 = asString(row.phone_e164);
     const contactJid = asString(row.contact_jid);
 
+    const avatarUrl = asString(row.avatar_url);
     if (contactJid) {
       const key = buildContactKey(waAccountId, contactJid);
       if (!map.has(key)) {
-        map.set(key, { displayName, phoneE164 });
+        map.set(key, { displayName, phoneE164, avatarUrl });
       }
     }
     if (phoneE164) {
       const key = buildContactKey(waAccountId, phoneE164);
       if (!map.has(key)) {
-        map.set(key, { displayName, phoneE164 });
+        map.set(key, { displayName, phoneE164, avatarUrl });
       }
     }
   }
@@ -142,7 +144,8 @@ function mapConversation(row: Record<string, unknown>) {
     accountDisplayName: row.account_display_name ? String(row.account_display_name) : null,
     lastMessageAt: row.last_message_at ? new Date(String(row.last_message_at)).toISOString() : null,
     lastMessagePreview: row.last_message_preview ? String(row.last_message_preview) : null,
-    unreadCount: Number(row.unread_count ?? 0)
+    unreadCount: Number(row.unread_count ?? 0),
+    avatarUrl: row.avatar_url ? String(row.avatar_url) : null
   };
 }
 
@@ -394,7 +397,8 @@ export async function listWaConversations(
           asString(record.contact_phone_e164) ??
           profile?.phoneE164 ??
           (isDirect ? (phoneByConversation.get(String(row.wa_conversation_id)) ?? null) : null) ??
-          deriveConversationDisplayName(record)
+          deriveConversationDisplayName(record),
+        avatarUrl: asString(record.avatar_url) ?? profile?.avatarUrl ?? null
       };
     })(),
     lastMessagePreview: previewByConversation.get(String(row.wa_conversation_id)) ?? null
@@ -1430,6 +1434,7 @@ export async function upsertWaContact(
     displayName?: string | null;
     notifyName?: string | null;
     verifiedName?: string | null;
+    avatarUrl?: string | null;
   }
 ) {
   const aliasJids = Array.from(new Set([input.contactJid, ...(input.aliasJids ?? [])]
@@ -1439,6 +1444,10 @@ export async function upsertWaContact(
   if (input.displayName) updates.display_name = input.displayName;
   if (input.notifyName) updates.notify_name = input.notifyName;
   if (input.verifiedName) updates.verified_name = input.verifiedName;
+  if (input.avatarUrl !== undefined) {
+    updates.avatar_url = input.avatarUrl;
+    updates.avatar_fetched_at = trx.fn.now();
+  }
 
   const existingRows = await trx("wa_contacts")
     .where({
@@ -1479,6 +1488,8 @@ export async function upsertWaContact(
         display_name: input.displayName ?? null,
         notify_name: input.notifyName ?? null,
         verified_name: input.verifiedName ?? null,
+        avatar_url: input.avatarUrl ?? null,
+        avatar_fetched_at: input.avatarUrl ? trx.fn.now() : null,
         is_wa_contact: true
       })
       .returning("*");
@@ -1518,6 +1529,7 @@ export async function listWaContacts(
       : (row.notify_name ? String(row.notify_name) : null),
     notifyName: row.notify_name ? String(row.notify_name) : null,
     verifiedName: row.verified_name ? String(row.verified_name) : null,
+    avatarUrl: row.avatar_url ? String(row.avatar_url) : null,
     createdAt: new Date(String(row.created_at)).toISOString(),
     updatedAt: new Date(String(row.updated_at)).toISOString()
   }));

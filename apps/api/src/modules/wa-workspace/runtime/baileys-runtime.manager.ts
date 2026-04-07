@@ -25,11 +25,13 @@ import {
   ingestBaileysGroupParticipantsUpdate,
   ingestBaileysGroupsUpdate,
   ingestBaileysHistorySet,
-  patchWaSessionSyncMeta
+  patchWaSessionSyncMeta,
+  syncAllGroupsForAccount,
+  syncAvatarsForAccount
 } from "../wa-baileys-sync.service.js";
 import { ingestBaileysMessageReceipts } from "../wa-baileys-receipt.service.js";
 import { emitWaAccountUpdated } from "../wa-realtime.service.js";
-import { deriveWaAccountStatus, deriveWaSyncStatus, deriveWaUiStatus } from "../wa-session-status.js";
+import { deriveWaAccountStatus, deriveWaStatus } from "../wa-session-status.js";
 import { createBaileysAuthState, persistBaileysAuthSnapshot, resetBaileysAuthState } from "./baileys-auth.repository.js";
 import { getBaileysRuntimeConfig } from "./baileys-config.js";
 import { mapBaileysMessageToInbound } from "./baileys-message.mapper.js";
@@ -219,19 +221,9 @@ async function persistSessionState(
   });
 
   emitWaAccountUpdated({
-    ...(function buildStatuses() {
-      const uiStatus = deriveWaUiStatus({ accountStatus, session: sessionSnapshot });
-      return {
-        uiStatus,
-        syncStatus: deriveWaSyncStatus({
-          uiStatusCode: uiStatus.code,
-          session: sessionSnapshot
-        })
-      };
-    })(),
     tenantId,
     waAccountId,
-    accountStatus,
+    status: deriveWaStatus({ accountStatus, session: sessionSnapshot }),
     connectionState: input.connectionState,
     loginPhase: input.loginPhase,
     sessionRef: input.sessionRef,
@@ -337,7 +329,34 @@ async function buildSocket(input: {
       tenantId: input.tenantId,
       waAccountId: input.waAccountId,
       key
-    })
+    }),
+    // Feed Baileys our stored group metadata so it doesn't need to re-fetch from WhatsApp
+    // every time it processes a group message (e.g., for group notifications, mentions, etc.)
+    cachedGroupMetadata: async (jid: string) => {
+      try {
+        return await withTenantTransaction(input.tenantId, async (trx) => {
+          const conv = await trx("wa_conversations")
+            .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId, chat_jid: jid })
+            .select("wa_conversation_id", "subject")
+            .first<Record<string, unknown> | undefined>();
+          if (!conv) return undefined;
+          const members = await trx("wa_conversation_members")
+            .where({ tenant_id: input.tenantId, wa_conversation_id: conv.wa_conversation_id })
+            .whereNull("left_at")
+            .select("participant_jid", "is_admin");
+          return {
+            id: jid,
+            subject: conv.subject ? String(conv.subject) : jid,
+            participants: members.map((m) => ({
+              id: String(m.participant_jid),
+              admin: m.is_admin ? ("admin" as const) : null
+            }))
+          };
+        });
+      } catch {
+        return undefined;
+      }
+    }
   });
 
   const entry: RuntimeEntry = {
@@ -417,6 +436,25 @@ async function buildSocket(input: {
 
     if (entry.connectionState === "open" && (entry.loginPhase === "connected" || entry.loginPhase === "syncing")) {
       scheduleSyncFinalization(entry);
+    }
+
+    // When the account is fully connected and initial sync is done, proactively refresh
+    // all group metadata (names + members) and then fetch avatars in the background.
+    // We delay by 8s to let Baileys finish its own messaging-history.set / groups.update
+    // event flood first, so our proactive fetches fill in gaps rather than race with them.
+    if (update.receivedPendingNotifications === true) {
+      setTimeout(() => {
+        void syncAllGroupsForAccount(socket, input.tenantId, input.waAccountId).catch((error) => {
+          console.error("[wa-sync] proactive group sync failed", { tenantId: input.tenantId, waAccountId: input.waAccountId, error });
+        });
+      }, 8_000);
+
+      // Avatar sync runs after group sync finishes (offset by 60s to avoid racing)
+      setTimeout(() => {
+        void syncAvatarsForAccount(socket, input.tenantId, input.waAccountId).catch((error) => {
+          console.error("[wa-sync] avatar sync failed", { tenantId: input.tenantId, waAccountId: input.waAccountId, error });
+        });
+      }, 60_000);
     }
 
     if (update.isNewLogin) {

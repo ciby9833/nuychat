@@ -6,7 +6,7 @@
  * - ../components/WaWorkspace.tsx: 消费当前 hook 暴露的页面视图模型。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
 import type { Session } from "../../types";
@@ -24,6 +24,7 @@ import {
   sendWaReaction,
   sendWaTextMessage,
   takeoverWaConversation,
+  triggerWaAccountSync,
   uploadWaAttachment
 } from "../api";
 import type { WaAccountItem, WaContactItem, WaConversationDetail, WaConversationItem, WaMessageItem } from "../types";
@@ -65,6 +66,12 @@ export function useWaWorkspace(session: Session | null) {
   const [assignedToMeOnly, setAssignedToMeOnly] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  // Stable refs so socket callbacks can read the latest values without triggering re-subscription.
+  const selectedConversationIdRef = useRef<string | null>(null);
+  const loadDetailRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const accountIdRef = useRef<string | null>(null);
 
   const loadAccounts = useCallback(async () => {
     if (!session?.waSeatEnabled) return;
@@ -121,6 +128,16 @@ export function useWaWorkspace(session: Session | null) {
       setDetail(next);
       // Assume there may be more if exactly 100 messages are returned (the default limit).
       setHasMoreMessages(next.messages.length >= 100);
+      // Immediately zero out the unread badge in the conversation list so it doesn't
+      // wait for the server-side wa.conversation.updated socket event (which might
+      // arrive during a brief socket reconnect window and be missed).
+      setConversations((current) =>
+        current.map((item) =>
+          item.waConversationId === selectedConversationId
+            ? { ...item, unreadCount: 0 }
+            : item
+        )
+      );
     } catch (nextError) {
       setError((nextError as Error).message);
       setDetail(null);
@@ -146,6 +163,11 @@ export function useWaWorkspace(session: Session | null) {
     }
   }, [accountId, loadConversations, session]);
 
+  // Keep refs in sync so socket callbacks always see the latest values.
+  selectedConversationIdRef.current = selectedConversationId;
+  loadDetailRef.current = loadDetail;
+  accountIdRef.current = accountId;
+
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
@@ -168,58 +190,44 @@ export function useWaWorkspace(session: Session | null) {
     const socket = io(API_BASE_URL, {
       transports: ["polling", "websocket"],
       reconnection: true,
-      auth: {
-        token: session.accessToken
-      }
+      auth: { token: session.accessToken }
     });
 
     socket.on("wa.account.updated", (event: {
       waAccountId: string;
-      accountStatus: string;
+      status: { code: string; label: string; detail: string; tone: "default" | "warning" | "success" | "danger" | "processing" };
       connectionState: string;
-      uiStatus: {
-        code: string;
-        label: string;
-        detail: string;
-        tone: "default" | "warning" | "success" | "danger" | "processing";
-      };
-      syncStatus: {
-        code: string;
-        label: string;
-        detail: string;
-        tone: "default" | "warning" | "success" | "danger" | "processing";
-      };
     }) => {
-      setAccounts((current) => current.map((item) => (
+      setAccounts((current) => current.map((item) =>
         item.waAccountId === event.waAccountId
-          ? {
-              ...item,
-              accountStatus: event.accountStatus,
-              uiStatus: event.uiStatus,
-              syncStatus: event.syncStatus
-            }
+          ? { ...item, status: event.status, session: item.session ? { ...item.session, connectionState: event.connectionState } : item.session }
           : item
-      )));
+      ));
     });
 
-    socket.on("wa.conversation.updated", (event: {
-      waAccountId: string;
-      conversation: WaConversationItem;
-    }) => {
+    socket.on("wa.conversation.updated", (event: { waAccountId: string; conversation: WaConversationItem }) => {
+      const currentAccountId = accountIdRef.current;
       setConversations((current) => {
         const target = event.conversation;
-        const scoped = accountId && target.waAccountId !== accountId
+        // If a specific account is selected and this event is for a different account, hide it.
+        const scoped = currentAccountId && target.waAccountId !== currentAccountId
           ? current.filter((item) => item.waConversationId !== target.waConversationId)
           : (() => {
               const next = current.filter((item) => item.waConversationId !== target.waConversationId);
-              next.unshift(target);
+              // Preserve the local unreadCount=0 if we already read this conversation.
+              const currentSelected = selectedConversationIdRef.current;
+              const incomingConv = currentSelected === target.waConversationId
+                ? { ...target, unreadCount: 0 }  // don't let server re-badge a currently-open conversation
+                : target;
+              next.unshift(incomingConv);
               return next;
             })();
         return sortWaConversations(scoped);
       });
 
-      if (event.conversation.waConversationId === selectedConversationId) {
-        void loadDetail();
+      // Reload messages if this conversation is currently open (new message arrived).
+      if (event.conversation.waConversationId === selectedConversationIdRef.current) {
+        void loadDetailRef.current();
       }
     });
 
@@ -228,35 +236,26 @@ export function useWaWorkspace(session: Session | null) {
       waMessageId: string;
       providerMessageId: string | null;
       deliveryStatus: string;
-      receiptSummary: {
-        totalReceipts: number;
-        latestStatus: string | null;
-        latestAt: string | null;
-        statusCounts: Record<string, number>;
-      } | null;
+      receiptSummary: { totalReceipts: number; latestStatus: string | null; latestAt: string | null; statusCounts: Record<string, number> } | null;
     }) => {
-      if (event.waConversationId !== selectedConversationId) return;
+      if (event.waConversationId !== selectedConversationIdRef.current) return;
       setDetail((current) => {
         if (!current || current.conversation.waConversationId !== event.waConversationId) return current;
         return {
           ...current,
-          messages: current.messages.map((message) => (
+          messages: current.messages.map((message) =>
             message.waMessageId === event.waMessageId || message.providerMessageId === event.providerMessageId
-              ? {
-                  ...message,
-                  deliveryStatus: event.deliveryStatus,
-                  receiptSummary: event.receiptSummary ?? message.receiptSummary
-                }
+              ? { ...message, deliveryStatus: event.deliveryStatus, receiptSummary: event.receiptSummary ?? message.receiptSummary }
               : message
-          ))
+          )
         };
       });
     });
 
-    return () => {
-      socket.close();
-    };
-  }, [accountId, loadDetail, selectedConversationId, session]);
+    return () => { socket.close(); };
+    // Only reconnect when the session token changes — NOT on every conversation switch.
+    // Conversation ID and loadDetail are accessed via refs to avoid this dependency.
+  }, [session]);
 
   const selectedConversation = useMemo(
     () => conversations.find((item) => item.waConversationId === selectedConversationId) ?? null,
@@ -301,13 +300,15 @@ export function useWaWorkspace(session: Session | null) {
         });
       }
       setComposerText("");
-      setQuotedMessageId(null);
       setUploadingAttachments([]);
       await loadConversations();
       await loadDetail();
     } catch (nextError) {
       setError((nextError as Error).message);
     } finally {
+      // Always clear the quoted message — either it was sent successfully, or the
+      // send failed (user should re-select the quote if they want to retry).
+      setQuotedMessageId(null);
       setActionLoading(null);
     }
   }, [composerText, loadConversations, loadDetail, quotedMessageId, selectedConversationId, session, uploadingAttachments]);
@@ -360,6 +361,8 @@ export function useWaWorkspace(session: Session | null) {
 
   // Wraps setSelectedConversationId so we can capture the conversation's
   // current unread count before detail loading resets it on the server.
+  // Also resets composer state so drafts / quotes from a previous conversation
+  // don't leak into the newly selected conversation.
   const selectConversation = useCallback((id: string | null) => {
     if (id) {
       const conv = conversations.find((item) => item.waConversationId === id);
@@ -368,6 +371,11 @@ export function useWaWorkspace(session: Session | null) {
       setUnreadCountBeforeOpen(0);
     }
     setSelectedConversationId(id);
+    // Clear composer state on conversation switch so stale quote bars /
+    // attachments from the previous conversation don't appear.
+    setQuotedMessageId(null);
+    setComposerText("");
+    setUploadingAttachments([]);
   }, [conversations]);
 
   const loadMoreMessages = useCallback(async () => {
@@ -391,6 +399,18 @@ export function useWaWorkspace(session: Session | null) {
       setLoadingMoreMessages(false);
     }
   }, [detail, loadingMoreMessages, selectedConversationId, session]);
+
+  const triggerSync = useCallback(async () => {
+    if (!session || !accountId || syncing) return;
+    setSyncing(true);
+    try {
+      await triggerWaAccountSync(session, accountId);
+      // Reload conversations after a short delay to pick up synced data
+      setTimeout(() => { void loadConversations(); }, 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }, [accountId, loadConversations, session, syncing]);
 
   const reactToMessage = useCallback(async (message: WaMessageItem, emoji: string) => {
     if (!session || !detail) return;
@@ -443,6 +463,8 @@ export function useWaWorkspace(session: Session | null) {
     loadingMoreMessages,
     loadMoreMessages,
     reactToMessage,
+    syncing,
+    triggerSync,
     forceAssignWaConversation: async (memberId: string) => {
       if (!session || !selectedConversationId) return;
       setActionLoading("force-assign");

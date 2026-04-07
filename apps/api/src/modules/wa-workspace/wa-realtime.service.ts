@@ -11,21 +11,14 @@ import { realtimeEventBus } from "../realtime/realtime.events.js";
 export function emitWaAccountUpdated(input: {
   tenantId: string;
   waAccountId: string;
-  accountStatus: string;
+  status: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "default" | "warning" | "success" | "danger" | "processing";
+  };
   connectionState: string;
   loginPhase: string;
-  uiStatus: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
-  syncStatus: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
   sessionRef?: string | null;
   heartbeatAt?: string | null;
   qrCode?: string | null;
@@ -39,11 +32,9 @@ export function emitWaAccountUpdated(input: {
   realtimeEventBus.emitEvent("wa.account.updated", {
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
-    accountStatus: input.accountStatus,
+    status: input.status,
     connectionState: input.connectionState,
     loginPhase: input.loginPhase,
-    uiStatus: input.uiStatus,
-    syncStatus: input.syncStatus,
     sessionRef: input.sessionRef ?? null,
     heartbeatAt: input.heartbeatAt ?? null,
     qrCode: input.qrCode ?? null,

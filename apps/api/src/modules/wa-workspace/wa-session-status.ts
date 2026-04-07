@@ -1,13 +1,13 @@
 /**
  * 作用:
- * - 统一 WA 账号 session 的展示态与可执行动作规则。
+ * - 统一 WA 账号 session 的主状态与可执行动作规则。
  *
  * 交互:
  * - 被账号列表、健康接口、登录任务返回复用。
- * - 前端仅消费这里产出的 uiStatus/actions，不再自行猜测登录状态。
+ * - 前端仅消费这里产出的 status/actions，不再自行猜测登录状态。
  */
 
-export type WaUiStatusCode =
+export type WaStatusCode =
   | "never_logged_in"
   | "qr_required"
   | "qr_scanned"
@@ -17,31 +17,8 @@ export type WaUiStatusCode =
   | "failed"
   | "offline";
 
-export type WaUiStatus = {
-  code: WaUiStatusCode;
-  label: string;
-  detail: string;
-  tone: "default" | "warning" | "success" | "danger" | "processing";
-};
-
-export type WaStatusCode = WaUiStatusCode;
-
 export type WaStatus = {
   code: WaStatusCode;
-  label: string;
-  detail: string;
-  tone: "default" | "warning" | "success" | "danger" | "processing";
-};
-
-export type WaSyncStatusCode =
-  | "none"
-  | "syncing_history"
-  | "syncing_chats"
-  | "syncing_groups"
-  | "ready";
-
-export type WaSyncStatus = {
-  code: WaSyncStatusCode;
   label: string;
   detail: string;
   tone: "default" | "warning" | "success" | "danger" | "processing";
@@ -95,10 +72,10 @@ export function deriveWaAccountStatus(input: {
   return "offline";
 }
 
-export function deriveWaUiStatus(input: {
+export function deriveWaStatus(input: {
   accountStatus: string;
   session: WaSessionSnapshot | null;
-}): WaUiStatus {
+}): WaStatus {
   const session = normalizeWaSessionSnapshot(input.session);
   if (!session) {
     return {
@@ -181,51 +158,25 @@ export function deriveWaUiStatus(input: {
   }
 }
 
-export function deriveWaSyncStatus(input: {
-  uiStatusCode: WaUiStatusCode;
-  session: WaSessionSnapshot | null;
-}): WaSyncStatus {
-  if (input.uiStatusCode !== "connected") {
-    return {
-      code: "none",
-      label: "未同步",
-      detail: "当前账号未进入后台同步阶段。",
-      tone: "default"
-    };
-  }
-
-  return {
-    code: "ready",
-    label: "同步完成",
-    detail: "消息、会话与群组数据已完成初始化同步。",
-    tone: "success"
-  };
-}
-
-export function deriveWaStatus(input: {
+export function deriveWaUiStatus(input: {
   accountStatus: string;
   session: WaSessionSnapshot | null;
 }): WaStatus {
-  return deriveWaUiStatus(input);
+  return deriveWaStatus(input);
 }
 
 export function deriveWaActions(input: {
+  status: WaStatus;
+  hasSession: boolean;
   lastConnectedAt: string | null;
   session: WaSessionSnapshot | null;
 }) {
   const session = normalizeWaSessionSnapshot(input.session);
-  const status = deriveWaStatus({
-    accountStatus: deriveWaAccountStatus({
-      storedAccountStatus: null,
-      session
-    }),
-    session
-  });
-  const loginInProgress = ["qr_required", "qr_scanned", "connecting"].includes(status.code);
-  const connected = status.code === "connected";
-  const sessionExpired = session?.disconnectReason === "401";
+  const loginInProgress = ["qr_required", "qr_scanned", "connecting"].includes(input.status.code);
+  const connected = input.status.code === "connected";
+  const sessionExpired = input.status.code === "session_expired";
   const canReconnect = Boolean(input.lastConnectedAt) && !loginInProgress && !sessionExpired;
-  const canLogout = Boolean(session) && !loginInProgress;
+  const canLogout = input.hasSession && !loginInProgress;
   const canStartLogin = !connected && !loginInProgress;
 
   return {
@@ -233,7 +184,7 @@ export function deriveWaActions(input: {
     canManageMembers: true,
     canViewHealth: true,
     canLogout,
-    logoutReason: !session
+    logoutReason: !input.hasSession
       ? "当前账号还没有登录会话"
       : loginInProgress
         ? "当前账号正在登录中"

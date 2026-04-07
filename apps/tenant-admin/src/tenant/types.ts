@@ -486,7 +486,6 @@ export type WaAccountListItem = {
   displayName: string;
   phoneE164: string | null;
   providerKey: string;
-  accountStatus: string;
   riskLevel: string;
   primaryOwnerMembershipId: string | null;
   primaryOwnerName: string | null;
@@ -508,18 +507,6 @@ export type WaAccountListItem = {
     loginPhase: string | null;
     qrCodeAvailable: boolean;
   } | null;
-  uiStatus: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
-  syncStatus: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
   actions: {
     canStartLogin: boolean;
     startLoginReason?: string | null;
@@ -534,23 +521,10 @@ export type WaAccountListItem = {
 
 export type WaAccountHealth = {
   waAccountId: string;
-  accountStatus: string;
   providerKey: string;
   lastConnectedAt: string | null;
   lastDisconnectedAt: string | null;
   status: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
-  uiStatus: {
-    code: string;
-    label: string;
-    detail: string;
-    tone: "default" | "warning" | "success" | "danger" | "processing";
-  };
-  syncStatus: {
     code: string;
     label: string;
     detail: string;

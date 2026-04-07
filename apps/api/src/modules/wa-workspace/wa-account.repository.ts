@@ -7,7 +7,7 @@
  * - 仅处理持久化，不做权限与业务编排。
  */
 import type { Knex } from "knex";
-import { deriveWaAccountStatus, deriveWaActions, deriveWaStatus, deriveWaSyncStatus, deriveWaUiStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
+import { deriveWaAccountStatus, deriveWaActions, deriveWaStatus, normalizeWaSessionSnapshot } from "./wa-session-status.js";
 
 function parseSessionMeta(value: unknown): Record<string, unknown> | null {
   try {
@@ -44,16 +44,8 @@ function mapAccount(row: Record<string, unknown>) {
     storedAccountStatus: String(row.account_status ?? "offline"),
     session: normalizedSession
   });
-  const uiStatus = deriveWaUiStatus({
-    accountStatus,
-    session: normalizedSession
-  });
   const status = deriveWaStatus({
     accountStatus,
-    session: normalizedSession
-  });
-  const syncStatus = deriveWaSyncStatus({
-    uiStatusCode: uiStatus.code,
     session: normalizedSession
   });
   const lastConnectedAt = row.last_connected_at ? new Date(String(row.last_connected_at)).toISOString() : null;
@@ -73,9 +65,12 @@ function mapAccount(row: Record<string, unknown>) {
     lastDisconnectedAt: row.last_disconnected_at ? new Date(String(row.last_disconnected_at)).toISOString() : null,
     session: normalizedSession,
     status,
-    uiStatus,
-    syncStatus,
-    actions: deriveWaActions({ lastConnectedAt, session: normalizedSession })
+    actions: deriveWaActions({
+      status,
+      hasSession: Boolean(normalizedSession),
+      lastConnectedAt,
+      session: normalizedSession
+    })
   };
 }
 
@@ -184,8 +179,8 @@ export async function listWaAccounts(trx: Knex.Transaction, tenantId: string) {
 }
 
 export async function getWaAccountById(trx: Knex.Transaction, tenantId: string, waAccountId: string) {
-  const row = await trx("wa_accounts").where({ tenant_id: tenantId, wa_account_id: waAccountId }).first();
-  return row ? mapAccount(row as Record<string, unknown>) : null;
+  const rows = await loadWaAccounts(trx, { tenantId, accountIds: [waAccountId] });
+  return rows[0] ?? null;
 }
 
 export async function upsertWaAccountSession(

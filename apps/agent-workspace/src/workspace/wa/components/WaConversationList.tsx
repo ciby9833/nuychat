@@ -2,6 +2,7 @@
  * 功能名称: WA 会话列表
  * 菜单路径: 工作台 / WA工作台 / 左侧会话栏
  * 文件职责: 展示账号切换、搜索、接管筛选与 WA 会话列表，布局对齐 WhatsApp Web 左侧导航栏。
+ *          列表按 Chats / 群聊 / 频道 三个 tab 分类，默认展示 Chats。
  * 交互页面:
  * - ./WaWorkspace.tsx: 组合三栏 WA 工作台布局。
  */
@@ -9,6 +10,8 @@
 import { useMemo, useState } from "react";
 
 import type { WaAccountItem, WaContactItem, WaConversationItem } from "../types";
+
+type ConversationTab = "chats" | "groups" | "channels";
 
 type WaConversationListProps = {
   accounts: WaAccountItem[];
@@ -22,7 +25,22 @@ type WaConversationListProps = {
   loading: boolean;
   onSelectConversation: (waConversationId: string) => void;
   onOpenContact: (contactId: string) => void;
+  onSync?: () => void;
+  syncing?: boolean;
 };
+
+/** Derives which tab a conversation belongs to from its chatJid suffix. */
+function getConversationTab(conversation: WaConversationItem): ConversationTab {
+  if (conversation.chatJid.endsWith("@newsletter")) return "channels";
+  if (conversation.chatJid.endsWith("@g.us") || conversation.conversationType === "group") return "groups";
+  return "chats";
+}
+
+const TAB_CONFIG: { id: ConversationTab; label: string; icon: string }[] = [
+  { id: "chats", label: "Chats", icon: "💬" },
+  { id: "groups", label: "群聊", icon: "👥" },
+  { id: "channels", label: "频道", icon: "📢" }
+];
 
 export function WaConversationList(props: WaConversationListProps) {
   const {
@@ -36,14 +54,43 @@ export function WaConversationList(props: WaConversationListProps) {
     selectedConversationId,
     loading,
     onSelectConversation,
-    onOpenContact
+    onOpenContact,
+    onSync,
+    syncing = false
   } = props;
+
   const [keyword, setKeyword] = useState("");
+  const [activeTab, setActiveTab] = useState<ConversationTab>("chats");
+
+  // Count per tab (before keyword filter) for badge display
+  const tabCounts = useMemo<Record<ConversationTab, number>>(() => {
+    const counts: Record<ConversationTab, number> = { chats: 0, groups: 0, channels: 0 };
+    for (const conv of conversations) {
+      counts[getConversationTab(conv)]++;
+    }
+    return counts;
+  }, [conversations]);
+
+  // Unread count per tab for notification dot
+  const tabUnread = useMemo<Record<ConversationTab, number>>(() => {
+    const counts: Record<ConversationTab, number> = { chats: 0, groups: 0, channels: 0 };
+    for (const conv of conversations) {
+      if (conv.unreadCount > 0) {
+        counts[getConversationTab(conv)] += conv.unreadCount;
+      }
+    }
+    return counts;
+  }, [conversations]);
+
+  const tabConversations = useMemo(
+    () => conversations.filter((conv) => getConversationTab(conv) === activeTab),
+    [conversations, activeTab]
+  );
 
   const visibleConversations = useMemo(() => {
     const normalized = keyword.trim().toLowerCase();
-    if (!normalized) return conversations;
-    return conversations.filter((conversation) => {
+    if (!normalized) return tabConversations;
+    return tabConversations.filter((conversation) => {
       const haystack = [
         conversation.displayName,
         conversation.subject,
@@ -58,11 +105,13 @@ export function WaConversationList(props: WaConversationListProps) {
         .toLowerCase();
       return haystack.includes(normalized);
     });
-  }, [conversations, keyword]);
+  }, [tabConversations, keyword]);
 
   const selectedAccount = accounts.find((item) => item.waAccountId === accountId) ?? null;
+
+  // Contacts without an existing conversation — only shown in the Chats tab
   const contactsWithoutConversation = useMemo(() => {
-    if (!accountId) return [];
+    if (activeTab !== "chats" || !accountId) return [];
     const covered = new Set(
       conversations.flatMap((conversation) => [
         conversation.contactJid,
@@ -80,7 +129,7 @@ export function WaConversationList(props: WaConversationListProps) {
       }
       return !covered.has(contact.contactJid) && !covered.has(contact.phoneE164 ?? "");
     });
-  }, [accountId, contacts, conversations, keyword]);
+  }, [activeTab, accountId, contacts, conversations, keyword]);
 
   const formatListTime = (value: string | null) => {
     if (!value) return "";
@@ -94,6 +143,7 @@ export function WaConversationList(props: WaConversationListProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#111b21] text-[#e9edef]">
+      {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="border-b border-[#222d34] bg-[#202c33] px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -107,12 +157,26 @@ export function WaConversationList(props: WaConversationListProps) {
               </div>
             </div>
           </div>
-          <div className="rounded-full bg-[#111b21] px-3 py-1 text-[11px] font-medium text-[#d1d7db]">
-            {visibleConversations.length}
+          <div className="flex items-center gap-2">
+            <div className="rounded-full bg-[#111b21] px-3 py-1 text-[11px] font-medium text-[#d1d7db]">
+              {tabCounts[activeTab]}
+            </div>
+            {onSync && (
+              <button
+                type="button"
+                title="同步群组与通讯录"
+                onClick={onSync}
+                disabled={syncing}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-[#8696a0] transition-colors hover:bg-[#182229] hover:text-[#d1d7db] disabled:opacity-40"
+              >
+                <span className={syncing ? "animate-spin inline-block" : ""}>{syncing ? "⟳" : "🔄"}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
 
+      {/* ── Search + filters ────────────────────────────────────────────────── */}
       <div className="border-b border-[#222d34] bg-[#111b21] px-3 py-3">
         <div className="rounded-[10px] bg-[#202c33] px-3 py-2">
           <input
@@ -135,27 +199,71 @@ export function WaConversationList(props: WaConversationListProps) {
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-2 text-xs text-[#aebac1]">
-            <input
-              type="checkbox"
-              checked={assignedToMeOnly}
-              onChange={(event) => onAssignedToMeOnlyChange(event.target.checked)}
-            />
-            只看我当前接管
-          </label>
+          {activeTab !== "channels" && (
+            <label className="flex items-center gap-2 text-xs text-[#aebac1]">
+              <input
+                type="checkbox"
+                checked={assignedToMeOnly}
+                onChange={(event) => onAssignedToMeOnlyChange(event.target.checked)}
+              />
+              只看我当前接管
+            </label>
+          )}
         </div>
       </div>
 
+      {/* ── Tabs ────────────────────────────────────────────────────────────── */}
+      <div className="flex border-b border-[#222d34] bg-[#111b21]">
+        {TAB_CONFIG.map((tab) => {
+          const isActive = activeTab === tab.id;
+          const hasUnread = tabUnread[tab.id] > 0 && !isActive;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`relative flex flex-1 items-center justify-center gap-1.5 py-2.5 text-[13px] font-medium transition-colors ${
+                isActive
+                  ? "border-b-2 border-[#00a884] text-[#00a884]"
+                  : "text-[#8696a0] hover:text-[#d1d7db]"
+              }`}
+            >
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
+              {hasUnread && (
+                <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-[#25d366] px-1 py-0.5 text-[10px] font-semibold leading-none text-[#111b21]">
+                  {tabUnread[tab.id] > 99 ? "99+" : tabUnread[tab.id]}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Conversation list ────────────────────────────────────────────────── */}
       <div className="min-h-0 flex-1 overflow-auto bg-[#111b21]">
         {loading ? <div className="px-4 py-3 text-sm text-[#8696a0]">加载中...</div> : null}
         <div>
           {visibleConversations.map((conversation) => {
             const active = conversation.waConversationId === selectedConversationId;
             const title = conversation.displayName || conversation.subject || conversation.contactJid || conversation.chatJid;
-            const secondary = conversation.conversationType === "group"
+            const isGroup = conversation.chatJid.endsWith("@g.us") || conversation.conversationType === "group";
+            const isChannel = conversation.chatJid.endsWith("@newsletter");
+            const secondary = isGroup
               ? conversation.chatJid
-              : (conversation.contactPhoneE164 || conversation.contactJid || conversation.chatJid);
+              : isChannel
+                ? (conversation.chatJid)
+                : (conversation.contactPhoneE164 || conversation.contactJid || conversation.chatJid);
             const subtitle = conversation.lastMessagePreview || secondary || "暂无消息";
+
+            // Avatar letter / icon
+            const avatarLetter = isChannel ? "📢" : isGroup ? "👥" : (title || "?").slice(0, 1).toUpperCase();
+            const avatarBg = isChannel
+              ? "bg-[#1b3a5c] text-[#53bdeb]"
+              : isGroup
+                ? "bg-[#2a3942] text-[#aebac1]"
+                : "bg-[#d9fdd3] text-[#005c4b]";
+
             return (
               <button
                 key={conversation.waConversationId}
@@ -168,9 +276,18 @@ export function WaConversationList(props: WaConversationListProps) {
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-semibold text-[#005c4b]">
-                    {conversation.conversationType === "group" ? "+" : (title || "?").slice(0, 1).toUpperCase()}
-                  </div>
+                  {conversation.avatarUrl ? (
+                    <img
+                      src={conversation.avatarUrl}
+                      alt={title || "头像"}
+                      className="h-12 w-12 shrink-0 rounded-full object-cover"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                  ) : (
+                    <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-base font-semibold ${avatarBg}`}>
+                      {avatarLetter}
+                    </div>
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
@@ -186,16 +303,18 @@ export function WaConversationList(props: WaConversationListProps) {
                         ) : null}
                       </div>
                     </div>
-                    <div className="mt-1 flex items-center gap-2">
-                      <div className="truncate text-[14px] text-[#aebac1]">{subtitle}</div>
-                      <span className="shrink-0 text-[11px] uppercase tracking-[0.08em] text-[#8696a0]">
-                        {conversation.conversationType === "group" ? "GROUP" : "DIRECT"}
-                      </span>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-[#8696a0]">
-                      <span>{conversation.currentReplierName || "未接管"}</span>
-                      <span>{conversation.accountDisplayName || "WA"}</span>
-                    </div>
+                    <div className="mt-1 truncate text-[14px] text-[#aebac1]">{subtitle}</div>
+                    {!isChannel && (
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-[#8696a0]">
+                        <span>{conversation.currentReplierName || "未接管"}</span>
+                        <span>{conversation.accountDisplayName || "WA"}</span>
+                      </div>
+                    )}
+                    {isChannel && (
+                      <div className="mt-2 text-[12px] text-[#8696a0]">
+                        <span>{conversation.accountDisplayName || "WA"}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </button>
@@ -203,9 +322,11 @@ export function WaConversationList(props: WaConversationListProps) {
           })}
           {!loading && visibleConversations.length === 0 ? (
             <div className="px-6 py-14 text-center text-sm text-[#8696a0]">
-              没有匹配的会话
+              {keyword ? "没有匹配的会话" : activeTab === "channels" ? "暂无频道消息" : activeTab === "groups" ? "暂无群聊" : "暂无会话"}
             </div>
           ) : null}
+
+          {/* Contacts without conversation — Chats tab only */}
           {contactsWithoutConversation.length > 0 ? (
             <div className="border-t border-[#202c33] px-3 py-3">
               <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[#8696a0]">

@@ -9,7 +9,7 @@
 import type { Knex } from "knex";
 
 import { waProviderAdapter } from "./provider/provider-registry.js";
-import { deriveWaActions, deriveWaSyncStatus, deriveWaUiStatus } from "./wa-session-status.js";
+import { deriveWaActions, deriveWaStatus } from "./wa-session-status.js";
 import { assertCanReplyToWaConversation, releaseWaConversation, takeOverWaConversation } from "./wa-assignment.service.js";
 import { createWaLoginTask, listAccessibleWaAccounts, upsertWaAccountSession } from "./wa-account.repository.js";
 import {
@@ -130,17 +130,15 @@ export async function createWorkbenchLoginTask(
         groupsSyncedAt: null,
         hasGroupChats: null
       };
-      const uiStatus = deriveWaUiStatus({
+      const status = deriveWaStatus({
         accountStatus: String(account.accountStatus),
         session
       });
       return {
-        uiStatus,
-        syncStatus: deriveWaSyncStatus({
-          uiStatusCode: uiStatus.code,
-          session
-        }),
+        status,
         actions: deriveWaActions({
+          status,
+          hasSession: true,
           lastConnectedAt: account.lastConnectedAt,
           session
         })

@@ -844,7 +844,7 @@ export function createWaAccountLoginTask(waAccountId: string) {
     qrCode: string | null;
     loginPhase: string;
     connectionState: string;
-    uiStatus: {
+    status: {
       code: string;
       label: string;
       detail: string;
