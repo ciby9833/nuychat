@@ -61,6 +61,11 @@ import type {
   ,
   WaAccountHealth,
   WaAccountListItem,
+  WaDailyMonitorReport,
+  WaMonitorConversationDetail,
+  WaMonitorConversationItem,
+  WaMonitorDashboard,
+  WaReplyPoolItem,
   WaRuntimeStatus
 } from "./types";
 
@@ -824,6 +829,46 @@ export function removeAgent(agentId: string) {
 
 export function listWaAccounts() {
   return api<WaAccountListItem[]>("/api/admin/wa/accounts");
+}
+
+export function getWaMonitorDashboard() {
+  return api<WaMonitorDashboard>("/api/admin/wa/monitor/dashboard");
+}
+
+export function listWaMonitorConversations(
+  waAccountId: string,
+  input?: { search?: string; type?: "group" | "direct" | null; limit?: number }
+) {
+  const params = new URLSearchParams();
+  if (input?.search?.trim()) params.set("search", input.search.trim());
+  if (input?.type) params.set("type", input.type);
+  if (input?.limit) params.set("limit", String(input.limit));
+  const query = params.toString();
+  return api<WaMonitorConversationItem[]>(`/api/admin/wa/monitor/accounts/${waAccountId}/conversations${query ? `?${query}` : ""}`);
+}
+
+export function getWaMonitorConversationDetail(waConversationId: string) {
+  return api<WaMonitorConversationDetail>(`/api/admin/wa/monitor/conversations/${waConversationId}`);
+}
+
+export function loadMoreWaMonitorMessages(
+  waConversationId: string,
+  input: { beforeSeq: number; limit?: number }
+) {
+  const params = new URLSearchParams();
+  params.set("beforeSeq", String(input.beforeSeq));
+  if (input.limit) params.set("limit", String(input.limit));
+  return api<{ messages: WaMonitorConversationDetail["messages"]; hasMore: boolean }>(
+    `/api/admin/wa/monitor/conversations/${waConversationId}/messages?${params.toString()}`
+  );
+}
+
+export function getWaDailyMonitorReport(date: string) {
+  return api<WaDailyMonitorReport>(`/api/admin/wa/monitor/report/daily?date=${encodeURIComponent(date)}`);
+}
+
+export function listWaReplyPool() {
+  return api<WaReplyPoolItem[]>("/api/admin/wa/monitor/reply-pool");
 }
 
 export function createWaAccount(input: {

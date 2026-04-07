@@ -18,6 +18,7 @@ import {
   message
 } from "antd";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { io } from "socket.io-client";
 
 import {
@@ -84,6 +85,7 @@ export function WaAccountsPane({
   loading: boolean;
   onReload: () => void;
 }) {
+  const { t } = useTranslation();
   const [showCreate, setShowCreate] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<WaAccountListItem | null>(null);
   const [showAccess, setShowAccess] = useState<WaAccountListItem | null>(null);
@@ -235,7 +237,7 @@ export function WaAccountsPane({
       });
 
       if (connectedAccountName) {
-        void message.success(`WA账号 ${connectedAccountName} 已连接成功`);
+        void message.success(t("waMonitor.pane.loginModal.connectedSuccess", { name: connectedAccountName }));
         onReloadRef.current();
       }
     });
@@ -310,7 +312,7 @@ export function WaAccountsPane({
         const isConnected = next.status.code === "connected";
         if (isConnected) {
           setLoginTask((current) => current?.waAccountId === next.waAccountId ? null : current);
-          void message.success(`WA账号 ${loginTask.accountName} 已连接成功`);
+          void message.success(t("waMonitor.pane.loginModal.connectedSuccess", { name: loginTask.accountName }));
           onReloadRef.current();
           return;
         }
@@ -367,20 +369,20 @@ export function WaAccountsPane({
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <Space size="large">
-          <Typography.Text strong>独立 WA 账号池</Typography.Text>
-          <Typography.Text type="secondary">账号数 {waAccounts.length}</Typography.Text>
+          <Typography.Text strong>{t("waMonitor.pane.title")}</Typography.Text>
+          <Typography.Text type="secondary">{t("waMonitor.pane.accountCount", { count: waAccounts.length })}</Typography.Text>
           <Typography.Text type="secondary">
-            在线 {waAccounts.filter((item) => item.status.code === "connected").length}
+            {t("waMonitor.pane.onlineCount", { count: waAccounts.filter((item) => item.status.code === "connected").length })}
           </Typography.Text>
         </Space>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={onReload} loading={loading}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowCreate(true)}>新增WA账号</Button>
+          <Button icon={<ReloadOutlined />} onClick={onReload} loading={loading}>{t("waMonitor.pane.refresh")}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowCreate(true)}>{t("waMonitor.pane.create")}</Button>
         </Space>
       </div>
 
       <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-        WA 账号管理仍放在当前坐席与成员管理区域内，成员 WA Seat 开关也在本页协同维护。
+        {t("waMonitor.pane.description")}
       </Typography.Paragraph>
 
       <div style={{ background: "#fff", border: "1px solid #f0f0f0", borderRadius: 8, overflow: "hidden" }}>
@@ -391,7 +393,7 @@ export function WaAccountsPane({
           pagination={waAccounts.length > 10 ? { pageSize: 10, size: "small" } : false}
           columns={[
             {
-              title: "账号",
+              title: t("waMonitor.pane.table.account"),
               render: (_, row) => (
                 <Space>
                   <MessageOutlined style={{ color: "#25d366" }} />
@@ -406,33 +408,33 @@ export function WaAccountsPane({
               )
             },
             {
-              title: "状态",
+              title: t("waMonitor.pane.table.status"),
               width: 120,
               render: (_, row) => {
                 return <Tag color={mapToneToTagColor(row.status.tone)}>{row.status.label}</Tag>;
               }
             },
             {
-              title: "负责人",
+              title: t("waMonitor.pane.table.owner"),
               width: 160,
               render: (_, row) => row.primaryOwnerName
                 ? <Typography.Text>{row.primaryOwnerName}</Typography.Text>
-                : <Typography.Text type="secondary">未设置</Typography.Text>
+                : <Typography.Text type="secondary">{t("waMonitor.pane.table.unset")}</Typography.Text>
             },
             {
-              title: "协同成员",
+              title: t("waMonitor.pane.table.members"),
               width: 120,
               render: (_, row) => <Tag>{row.memberCount}</Tag>
             },
             {
-              title: "最近连接",
+              title: t("waMonitor.pane.table.lastConnected"),
               width: 180,
               render: (_, row) => row.lastConnectedAt
                 ? new Date(row.lastConnectedAt).toLocaleString()
-                : <Typography.Text type="secondary">暂无</Typography.Text>
+                : <Typography.Text type="secondary">{t("waMonitor.pane.table.empty")}</Typography.Text>
             },
             {
-              title: "操作",
+              title: t("waMonitor.pane.table.actions"),
               width: 360,
               render: (_, row) => {
                 return (
@@ -451,10 +453,10 @@ export function WaAccountsPane({
                       }
                     })();
                   }}>
-                    扫码登录
+                    {t("waMonitor.pane.actions.startLogin")}
                   </Button>
-                  <Button size="small" disabled={!row.actions.canManageMembers} onClick={() => openAccess(row)}>成员分配</Button>
-                  <Button size="small" disabled={!row.actions.canViewHealth} onClick={() => { void loadHealth(row); }}>健康状态</Button>
+                  <Button size="small" disabled={!row.actions.canManageMembers} onClick={() => openAccess(row)}>{t("waMonitor.pane.actions.manageMembers")}</Button>
+                  <Button size="small" disabled={!row.actions.canViewHealth} onClick={() => { void loadHealth(row); }}>{t("waMonitor.pane.actions.viewHealth")}</Button>
                   <Button
                     size="small"
                     disabled={!row.actions.canLogout}
@@ -465,7 +467,7 @@ export function WaAccountsPane({
                         await logoutWaAccount(row.waAccountId);
                         setHealth((current) => current?.waAccountId === row.waAccountId ? null : current);
                         setLoginTask((current) => current?.waAccountId === row.waAccountId ? null : current);
-                        void message.success("已退出 WA 会话");
+                        void message.success(t("waMonitor.pane.loginModal.loggedOutSuccess"));
                         onReload();
                       } catch (err) {
                         void message.error((err as Error).message);
@@ -473,7 +475,7 @@ export function WaAccountsPane({
                     })();
                   }}
                   >
-                    退出WA
+                    {t("waMonitor.pane.actions.logout")}
                   </Button>
                   <Button
                     size="small"
@@ -483,7 +485,7 @@ export function WaAccountsPane({
                     void (async () => {
                       try {
                         await reconnectWaAccount(row.waAccountId);
-                        void message.success("已触发重连");
+                        void message.success(t("waMonitor.pane.reconnectSuccess"));
                         onReload();
                       } catch (err) {
                         void message.error((err as Error).message);
@@ -491,7 +493,7 @@ export function WaAccountsPane({
                     })();
                   }}
                   >
-                    重连
+                    {t("waMonitor.pane.actions.reconnect")}
                   </Button>
                 </Space>
               );
@@ -502,7 +504,7 @@ export function WaAccountsPane({
       </div>
 
       <Modal
-        title="新增WA账号"
+        title={t("waMonitor.pane.createModal.title")}
         open={showCreate}
         onCancel={() => setShowCreate(false)}
         onOk={() => {
@@ -515,7 +517,7 @@ export function WaAccountsPane({
                 phoneE164: values.phoneE164?.trim() || null,
                 primaryOwnerMembershipId: values.primaryOwnerMembershipId || null
               });
-              void message.success("WA账号已创建");
+              void message.success(t("waMonitor.pane.createModal.success"));
               setShowCreate(false);
               createForm.resetFields();
               onReload();
@@ -530,20 +532,20 @@ export function WaAccountsPane({
         destroyOnHidden
       >
         <Form form={createForm} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="displayName" label="账号名称" rules={[{ required: true, message: "请输入账号名称" }]}>
-            <Input placeholder="销售一组主号" />
+          <Form.Item name="displayName" label={t("waMonitor.pane.createModal.name")} rules={[{ required: true, message: t("waMonitor.pane.createModal.nameRequired") }]}>
+            <Input placeholder={t("waMonitor.pane.createModal.namePlaceholder")} />
           </Form.Item>
-          <Form.Item name="phoneE164" label="手机号">
-            <Input placeholder="+6281234567890" />
+          <Form.Item name="phoneE164" label={t("waMonitor.pane.createModal.phone")}>
+            <Input placeholder={t("waMonitor.pane.createModal.phonePlaceholder")} />
           </Form.Item>
-          <Form.Item name="primaryOwnerMembershipId" label="负责人">
-            <Select allowClear showSearch options={memberOptions} placeholder="可选" />
+          <Form.Item name="primaryOwnerMembershipId" label={t("waMonitor.pane.createModal.owner")}>
+            <Select allowClear showSearch options={memberOptions} placeholder={t("waMonitor.pane.createModal.optional")} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={`扫码登录: ${loginTask?.accountName ?? ""}`}
+        title={t("waMonitor.pane.loginModal.title", { name: loginTask?.accountName ?? "" })}
         open={!!loginTask}
         footer={loginTask ? (
           <Space>
@@ -574,10 +576,10 @@ export function WaAccountsPane({
                   })();
                 }}
               >
-                重新扫码
+                {t("waMonitor.pane.loginModal.retry")}
               </Button>
             ) : null}
-            <Button onClick={() => setLoginTask(null)}>关闭</Button>
+            <Button onClick={() => setLoginTask(null)}>{t("waMonitor.pane.loginModal.close")}</Button>
           </Space>
         ) : null}
         onCancel={() => setLoginTask(null)}
@@ -606,25 +608,25 @@ export function WaAccountsPane({
               </div>
             ) : (
               <div style={{ width: 280, height: 280, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 12, border: "1px solid #f0f0f0", background: "#fff2f0" }}>
-                <Typography.Text type="danger">请重新扫码</Typography.Text>
+                <Typography.Text type="danger">{t("waMonitor.pane.loginModal.rescan")}</Typography.Text>
               </div>
             )}
             <Typography.Text strong>{loginTask.status.label}</Typography.Text>
             <Typography.Text type="secondary">{loginTask.status.detail}</Typography.Text>
             {shouldShowQr ? (
               <Tag color={refreshingLoginTask ? "processing" : qrCountdownMs <= 15000 ? "gold" : "default"}>
-                {refreshingLoginTask ? "二维码刷新中" : `将在 ${countdownLabel} 后刷新`}
+                {refreshingLoginTask ? t("waMonitor.pane.loginModal.refreshingQr") : t("waMonitor.pane.loginModal.refreshAfter", { value: countdownLabel })}
               </Tag>
             ) : null}
             {loginTask.disconnectReason ? (
-              <Typography.Text type="danger">掉线原因: {loginTask.disconnectReason}</Typography.Text>
+              <Typography.Text type="danger">{t("waMonitor.pane.loginModal.disconnectReason", { value: loginTask.disconnectReason })}</Typography.Text>
             ) : null}
           </div>
         ) : null}
       </Modal>
 
       <Modal
-        title={`成员分配: ${showAccess?.displayName ?? ""}`}
+        title={t("waMonitor.pane.accessModal.title", { name: showAccess?.displayName ?? "" })}
         open={!!showAccess}
         onCancel={() => setShowAccess(null)}
         onOk={() => {
@@ -635,7 +637,7 @@ export function WaAccountsPane({
             try {
               await assignWaAccountMembers(showAccess.waAccountId, values.memberIds ?? []);
               await updateWaAccountOwner(showAccess.waAccountId, values.primaryOwnerMembershipId ?? null);
-              void message.success("WA账号成员分配已更新");
+              void message.success(t("waMonitor.pane.accessModal.success"));
               setShowAccess(null);
               onReload();
             } catch (err) {
@@ -649,17 +651,17 @@ export function WaAccountsPane({
         destroyOnHidden
       >
         <Form form={accessForm} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="primaryOwnerMembershipId" label="负责人">
-            <Select allowClear showSearch options={memberOptions} placeholder="选择负责员工" />
+          <Form.Item name="primaryOwnerMembershipId" label={t("waMonitor.pane.accessModal.owner")}>
+            <Select allowClear showSearch options={memberOptions} placeholder={t("waMonitor.pane.accessModal.ownerPlaceholder")} />
           </Form.Item>
-          <Form.Item name="memberIds" label="协同成员">
-            <Select mode="multiple" showSearch options={memberOptions} placeholder="选择可查看/协同成员" />
+          <Form.Item name="memberIds" label={t("waMonitor.pane.accessModal.members")}>
+            <Select mode="multiple" showSearch options={memberOptions} placeholder={t("waMonitor.pane.accessModal.membersPlaceholder")} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={`健康状态: ${selectedAccount?.displayName ?? ""}`}
+        title={t("waMonitor.pane.healthModal.title", { name: selectedAccount?.displayName ?? "" })}
         open={!!selectedAccount}
         footer={null}
         onCancel={() => {
@@ -670,20 +672,20 @@ export function WaAccountsPane({
       >
         {health ? (
           <Space direction="vertical" size={8} style={{ width: "100%", marginTop: 12 }}>
-            <Typography.Text>Provider: {health.providerKey}</Typography.Text>
-            <Typography.Text>当前状态: {health.status.label}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.provider")}: {health.providerKey}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.currentStatus")}: {health.status.label}</Typography.Text>
             <Typography.Text type="secondary">{health.status.detail}</Typography.Text>
-            <Typography.Text>最近连接: {health.lastConnectedAt ? new Date(health.lastConnectedAt).toLocaleString() : "暂无"}</Typography.Text>
-            <Typography.Text>最近掉线: {health.lastDisconnectedAt ? new Date(health.lastDisconnectedAt).toLocaleString() : "暂无"}</Typography.Text>
-            <Typography.Text>连接态: {health.session?.connectionState ?? "暂无session"}</Typography.Text>
-            <Typography.Text>登录阶段: {health.session?.loginPhase ?? "暂无"}</Typography.Text>
-            <Typography.Text>心跳时间: {health.session?.heartbeatAt ? new Date(health.session.heartbeatAt).toLocaleString() : "暂无"}</Typography.Text>
-            <Typography.Text>重连次数: {health.session?.autoReconnectCount ?? 0}</Typography.Text>
-            <Typography.Text>登录入口: {health.session?.loginMode ?? "暂无"}</Typography.Text>
-            <Typography.Text>掉线原因: {health.session?.disconnectReason ?? "暂无"}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.lastConnected")}: {health.lastConnectedAt ? new Date(health.lastConnectedAt).toLocaleString() : t("waMonitor.health.empty")}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.lastDisconnected")}: {health.lastDisconnectedAt ? new Date(health.lastDisconnectedAt).toLocaleString() : t("waMonitor.health.empty")}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.connectionState")}: {health.session?.connectionState ?? t("waMonitor.health.noSession")}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.loginPhase")}: {health.session?.loginPhase ?? t("waMonitor.health.empty")}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.heartbeatAt")}: {health.session?.heartbeatAt ? new Date(health.session.heartbeatAt).toLocaleString() : t("waMonitor.health.empty")}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.reconnectCount")}: {health.session?.autoReconnectCount ?? 0}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.loginMode")}: {health.session?.loginMode ?? t("waMonitor.health.empty")}</Typography.Text>
+            <Typography.Text>{t("waMonitor.health.disconnectReason")}: {health.session?.disconnectReason ?? t("waMonitor.health.empty")}</Typography.Text>
           </Space>
         ) : (
-          <Typography.Text type="secondary">加载中...</Typography.Text>
+          <Typography.Text type="secondary">{t("waMonitor.health.loading")}</Typography.Text>
         )}
       </Modal>
     </>

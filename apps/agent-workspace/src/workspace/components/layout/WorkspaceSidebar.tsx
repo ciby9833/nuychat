@@ -17,6 +17,7 @@ type WorkspaceSidebarProps = {
   section: WorkspaceSection;
   unreadCount: number;
   taskCount: number;
+  seatEnabled?: boolean;
   waEnabled?: boolean;
   onNavigate: (section: WorkspaceSection) => void;
 };
@@ -28,9 +29,19 @@ const ITEMS: Array<{ key: WorkspaceSection; labelKey: string; icon: React.ReactN
   { key: "wa", labelKey: "nav.whatsapp", icon: <MessageOutlined /> }
 ];
 
-export function WorkspaceSidebar({ section, unreadCount, taskCount, waEnabled = false, onNavigate }: WorkspaceSidebarProps) {
+export function WorkspaceSidebar({
+  section,
+  unreadCount,
+  taskCount,
+  seatEnabled = false,
+  waEnabled = false,
+  onNavigate
+}: WorkspaceSidebarProps) {
   const { t } = useTranslation();
-  const visibleItems = ITEMS.filter((item) => item.key !== "wa" || waEnabled);
+  const visibleItems = ITEMS.filter((item) => {
+    if (item.key === "wa") return waEnabled;
+    return seatEnabled;
+  });
 
   return (
     <aside className="flex h-full w-[88px] shrink-0 flex-col items-center border-r border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] px-3 py-4">

@@ -27,6 +27,10 @@ function derivePhoneE164FromJid(jid: string | null) {
   return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
 }
 
+function isNonConversationJid(jid: string | null) {
+  return jid === "status@broadcast";
+}
+
 function deriveConversationDisplayName(row: Record<string, unknown>) {
   const conversationType = asString(row.conversation_type);
   if (conversationType === "group") {
@@ -252,6 +256,7 @@ function buildConversationBaseQuery(trx: Knex.Transaction, tenantId: string) {
       this.on("a.wa_account_id", "=", "c.wa_account_id").andOn("a.tenant_id", "=", "c.tenant_id");
     })
     .where("c.tenant_id", tenantId)
+    .whereNot("c.chat_jid", "status@broadcast")
     .select("c.*", "tm.display_name as current_replier_name", "a.display_name as account_display_name");
 }
 
@@ -1089,6 +1094,9 @@ export async function upsertWaConversation(
     unreadCount?: number | null;
   }
 ) {
+  if (isNonConversationJid(input.chatJid)) {
+    throw new Error("status@broadcast is not a valid conversation chat");
+  }
   const existing = await trx("wa_conversations")
     .where({
       tenant_id: input.tenantId,

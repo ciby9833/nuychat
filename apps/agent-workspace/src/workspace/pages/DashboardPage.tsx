@@ -65,6 +65,7 @@ export function DashboardPage() {
 
   if (!vm.isLoggedIn || !vm.session) return null;
 
+  const seatEnabled = Boolean(vm.agentId);
   const waEnabled = vm.waSeatEnabled && vm.waRuntimeAvailable;
   const headerProps = {
     tenantId: vm.tenantId,
@@ -83,6 +84,7 @@ export function DashboardPage() {
         section={section}
         unreadCount={vm.totalUnreadMessages}
         taskCount={vm.filteredMyTasks.length}
+        seatEnabled={seatEnabled}
         waEnabled={waEnabled}
         onNavigate={(next) => navigate(`/dashboard/${next}`)}
         header={headerProps}
@@ -91,11 +93,11 @@ export function DashboardPage() {
           <Routes>
             <Route
               index
-              element={<Navigate to={waEnabled && !vm.agentId ? "/dashboard/wa" : "/dashboard/home"} replace />}
+              element={<Navigate to={waEnabled && !seatEnabled ? "/dashboard/wa" : "/dashboard/home"} replace />}
             />
             <Route
               path="home"
-              element={
+              element={seatEnabled ? (
                 <HomeOverview
                   unreadConversations={vm.unreadConversations}
                   totalUnreadMessages={vm.totalUnreadMessages}
@@ -111,15 +113,15 @@ export function DashboardPage() {
                   onOpenMessages={() => navigate("/dashboard/messages")}
                   onOpenTasks={() => navigate("/dashboard/tasks")}
                 />
-              }
+              ) : <Navigate to={waEnabled ? "/dashboard/wa" : "/"} replace />}
             />
             <Route
               path="messages"
-              element={<MessagesWorkspace vm={vm} rightWidth={rightWidth} onStartResize={startRightResize} />}
+              element={seatEnabled ? <MessagesWorkspace vm={vm} rightWidth={rightWidth} onStartResize={startRightResize} /> : <Navigate to={waEnabled ? "/dashboard/wa" : "/"} replace />}
             />
             <Route
               path="tasks"
-              element={<TasksWorkspace vm={vm} />}
+              element={seatEnabled ? <TasksWorkspace vm={vm} /> : <Navigate to={waEnabled ? "/dashboard/wa" : "/"} replace />}
             />
             <Route
               path="wa"

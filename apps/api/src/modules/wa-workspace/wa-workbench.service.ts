@@ -26,10 +26,6 @@ import {
 } from "./wa-conversation.repository.js";
 import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
 
-function includeAllForRole(role: string) {
-  return ["tenant_admin", "admin", "supervisor", "readonly"].includes(role);
-}
-
 async function assertConversationAccessible(
   trx: Knex.Transaction,
   input: { tenantId: string; membershipId: string; role: string; waConversationId: string }
@@ -68,7 +64,7 @@ export async function listWorkbenchAccounts(
   return listAccessibleWaAccounts(trx, {
     tenantId: input.tenantId,
     membershipId: input.membershipId,
-    includeAllForAdmins: includeAllForRole(input.role)
+    includeAllForAdmins: false
   });
 }
 

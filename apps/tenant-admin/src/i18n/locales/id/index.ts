@@ -17,6 +17,8 @@ import shiftsModule from "./modules/shifts";
 import slaModule from "./modules/sla";
 import supervisorModule from "./modules/supervisor";
 import tasksModule from "./modules/tasks";
+import waMonitorModule from "./modules/wa-monitor";
+import waConversationsModule from "./modules/wa-conversations";
 
 export default {
   ...core,
@@ -49,5 +51,7 @@ export default {
   ...shiftsModule,
   ...slaModule,
   ...supervisorModule,
-  ...tasksModule
+  ...tasksModule,
+  ...waMonitorModule,
+  ...waConversationsModule
 };

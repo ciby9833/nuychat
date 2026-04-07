@@ -108,6 +108,7 @@ export function useWorkspaceDashboard() {
   const tenantId = session?.tenantId ?? "";
   const tenantSlug = session?.tenantSlug ?? "";
   const agentId = session?.agentId ?? null;
+  const seatEnabled = Boolean(agentId);
   const waSeatEnabled = Boolean(session?.waSeatEnabled);
   const [waRuntimeAvailable, setWaRuntimeAvailable] = useState(false);
   const memberships = session?.memberships ?? [];
@@ -210,7 +211,13 @@ export function useWorkspaceDashboard() {
   }, [session]);
 
   const loadConversations = useCallback(async () => {
-    if (!session) return;
+    if (!session || !seatEnabled) {
+      setConversations([]);
+      setViewSummaries(EMPTY_VIEW_SUMMARIES);
+      setHasMoreConversations(false);
+      oldestCursorRef.current = null;
+      return;
+    }
     loadingRef.current = true;
     setConversationsLoading(true);
     try {
@@ -229,7 +236,7 @@ export function useWorkspaceDashboard() {
       loadingRef.current = false;
       setConversationsLoading(false);
     }
-  }, [effectiveView, session]);
+  }, [effectiveView, seatEnabled, session]);
 
   loadConversationsRef.current = loadConversations;
 
@@ -267,7 +274,7 @@ export function useWorkspaceDashboard() {
   }, [clearConversationUnreadLocal]);
 
   const loadMoreConversations = useCallback(async () => {
-    if (!session || loadingRef.current) return;
+    if (!session || !seatEnabled || loadingRef.current) return;
     const cursor = oldestCursorRef.current;
     if (!cursor) return; // null cursor means no more pages
     loadingRef.current = true;
@@ -289,10 +296,10 @@ export function useWorkspaceDashboard() {
       loadingRef.current = false;
       setConversationsLoading(false);
     }
-  }, [effectiveView, session]);
+  }, [effectiveView, seatEnabled, session]);
 
   const loadDetail = useCallback(async (id: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const r = await apiFetch<Record<string, unknown>>(`/api/conversations/${id}`, session);
       setDetail({
@@ -319,7 +326,7 @@ export function useWorkspaceDashboard() {
     } catch {
       setDetail(null);
     }
-  }, [session]);
+  }, [seatEnabled, session]);
 
   const appendOrReplaceMessage = useCallback((message: MessageItem) => {
     setMessages((current) => {
@@ -364,7 +371,7 @@ export function useWorkspaceDashboard() {
   }, []);
 
   const loadMessages = useCallback(async (id: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     setMessagesLoading(true);
     try {
       const page = await listConversationMessages(id, session, { limit: 40 });
@@ -376,10 +383,10 @@ export function useWorkspaceDashboard() {
     } finally {
       setMessagesLoading(false);
     }
-  }, [applyMessagesPage, session]);
+  }, [applyMessagesPage, seatEnabled, session]);
 
   const loadOlderMessages = useCallback(async () => {
-    if (!session || !selectedId || messagesLoadingMore) return;
+    if (!session || !seatEnabled || !selectedId || messagesLoadingMore) return;
     const before = oldestMessageCursorRef.current;
     if (!before) return;
     setMessagesLoadingMore(true);
@@ -389,20 +396,20 @@ export function useWorkspaceDashboard() {
     } finally {
       setMessagesLoadingMore(false);
     }
-  }, [applyMessagesPage, messagesLoadingMore, selectedId, session]);
+  }, [applyMessagesPage, messagesLoadingMore, seatEnabled, selectedId, session]);
 
   const fetchAndMergeMessage = useCallback(async (conversationId: string, messageId: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const message = await getConversationMessage(conversationId, messageId, session);
       appendOrReplaceMessage(message);
     } catch {
       // noop
     }
-  }, [appendOrReplaceMessage, session]);
+  }, [appendOrReplaceMessage, seatEnabled, session]);
 
   const loadCopilot = useCallback(async (id: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const data = await apiFetch<CopilotData>(`/api/conversations/${id}/copilot`, session);
       setCopilot(data);
@@ -411,20 +418,20 @@ export function useWorkspaceDashboard() {
       setCopilot(null);
       setComposerAiSuggestions([]);
     }
-  }, [session]);
+  }, [seatEnabled, session]);
 
   const loadSkillRecommendation = useCallback(async (id: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const data = await apiFetch<ConversationSkillRecommendationResponse>(`/api/conversations/${id}/skills/recommendations?actor=agent`, session);
       setSkillRecommendation(data);
     } catch {
       setSkillRecommendation(null);
     }
-  }, [session]);
+  }, [seatEnabled, session]);
 
   const loadTickets = useCallback(async (id: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const data = await listConversationTickets(id, session);
       setTickets(data.tickets);
@@ -443,17 +450,17 @@ export function useWorkspaceDashboard() {
       setTickets([]);
       setTicketDetailsById({});
     }
-  }, [session]);
+  }, [seatEnabled, session]);
 
   const refreshTicketDetail = useCallback(async (conversationId: string, ticketId: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const detail = await getConversationTaskDetail(conversationId, ticketId, session);
       setTicketDetailsById((prev) => ({ ...prev, [ticketId]: detail }));
     } catch {
       // noop
     }
-  }, [session]);
+  }, [seatEnabled, session]);
 
   const loadMyTasks = useCallback(async () => {
     if (!session?.agentId) {
@@ -483,34 +490,34 @@ export function useWorkspaceDashboard() {
   loadMyTasksRef.current = loadMyTasks;
 
   const loadAiTraces = useCallback(async (id: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const data = await listConversationAiTraces(id, session);
       setAiTraces(data.traces);
     } catch {
       setAiTraces([]);
     }
-  }, [session]);
+  }, [seatEnabled, session]);
 
   const loadSkillSchemas = useCallback(async (id: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const data = await listConversationSkillSchemas(id, session);
       setSkillSchemas(data.schemas);
     } catch {
       setSkillSchemas([]);
     }
-  }, [session]);
+  }, [seatEnabled, session]);
 
   const loadCustomer360 = useCallback(async (id: string) => {
-    if (!session) return;
+    if (!session || !seatEnabled) return;
     try {
       const data = await getConversationCustomer360(id, session);
       setCustomer360(data);
     } catch {
       setCustomer360(null);
     }
-  }, [session]);
+  }, [seatEnabled, session]);
 
   const loadColleagues = useCallback(async () => {
     if (!session?.agentId) return;
@@ -546,7 +553,7 @@ export function useWorkspaceDashboard() {
           customerRef: ""
         } satisfies ConversationItem;
 
-        if (shouldIncludeConversationInView(next, effectiveViewRef.current, agentId)) {
+        if (seatEnabled && shouldIncludeConversationInView(next, effectiveViewRef.current, agentId)) {
           void loadConversationsRef.current?.();
         }
         return prev;
@@ -559,7 +566,7 @@ export function useWorkspaceDashboard() {
           ? ev.occurredAt
           : existing.lastMessageAt ?? existing.occurredAt
       };
-      return syncConversationForView(prev, merged, effectiveViewRef.current, agentId);
+      return seatEnabled ? syncConversationForView(prev, merged, effectiveViewRef.current, agentId) : prev;
     });
     if (ev.conversationId === selectedIdRef.current) {
       void loadDetail(ev.conversationId);
@@ -567,7 +574,7 @@ export function useWorkspaceDashboard() {
         void syncConversationReadIfVisible(ev.conversationId);
       }
     }
-  }, [agentId, rememberRealtimeEventId, loadDetail, syncConversationReadIfVisible]);
+  }, [agentId, rememberRealtimeEventId, loadDetail, seatEnabled, syncConversationReadIfVisible]);
 
   const handleMessageReceivedEvent = useCallback((ev: { eventId?: string; conversationId: string; messageId?: string }) => {
     rememberRealtimeEventId(ev.eventId);
@@ -701,8 +708,10 @@ export function useWorkspaceDashboard() {
       setSocketStatus("connected");
       console.debug("[WS] Socket connected, id=", socket.id);
       void replayRealtimeGap();
-      void loadConversationsRef.current?.();
-      if (selectedIdRef.current) {
+      if (seatEnabled) {
+        void loadConversationsRef.current?.();
+      }
+      if (seatEnabled && selectedIdRef.current) {
         void loadDetail(selectedIdRef.current);
         void loadMessages(selectedIdRef.current);
         void loadCopilot(selectedIdRef.current);
@@ -725,7 +734,9 @@ export function useWorkspaceDashboard() {
     socket.on("connection.ready", (data: { tenantId: string | null; agentId: string | null; socketId: string }) => {
       console.debug("[WS] Connection ready:", data);
       void replayRealtimeGap();
-      void loadConversationsRef.current?.();
+      if (seatEnabled) {
+        void loadConversationsRef.current?.();
+      }
     });
     socket.on("conversation.updated", handleConversationUpdatedEvent);
     socket.on("message.received", handleMessageReceivedEvent);
@@ -739,21 +750,23 @@ export function useWorkspaceDashboard() {
     // selectedId intentionally NOT in deps — use selectedIdRef.current instead.
     // loadConversations intentionally NOT in deps — has its own effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent, handleTaskUpdatedEvent, loadAiTraces, loadCopilot, loadDetail, loadMessages, loadSkillRecommendation, replayRealtimeGap, session]);
+  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent, handleTaskUpdatedEvent, loadAiTraces, loadCopilot, loadDetail, loadMessages, loadSkillRecommendation, replayRealtimeGap, seatEnabled, session]);
 
   useEffect(() => {
     if (!session) return;
 
     const timer = window.setInterval(() => {
       if (document.hidden) return;
-      void loadConversationsRef.current?.();
-      if (selectedIdRef.current) {
+      if (seatEnabled) {
+        void loadConversationsRef.current?.();
+      }
+      if (seatEnabled && selectedIdRef.current) {
         void loadDetail(selectedIdRef.current);
       }
     }, 4000);
 
     return () => window.clearInterval(timer);
-  }, [session, loadDetail, loadMessages]);
+  }, [seatEnabled, session, loadDetail, loadMessages]);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -785,6 +798,7 @@ export function useWorkspaceDashboard() {
   }, []);
 
   useEffect(() => {
+    if (!seatEnabled) return;
     if (!isLoggedIn) return;
     let initialized = false;
     const tick = async () => {
@@ -807,9 +821,10 @@ export function useWorkspaceDashboard() {
       void tick();
     }, 30_000);
     return () => window.clearInterval(id);
-  }, [isLoggedIn]);
+  }, [isLoggedIn, seatEnabled]);
 
   useEffect(() => {
+    if (!seatEnabled) return;
     if (!isLoggedIn) return;
 
     const onInteractiveEvent = () => {
@@ -836,19 +851,43 @@ export function useWorkspaceDashboard() {
       window.removeEventListener("focus", onInteractiveEvent);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [isLoggedIn, postAgentActivity]);
+  }, [isLoggedIn, postAgentActivity, seatEnabled]);
 
   // Load colleagues list once on login (used for transfer dialog)
   useEffect(() => {
+    if (!seatEnabled) return;
     void loadColleagues();
-  }, [loadColleagues]);
+  }, [loadColleagues, seatEnabled]);
 
   useEffect(() => {
+    if (!seatEnabled) return;
     if (leftPanelMode !== "tasks") return;
     void loadMyTasks();
-  }, [leftPanelMode, loadMyTasks]);
+  }, [leftPanelMode, loadMyTasks, seatEnabled]);
 
   useEffect(() => {
+    if (!seatEnabled) {
+      setSelectedUnreadAnchorCount(0);
+      setSelectedUnreadAnchorMessageId(null);
+      setDetail(null);
+      setMessages([]);
+      setMessagesHasMore(false);
+      setMessagesLoading(false);
+      setMessagesLoadingMore(false);
+      oldestMessageCursorRef.current = null;
+      setCopilot(null);
+      setComposerAiSuggestions([]);
+      setSkillRecommendation(null);
+      setTickets([]);
+      setTicketDetailsById({});
+      setLastSkillResult(null);
+      setAiTraces([]);
+      setSkillSchemas([]);
+      setCustomer360(null);
+      setComposerSkillAssist(null);
+      autoSkillLookupKeyRef.current = null;
+      return;
+    }
     if (!selectedId) {
       setSelectedUnreadAnchorCount(0);
       setSelectedUnreadAnchorMessageId(null);
@@ -881,7 +920,7 @@ export function useWorkspaceDashboard() {
     void loadCustomer360(selectedId);
     void postAgentActivity("open_conversation", true);
     void syncConversationReadIfVisible(selectedId);
-  }, [loadAiTraces, loadCopilot, loadCustomer360, loadDetail, loadMessages, loadSkillRecommendation, loadSkillSchemas, loadTickets, postAgentActivity, selectedId, syncConversationReadIfVisible]);
+  }, [loadAiTraces, loadCopilot, loadCustomer360, loadDetail, loadMessages, loadSkillRecommendation, loadSkillSchemas, loadTickets, postAgentActivity, seatEnabled, selectedId, syncConversationReadIfVisible]);
 
   const filteredConversations = useMemo(() => {
     return conversations

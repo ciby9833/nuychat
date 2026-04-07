@@ -27,6 +27,10 @@ import {
 } from "./wa-conversation.repository.js";
 import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
 
+function isNonConversationJid(jid: string | null) {
+  return jid === "status@broadcast";
+}
+
 async function applyContactProjection(
   trx: Parameters<Parameters<typeof withTenantTransaction>[1]>[0],
   input: { tenantId: string; waAccountId: string; contact: Partial<Contact> }
@@ -86,7 +90,7 @@ async function applyGroupMetadataProjection(
   trx: Parameters<Parameters<typeof withTenantTransaction>[1]>[0],
   input: { tenantId: string; waAccountId: string; group: Partial<GroupMetadata> }
 ) {
-  if (!input.group.id) return;
+  if (!input.group.id || isNonConversationJid(input.group.id)) return;
   const conversation = await upsertWaConversation(trx, {
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
@@ -225,6 +229,7 @@ export async function ingestBaileysHistorySet(input: {
     for (const raw of input.messages) {
       const mapped = mapBaileysMessageToInbound(raw);
       if (!mapped) continue;
+      if (isNonConversationJid(mapped.chatJid)) continue;
       const pushName = typeof raw.pushName === "string" && raw.pushName.trim()
         ? raw.pushName.trim()
         : null;
@@ -333,6 +338,7 @@ export async function ingestBaileysGroupParticipantsUpdate(input: {
   action: ParticipantAction;
 }) {
   return withTenantTransaction(input.tenantId, async (trx) => {
+    if (isNonConversationJid(input.chatJid)) return { ok: true };
     const conversation = await upsertWaConversation(trx, {
       tenantId: input.tenantId,
       waAccountId: input.waAccountId,
@@ -365,6 +371,7 @@ export async function ingestBaileysChatsUpdate(input: {
     for (const chat of input.chats) {
       if (!chat.id) continue;
       const chatId = chat.id;
+      if (isNonConversationJid(chatId)) continue;
       const conversation = await upsertWaConversation(trx, {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,

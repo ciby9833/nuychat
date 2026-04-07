@@ -58,6 +58,8 @@ const KnowledgeBaseTab   = lazy(() => import("../components/tabs/KnowledgeBaseTa
 const RoutingTab         = lazy(() => import("../components/tabs/RoutingTab").then(m => ({ default: m.RoutingTab })));
 const ChannelsTab        = lazy(() => import("../components/tabs/ChannelsTab").then(m => ({ default: m.ChannelsTab })));
 const AnalyticsTab       = lazy(() => import("../components/tabs/AnalyticsTab").then(m => ({ default: m.AnalyticsTab })));
+const WaMonitorTab       = lazy(() => import("../components/tabs/WaMonitorTab").then(m => ({ default: m.WaMonitorTab })));
+const WaConversationsTab = lazy(() => import("../components/tabs/WaConversationsTab").then(m => ({ default: m.WaConversationsTab })));
 const SlaTab             = lazy(() => import("../components/tabs/SlaTab").then(m => ({ default: m.SlaTab })));
 const QaTab              = lazy(() => import("../components/tabs/QaTab").then(m => ({ default: m.QaTab })));
 const CsatTab            = lazy(() => import("../components/tabs/CsatTab").then(m => ({ default: m.CsatTab })));
@@ -84,6 +86,8 @@ const TAB_COMPONENTS: Record<Tab, ComponentType> = {
   routing:               RoutingTab,
   channels:              ChannelsTab,
   analytics:             AnalyticsTab,
+  "wa-accounts":         WaMonitorTab,
+  "wa-conversations":    WaConversationsTab,
   sla:                   SlaTab,
   qa:                    QaTab,
   csat:                  CsatTab,
@@ -94,6 +98,12 @@ const TAB_COMPONENTS: Record<Tab, ComponentType> = {
 const ALL_TABS = Object.keys(TAB_COMPONENTS) as Tab[];
 const VALID_TABS = new Set<string>(ALL_TABS);
 const DEFAULT_TAB: Tab = "overview";
+
+function getTabLabel(tab: Tab, t: ReturnType<typeof useTranslation>["t"]) {
+  if (tab === "wa-accounts") return t("waMonitor.tab");
+  if (tab === "wa-conversations") return t("waConversations.tab");
+  return t(`tabs.${tab}`);
+}
 
 const isAdminMembership = (m: MembershipSummary) =>
   m.role === "admin" || m.role === "tenant_admin";
@@ -227,7 +237,9 @@ export function DashboardPage() {
         { key: "ai",           icon: <ThunderboltOutlined />, label: t("tabs.ai") },
         { key: "capabilities", icon: <AppstoreOutlined />,    label: t("tabs.capabilities") },
         { key: "kb",           icon: <ReadOutlined />,        label: t("tabs.kb") },
-        { key: "channels",     icon: <ThunderboltOutlined />, label: t("tabs.channels") }
+        { key: "channels",     icon: <ThunderboltOutlined />, label: t("tabs.channels") },
+        { key: "wa-accounts",      icon: <MessageOutlined />, label: t("waMonitor.tab") },
+        { key: "wa-conversations", icon: <MessageOutlined />, label: t("waConversations.tab") }
       ]
     }
   ];
@@ -327,7 +339,7 @@ export function DashboardPage() {
             />
             <div style={{ minWidth: 0, overflow: "hidden" }}>
               <Typography.Title level={5} ellipsis style={{ margin: 0, lineHeight: 1.3 }}>
-                {t(`tabs.${activeTab}`)}
+                {getTabLabel(activeTab, t)}
               </Typography.Title>
               <Typography.Text type="secondary" style={{ fontSize: 11, display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {session.tenantSlug}
@@ -371,7 +383,7 @@ export function DashboardPage() {
                   menu={{ items: buildTabContextMenuItems(openedTab) }}
                   trigger={["contextMenu"]}
                 >
-                  <span>{t(`tabs.${openedTab}`)}</span>
+                  <span>{getTabLabel(openedTab, t)}</span>
                 </Dropdown>
               ),
               closable: openedTab !== DEFAULT_TAB

@@ -1,15 +1,14 @@
-// 作用: 坐席与成员管理主入口，统一承载坐席、成员和 WA 账号管理。
+// 作用: 坐席与成员管理主入口，统一承载坐席和成员管理。
 // 菜单路径: 系统设置 -> 坐席与成员管理
-// 交互: 聚合 useAgentsData，避免成员 WA Seat 与 WA 账号池分散到其他菜单维护。
+// 交互: 聚合 useAgentsData，成员 WA Seat 仍在此协同维护；WA 账号池迁移到独立监控页。
 
-import { MessageOutlined, TeamOutlined, UserOutlined } from "@ant-design/icons";
+import { TeamOutlined, UserOutlined } from "@ant-design/icons";
 import { Space, Tabs, Tag } from "antd";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AgentsPane } from "./components/AgentsPane";
 import { MembersPane } from "./components/MembersPane";
-import { WaAccountsPane } from "./components/WaAccountsPane";
 import { useAgentsData } from "./hooks/useAgentsData";
 import { EnableAgentModal } from "./modals/EnableAgentModal";
 import { NewMemberModal } from "./modals/NewMemberModal";
@@ -68,25 +67,7 @@ export function AgentsTab() {
                 onEnableAgent={() => setShowEnableAgentModal(true)}
               />
             )
-          },
-          ...(data.waRuntime?.available ? [{
-            key: "wa_accounts",
-            label: (
-              <Space>
-                <MessageOutlined />
-                WA账号管理
-                <Tag style={{ marginLeft: 2 }}>{data.waAccounts.length}</Tag>
-              </Space>
-            ),
-            children: (
-              <WaAccountsPane
-                waAccounts={data.waAccounts}
-                members={data.members}
-                loading={data.loading}
-                onReload={handleReload}
-              />
-            )
-          }] : [])
+          }
         ]}
       />
 

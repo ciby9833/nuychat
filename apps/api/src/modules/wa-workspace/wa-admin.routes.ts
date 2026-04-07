@@ -22,6 +22,14 @@ import {
   reconnectAdminWaAccount,
   updateAdminWaAccountOwner
 } from "./wa-admin.service.js";
+import {
+  getAdminWaDailyReport,
+  getAdminWaMonitorConversationDetail,
+  getAdminWaMonitorDashboard,
+  loadMoreAdminWaMonitorMessages,
+  listAdminWaMonitorConversations,
+  listAdminWaReplyPool
+} from "./wa-monitor.service.js";
 import { getWaRuntimeStatus } from "./wa-runtime.service.js";
 
 export async function waAdminRoutes(app: FastifyInstance) {
@@ -33,6 +41,75 @@ export async function waAdminRoutes(app: FastifyInstance) {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
     return withTenantTransaction(tenantId, async (trx) => listAdminWaAccounts(trx, tenantId));
+  });
+
+  app.get("/api/admin/wa/monitor/dashboard", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    return withTenantTransaction(tenantId, async (trx) => getAdminWaMonitorDashboard(trx, tenantId));
+  });
+
+  app.get("/api/admin/wa/monitor/accounts/:waAccountId/conversations", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waAccountId } = req.params as { waAccountId: string };
+    const { search, limit, type } = req.query as { search?: string; limit?: string; type?: string };
+    return withTenantTransaction(tenantId, async (trx) =>
+      listAdminWaMonitorConversations(trx, {
+        tenantId,
+        waAccountId,
+        search: typeof search === "string" ? search : null,
+        type: type === "group" || type === "direct" ? type : null,
+        limit: typeof limit === "string" ? Number(limit) : undefined
+      })
+    );
+  });
+
+  app.get("/api/admin/wa/monitor/conversations/:waConversationId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waConversationId } = req.params as { waConversationId: string };
+    return withTenantTransaction(tenantId, async (trx) =>
+      getAdminWaMonitorConversationDetail(trx, { tenantId, waConversationId })
+    );
+  });
+
+  app.get("/api/admin/wa/monitor/conversations/:waConversationId/messages", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waConversationId } = req.params as { waConversationId: string };
+    const query = req.query as { beforeSeq?: string; limit?: string };
+    const beforeLogicalSeq = query.beforeSeq ? Number(query.beforeSeq) : null;
+    if (beforeLogicalSeq === null || !Number.isFinite(beforeLogicalSeq)) {
+      throw app.httpErrors.badRequest("beforeSeq (number) is required");
+    }
+    const limit = query.limit ? Math.min(Number(query.limit) || 50, 100) : 50;
+    return withTenantTransaction(tenantId, async (trx) =>
+      loadMoreAdminWaMonitorMessages(trx, {
+        tenantId,
+        waConversationId,
+        beforeLogicalSeq,
+        limit
+      })
+    );
+  });
+
+  app.get("/api/admin/wa/monitor/report/daily", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { date } = req.query as { date?: string };
+    const reportDate = typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)
+      ? date
+      : new Date().toISOString().slice(0, 10);
+    return withTenantTransaction(tenantId, async (trx) =>
+      getAdminWaDailyReport(trx, { tenantId, date: reportDate })
+    );
+  });
+
+  app.get("/api/admin/wa/monitor/reply-pool", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    return withTenantTransaction(tenantId, async (trx) => listAdminWaReplyPool(trx, { tenantId }));
   });
 
   app.post("/api/admin/wa/accounts", async (req) => {

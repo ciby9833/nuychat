@@ -305,11 +305,16 @@ export async function listAccessibleWaAccounts(
   }
 
   const rows = await trx("wa_accounts as a")
-    .join("wa_account_members as m", function joinMembers() {
+    .where("a.tenant_id", input.tenantId)
+    .leftJoin("wa_account_members as m", function joinMembers() {
       this.on("m.wa_account_id", "=", "a.wa_account_id").andOn("m.tenant_id", "=", "a.tenant_id");
     })
-    .where("a.tenant_id", input.tenantId)
-    .andWhere("m.membership_id", input.membershipId)
+    .andWhere((builder) => {
+      builder
+        .where("a.primary_owner_membership_id", input.membershipId)
+        .orWhere("m.membership_id", input.membershipId);
+    })
+    .groupBy("a.wa_account_id")
     .select("a.wa_account_id");
 
   const accountIds = rows.map((row) => String(row.wa_account_id));

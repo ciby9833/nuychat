@@ -34,6 +34,11 @@ function derivePhoneE164FromJid(jid: string | null) {
   return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
 }
 
+function isNonConversationJid(jid: string | null) {
+  if (!jid) return true;
+  return jid === "status@broadcast";
+}
+
 export function mapBaileysDeliveryStatus(status?: number | null) {
   if (status === WAMessageStatus.ERROR) return "failed";
   if (status === WAMessageStatus.PENDING) return "pending";
@@ -233,7 +238,7 @@ export function extractBaileysAttachment(message: WAMessage["message"] | null | 
 export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMessage | null {
   const remoteJid = asString(message.key?.remoteJid);
   const providerMessageId = asString(message.key?.id);
-  if (!remoteJid || !providerMessageId) return null;
+  if (!remoteJid || !providerMessageId || isNonConversationJid(remoteJid)) return null;
 
   const conversationType = remoteJid.endsWith("@g.us") ? "group" : "direct";
   const participantJid = asString(message.key?.participant);

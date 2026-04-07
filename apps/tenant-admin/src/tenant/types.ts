@@ -519,6 +519,128 @@ export type WaAccountListItem = {
   };
 };
 
+export type WaMonitorAlert = {
+  code: string;
+  severity: "warning" | "critical";
+  waAccountId: string | null;
+  waConversationId: string | null;
+  title: string;
+  detail: string;
+};
+
+export type WaMonitorAccountItem = WaAccountListItem & {
+  lastOnlineAt: string | null;
+  conversationCount: number;
+  unreadMessageCount: number;
+  unrepliedCount24h: number;
+  alerts: WaMonitorAlert[];
+};
+
+export type WaMonitorDashboard = {
+  summary: {
+    accountCount: number;
+    readyCount: number;
+    connectingCount: number;
+    offlineCount: number;
+    criticalAlertCount: number;
+    warningAlertCount: number;
+  };
+  alerts: WaMonitorAlert[];
+  accounts: WaMonitorAccountItem[];
+};
+
+export type WaMonitorConversationItem = {
+  waConversationId: string;
+  waAccountId: string;
+  chatJid: string;
+  conversationType: "direct" | "group";
+  displayName: string;
+  contactName: string | null;
+  contactPhoneE164: string | null;
+  subject: string | null;
+  avatarUrl: string | null;
+  unreadCount: number;
+  lastMessageAt: string | null;
+  lastMessagePreview: string | null;
+  currentReplierMembershipId: string | null;
+  currentReplierName: string | null;
+  accountDisplayName: string;
+};
+
+export type WaMonitorMessageItem = {
+  waMessageId: string;
+  bodyText: string | null;
+  logicalSeq: number;
+  messageType: string;
+  direction: string;
+  senderRole: string | null;
+  senderDisplayName: string | null;
+  createdAt: string;
+  providerTs: string | null;
+  deliveryStatus: string | null;
+  attachments?: Array<{
+    attachmentId: string;
+    attachmentType: string;
+    mimeType: string | null;
+    fileName: string | null;
+    fileSize: number | null;
+    width: number | null;
+    height: number | null;
+    durationMs: number | null;
+    storageUrl: string | null;
+    previewUrl: string | null;
+  }>;
+};
+
+export type WaMonitorConversationDetail = {
+  conversation: WaMonitorConversationItem;
+  messages: WaMonitorMessageItem[];
+  hasMore: boolean;
+  members: Array<{
+    memberId: string;
+    participantJid: string;
+    role: string | null;
+    displayName: string | null;
+    phoneE164: string | null;
+  }>;
+};
+
+export type WaDailyMonitorReport = {
+  date: string;
+  summary: {
+    totalMessages: number;
+    manualReplyCount: number;
+    averageResponseSeconds: number | null;
+  };
+  unrepliedTop10: Array<{
+    waConversationId: string;
+    waAccountId: string;
+    displayName: string;
+    chatJid: string;
+    lastInboundAt: string;
+    waitingSeconds: number;
+    unreadCount: number;
+    lastMessagePreview: string;
+  }>;
+};
+
+export type WaReplyPoolItem = {
+  taskType: "human_follow_up";
+  taskId: string | null;
+  waConversationId: string;
+  waAccountId: string;
+  accountDisplayName: string;
+  displayName: string;
+  chatJid: string;
+  conversationType: string;
+  unreadCount: number;
+  lastInboundAt: string;
+  waitingSeconds: number;
+  lastMessagePreview: string;
+  currentReplierMembershipId: string | null;
+  currentReplierName: string | null;
+};
+
 export type WaAccountHealth = {
   waAccountId: string;
   providerKey: string;
@@ -1243,7 +1365,9 @@ export type Tab =
   | "kb"
   | "routing"
   | "channels"
-  | "analytics";
+  | "analytics"
+  | "wa-accounts"
+  | "wa-conversations";
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 

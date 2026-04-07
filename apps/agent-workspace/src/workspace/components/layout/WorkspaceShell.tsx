@@ -8,6 +8,7 @@ type WorkspaceShellProps = {
   section: WorkspaceSection;
   unreadCount: number;
   taskCount: number;
+  seatEnabled?: boolean;
   waEnabled?: boolean;
   onNavigate: (section: WorkspaceSection) => void;
   header: {
@@ -24,7 +25,7 @@ type WorkspaceShellProps = {
 };
 
 export function WorkspaceShell(props: WorkspaceShellProps) {
-  const { section, unreadCount, taskCount, waEnabled, onNavigate, header, children } = props;
+  const { section, unreadCount, taskCount, seatEnabled, waEnabled, onNavigate, header, children } = props;
 
   return (
     <div className="flex h-screen min-w-[1180px] overflow-hidden bg-slate-50">
@@ -32,6 +33,7 @@ export function WorkspaceShell(props: WorkspaceShellProps) {
         section={section}
         unreadCount={unreadCount}
         taskCount={taskCount}
+        seatEnabled={seatEnabled}
         waEnabled={waEnabled}
         onNavigate={onNavigate}
       />
