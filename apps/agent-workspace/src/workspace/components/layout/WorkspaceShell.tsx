@@ -7,6 +7,7 @@ import { WorkspaceSidebar, type WorkspaceSection } from "./WorkspaceSidebar";
 type WorkspaceShellProps = {
   section: WorkspaceSection;
   unreadCount: number;
+  waUnreadCount: number;
   taskCount: number;
   seatEnabled?: boolean;
   waEnabled?: boolean;
@@ -25,13 +26,14 @@ type WorkspaceShellProps = {
 };
 
 export function WorkspaceShell(props: WorkspaceShellProps) {
-  const { section, unreadCount, taskCount, seatEnabled, waEnabled, onNavigate, header, children } = props;
+  const { section, unreadCount, waUnreadCount, taskCount, seatEnabled, waEnabled, onNavigate, header, children } = props;
 
   return (
     <div className="flex h-screen min-w-[1180px] overflow-hidden bg-slate-50">
       <WorkspaceSidebar
         section={section}
         unreadCount={unreadCount}
+        waUnreadCount={waUnreadCount}
         taskCount={taskCount}
         seatEnabled={seatEnabled}
         waEnabled={waEnabled}

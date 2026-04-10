@@ -31,7 +31,7 @@ type WaChatPanelProps = {
   onUploadFiles: (files: FileList | null) => void;
   onTakeover: () => void;
   onRelease: () => void;
-  onReplyToMessage: (providerMessageId: string | null, preview: string) => void;
+  onReplyToMessage: (message: WaMessageItem) => void;
   onSendReaction: (message: WaMessageItem, emoji: string) => void;
   onSend: () => void;
   actionLoading: string | null;
@@ -528,18 +528,18 @@ export function WaChatPanel(props: WaChatPanelProps) {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0b141a]">
+    <div className="flex h-full min-h-0 flex-col bg-[#efeae2]">
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="border-b border-[#222d34] bg-[#202c33] px-4 py-3">
+      <div className="border-b border-[#d1d7db] bg-[#f0f2f5] px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d9fdd3] text-sm font-semibold text-[#005c4b]">
               {detail?.conversation.conversationType === "group" ? "+" : title.slice(0, 1).toUpperCase()}
             </div>
             <div className="min-w-0">
-              <div className="truncate text-[16px] font-medium text-[#e9edef]">{title}</div>
-              <div className="mt-0.5 flex items-center gap-2 text-xs text-[#8696a0]">
+              <div className="truncate text-[16px] font-medium text-[#111b21]">{title}</div>
+              <div className="mt-0.5 flex items-center gap-2 text-xs text-[#667781]">
                 <span>{headerMeta}</span>
                 <span>·</span>
                 <span>{currentReplier}</span>
@@ -550,14 +550,14 @@ export function WaChatPanel(props: WaChatPanelProps) {
             <button
               type="button" onClick={onTakeover}
               disabled={!detail || actionLoading !== null}
-              className="h-8 rounded-full border border-[#4a5c66] bg-transparent px-3 text-xs font-medium text-[#d1d7db] disabled:opacity-50"
+              className="h-8 rounded-full border border-[#d1d7db] bg-white px-3 text-xs font-medium text-[#111b21] transition-colors hover:bg-[#f5f6f6] disabled:opacity-50"
             >
               {actionLoading === "takeover" ? "接管中..." : "接管"}
             </button>
             <button
               type="button" onClick={onRelease}
               disabled={!detail || actionLoading !== null}
-              className="h-8 rounded-full bg-[#111b21] px-3 text-xs font-medium text-white disabled:opacity-50"
+              className="h-8 rounded-full bg-[#00a884] px-3 text-xs font-medium text-white transition-colors hover:bg-[#017561] disabled:opacity-50"
             >
               {actionLoading === "release" ? "释放中..." : "释放"}
             </button>
@@ -682,7 +682,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                               <button
                                 type="button"
                                 className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
-                                onClick={() => onReplyToMessage(message.providerMessageId || message.waMessageId, previewText)}
+                                onClick={() => onReplyToMessage(message)}
                               >
                                 回复
                               </button>
@@ -720,18 +720,18 @@ export function WaChatPanel(props: WaChatPanelProps) {
       </div>
 
       {/* ── Composer ─────────────────────────────────────────────────────── */}
-      <div className="border-t border-[#222d34] bg-[#202c33] px-4 py-3">
+      <div className="border-t border-[#d1d7db] bg-[#f0f2f5] px-4 py-3">
         {quotedMessage ? (
-          <div className="mb-3 flex items-start justify-between gap-3 rounded-[12px] border border-[#0b8457]/30 bg-[#111b21] px-3 py-2">
+          <div className="mb-3 flex items-start justify-between gap-3 rounded-[12px] border border-[#b7e4d7] bg-[#ebfff7] px-3 py-2">
             <div className="min-w-0">
-              <div className="text-[11px] font-medium text-[#25d366]">引用回复</div>
-              <div className="truncate text-xs text-[#d1d7db]">
+              <div className="text-[11px] font-medium text-[#008069]">引用回复</div>
+              <div className="truncate text-xs text-[#54656f]">
                 {quotedMessage.bodyText || quotedMessage.attachments[0]?.fileName || quotedMessage.messageType}
               </div>
             </div>
             <button
               type="button"
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] text-[#25d366] hover:bg-white/10"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] text-[#008069] hover:bg-[#dff8ef]"
               onClick={onClearQuoted}
               title="取消引用"
             >
@@ -748,7 +748,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
               return (
                 <div
                   key={att.localId}
-                  className="relative flex items-center gap-2 overflow-hidden rounded-[10px] border border-[#4a5c66] bg-[#111b21] text-xs text-[#d1d7db]"
+                  className="relative flex items-center gap-2 overflow-hidden rounded-[10px] border border-[#d1d7db] bg-white text-xs text-[#54656f]"
                 >
                   {previewSrc ? (
                     /* Image thumbnail */
@@ -766,7 +766,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                   )}
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5 pr-2">
                     <span className="max-w-[120px] truncate font-medium">{att.fileName}</span>
-                    <span className="text-[10px] text-[#8696a0]">{att.mimeType.split("/")[1]?.toUpperCase()}</span>
+                    <span className="text-[10px] text-[#667781]">{att.mimeType.split("/")[1]?.toUpperCase()}</span>
                   </div>
                   <button
                     type="button"
@@ -782,7 +782,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
         ) : null}
 
         <div className="flex items-end gap-3">
-          <label className="flex h-10 cursor-pointer items-center gap-1.5 rounded-full border border-[#4a5c66] bg-[#111b21] px-4 text-xs text-[#d1d7db] hover:bg-[#2a3942]">
+          <label className="flex h-10 cursor-pointer items-center gap-1.5 rounded-full border border-[#d1d7db] bg-white px-4 text-xs text-[#54656f] transition-colors hover:bg-[#f5f6f6]">
             <span>📎</span>
             <span>附件</span>
             <input type="file" multiple className="hidden" onChange={handleFileInput} />
@@ -792,7 +792,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
             onChange={(event) => onComposerTextChange(event.target.value)}
             placeholder="输入消息内容，或粘贴图片"
             rows={1}
-            className="min-h-[44px] max-h-[140px] flex-1 resize-none rounded-[12px] border border-[#2a3942] bg-[#2a3942] px-4 py-3 text-sm text-[#e9edef] outline-none placeholder:text-[#8696a0]"
+            className="min-h-[44px] max-h-[140px] flex-1 resize-none rounded-[12px] border border-[#d1d7db] bg-white px-4 py-3 text-sm text-[#111b21] outline-none placeholder:text-[#667781]"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -805,7 +805,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
             type="button"
             onClick={onSend}
             disabled={!detail?.permissions.canReply || actionLoading !== null}
-            className="h-11 w-11 rounded-full bg-[#00a884] text-lg text-white disabled:opacity-50 hover:bg-[#017a61] flex items-center justify-center"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-[#00a884] text-lg text-white transition-colors hover:bg-[#017a61] disabled:opacity-50"
           >
             {actionLoading === "send" ? "…" : "➤"}
           </button>

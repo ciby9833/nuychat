@@ -34,6 +34,11 @@ export type WaRuntimeStatus = {
   reason: "provider_disabled" | "missing_session_dir" | null;
 };
 
+export type WaWorkbenchSummary = {
+  accountCount: number;
+  totalUnreadMessages: number;
+};
+
 export type ConversationItem = {
   conversationId: string;
   caseId?: string | null;

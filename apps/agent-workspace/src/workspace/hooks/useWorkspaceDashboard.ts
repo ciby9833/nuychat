@@ -19,6 +19,7 @@ import {
   apiPut,
   apiPost,
   getWaWorkbenchRuntime,
+  getWaWorkbenchSummary,
   getConversationMessage,
   getRealtimeReplay,
   markConversationRead,
@@ -111,6 +112,8 @@ export function useWorkspaceDashboard() {
   const seatEnabled = Boolean(agentId);
   const waSeatEnabled = Boolean(session?.waSeatEnabled);
   const [waRuntimeAvailable, setWaRuntimeAvailable] = useState(false);
+  const [waRuntimeChecked, setWaRuntimeChecked] = useState(!session?.waSeatEnabled);
+  const [waUnreadMessages, setWaUnreadMessages] = useState(0);
   const memberships = session?.memberships ?? [];
   const workspaceMemberships = memberships.filter((membership) => membership.agentId || membership.waSeatEnabled);
 
@@ -123,6 +126,7 @@ export function useWorkspaceDashboard() {
   const lastRealtimeEventIdRef = useRef<string | null>(
     typeof window !== "undefined" ? window.sessionStorage.getItem("nuychat.lastRealtimeEventId") : null
   );
+  const waUnreadRefreshTimerRef = useRef<number | null>(null);
 
   const [socketStatus, setSocketStatus] = useState("connecting");
   const [view, setView] = useState<SideView>("all");
@@ -191,24 +195,53 @@ export function useWorkspaceDashboard() {
   useEffect(() => {
     if (!session?.waSeatEnabled) {
       setWaRuntimeAvailable(false);
+      setWaRuntimeChecked(true);
+      setWaUnreadMessages(0);
       return;
     }
+    setWaRuntimeChecked(false);
     let cancelled = false;
     void getWaWorkbenchRuntime(session)
       .then((runtime) => {
         if (!cancelled) {
           setWaRuntimeAvailable(Boolean(runtime.available));
+          setWaRuntimeChecked(true);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setWaRuntimeAvailable(false);
+          setWaRuntimeChecked(true);
         }
       });
     return () => {
       cancelled = true;
     };
   }, [session]);
+
+  const refreshWaUnreadMessages = useCallback(async () => {
+    const currentSession = sessionRef.current;
+    if (!currentSession?.waSeatEnabled) {
+      setWaUnreadMessages(0);
+      return;
+    }
+    try {
+      const summary = await getWaWorkbenchSummary(currentSession);
+      setWaUnreadMessages(Number(summary.totalUnreadMessages ?? 0));
+    } catch {
+      setWaUnreadMessages(0);
+    }
+  }, []);
+
+  const scheduleWaUnreadRefresh = useCallback(() => {
+    const currentSession = sessionRef.current;
+    if (!currentSession?.waSeatEnabled) return;
+    if (waUnreadRefreshTimerRef.current !== null) return;
+    waUnreadRefreshTimerRef.current = window.setTimeout(() => {
+      waUnreadRefreshTimerRef.current = null;
+      void refreshWaUnreadMessages();
+    }, 300);
+  }, [refreshWaUnreadMessages]);
 
   const loadConversations = useCallback(async () => {
     if (!session || !seatEnabled) {
@@ -684,6 +717,10 @@ export function useWorkspaceDashboard() {
     void loadConversations();
   }, [loadConversations]);
 
+  useEffect(() => {
+    void refreshWaUnreadMessages();
+  }, [refreshWaUnreadMessages, session?.membershipId, session?.tenantId, session?.waSeatEnabled]);
+
   // ── Persistent socket — only recreated when session (login/logout) changes ───
   // Uses selectedIdRef.current so handlers always see the current selection
   // without including selectedId in the dependency array.
@@ -711,6 +748,9 @@ export function useWorkspaceDashboard() {
       if (seatEnabled) {
         void loadConversationsRef.current?.();
       }
+      if (sessionRef.current?.waSeatEnabled) {
+        scheduleWaUnreadRefresh();
+      }
       if (seatEnabled && selectedIdRef.current) {
         void loadDetail(selectedIdRef.current);
         void loadMessages(selectedIdRef.current);
@@ -737,12 +777,21 @@ export function useWorkspaceDashboard() {
       if (seatEnabled) {
         void loadConversationsRef.current?.();
       }
+      if (sessionRef.current?.waSeatEnabled) {
+        scheduleWaUnreadRefresh();
+      }
     });
     socket.on("conversation.updated", handleConversationUpdatedEvent);
     socket.on("message.received", handleMessageReceivedEvent);
     socket.on("message.sent", handleMessageSentEvent);
     socket.on("message.updated", handleMessageUpdatedEvent);
     socket.on("task.updated", handleTaskUpdatedEvent);
+    socket.on("wa.account.updated", () => {
+      scheduleWaUnreadRefresh();
+    });
+    socket.on("wa.conversation.updated", () => {
+      scheduleWaUnreadRefresh();
+    });
 
     return () => {
       socket.close();
@@ -750,7 +799,7 @@ export function useWorkspaceDashboard() {
     // selectedId intentionally NOT in deps — use selectedIdRef.current instead.
     // loadConversations intentionally NOT in deps — has its own effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent, handleTaskUpdatedEvent, loadAiTraces, loadCopilot, loadDetail, loadMessages, loadSkillRecommendation, replayRealtimeGap, seatEnabled, session]);
+  }, [handleConversationUpdatedEvent, handleMessageReceivedEvent, handleMessageSentEvent, handleMessageUpdatedEvent, handleTaskUpdatedEvent, loadAiTraces, loadCopilot, loadDetail, loadMessages, loadSkillRecommendation, replayRealtimeGap, scheduleWaUnreadRefresh, seatEnabled, session]);
 
   useEffect(() => {
     if (!session) return;
@@ -1369,6 +1418,8 @@ export function useWorkspaceDashboard() {
     agentId,
     waSeatEnabled,
     waRuntimeAvailable,
+    waRuntimeChecked,
+    waUnreadMessages,
     memberships: workspaceMemberships,
     socketStatus,
     view,

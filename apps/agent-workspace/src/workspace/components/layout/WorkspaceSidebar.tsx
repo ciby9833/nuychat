@@ -16,6 +16,7 @@ export type WorkspaceSection = "home" | "messages" | "tasks" | "wa";
 type WorkspaceSidebarProps = {
   section: WorkspaceSection;
   unreadCount: number;
+  waUnreadCount: number;
   taskCount: number;
   seatEnabled?: boolean;
   waEnabled?: boolean;
@@ -32,6 +33,7 @@ const ITEMS: Array<{ key: WorkspaceSection; labelKey: string; icon: React.ReactN
 export function WorkspaceSidebar({
   section,
   unreadCount,
+  waUnreadCount,
   taskCount,
   seatEnabled = false,
   waEnabled = false,
@@ -51,7 +53,7 @@ export function WorkspaceSidebar({
 
       <div className="flex flex-1 flex-col items-center gap-2">
         {visibleItems.map((item) => {
-          const badge = item.key === "messages" ? unreadCount : item.key === "tasks" ? taskCount : 0;
+          const badge = item.key === "messages" ? unreadCount : item.key === "tasks" ? taskCount : item.key === "wa" ? waUnreadCount : 0;
           const active = section === item.key;
 
           return (

@@ -142,23 +142,23 @@ export function WaConversationList(props: WaConversationListProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#111b21] text-[#e9edef]">
+    <div className="flex h-full min-h-0 flex-col bg-white text-[#111b21]">
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="border-b border-[#222d34] bg-[#202c33] px-4 py-3">
+      <div className="border-b border-[#d1d7db] bg-[#f0f2f5] px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#00a884] text-sm font-semibold text-white">
               {selectedAccount?.displayName?.slice(0, 1).toUpperCase() || "W"}
             </div>
             <div>
-              <div className="text-[17px] font-medium text-white">WhatsApp</div>
-              <div className="mt-0.5 text-[12px] text-[#8696a0]">
+              <div className="text-[17px] font-medium text-[#111b21]">WhatsApp</div>
+              <div className="mt-0.5 text-[12px] text-[#667781]">
                 {selectedAccount?.displayName || "全部账号"}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="rounded-full bg-[#111b21] px-3 py-1 text-[11px] font-medium text-[#d1d7db]">
+            <div className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-[#54656f] shadow-sm">
               {tabCounts[activeTab]}
             </div>
             {onSync && (
@@ -167,7 +167,7 @@ export function WaConversationList(props: WaConversationListProps) {
                 title="同步群组与通讯录"
                 onClick={onSync}
                 disabled={syncing}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-[#8696a0] transition-colors hover:bg-[#182229] hover:text-[#d1d7db] disabled:opacity-40"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-[#667781] transition-colors hover:bg-white hover:text-[#111b21] disabled:opacity-40"
               >
                 <span className={syncing ? "animate-spin inline-block" : ""}>{syncing ? "⟳" : "🔄"}</span>
               </button>
@@ -177,18 +177,18 @@ export function WaConversationList(props: WaConversationListProps) {
       </div>
 
       {/* ── Search + filters ────────────────────────────────────────────────── */}
-      <div className="border-b border-[#222d34] bg-[#111b21] px-3 py-3">
-        <div className="rounded-[10px] bg-[#202c33] px-3 py-2">
+      <div className="border-b border-[#d1d7db] bg-white px-3 py-3">
+        <div className="rounded-[10px] bg-[#f0f2f5] px-3 py-2">
           <input
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             placeholder="搜索或开始新聊天"
-            className="w-full border-0 bg-transparent text-sm text-[#e9edef] outline-none placeholder:text-[#8696a0]"
+            className="w-full border-0 bg-transparent text-sm text-[#111b21] outline-none placeholder:text-[#667781]"
           />
         </div>
         <div className="mt-3 space-y-2">
           <select
-            className="h-10 w-full rounded-[10px] border border-[#2a3942] bg-[#111b21] px-3 text-sm text-[#e9edef] focus:outline-none"
+            className="h-10 w-full rounded-[10px] border border-[#d1d7db] bg-white px-3 text-sm text-[#111b21] focus:outline-none"
             value={accountId ?? ""}
             onChange={(event) => onAccountChange(event.target.value || null)}
           >
@@ -200,7 +200,7 @@ export function WaConversationList(props: WaConversationListProps) {
             ))}
           </select>
           {activeTab !== "channels" && (
-            <label className="flex items-center gap-2 text-xs text-[#aebac1]">
+            <label className="flex items-center gap-2 text-xs text-[#667781]">
               <input
                 type="checkbox"
                 checked={assignedToMeOnly}
@@ -213,7 +213,7 @@ export function WaConversationList(props: WaConversationListProps) {
       </div>
 
       {/* ── Tabs ────────────────────────────────────────────────────────────── */}
-      <div className="flex border-b border-[#222d34] bg-[#111b21]">
+      <div className="flex border-b border-[#d1d7db] bg-white">
         {TAB_CONFIG.map((tab) => {
           const isActive = activeTab === tab.id;
           const hasUnread = tabUnread[tab.id] > 0 && !isActive;
@@ -225,13 +225,13 @@ export function WaConversationList(props: WaConversationListProps) {
               className={`relative flex flex-1 items-center justify-center gap-1.5 py-2.5 text-[13px] font-medium transition-colors ${
                 isActive
                   ? "border-b-2 border-[#00a884] text-[#00a884]"
-                  : "text-[#8696a0] hover:text-[#d1d7db]"
+                  : "text-[#667781] hover:text-[#111b21]"
               }`}
             >
               <span>{tab.icon}</span>
               <span>{tab.label}</span>
               {hasUnread && (
-                <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-[#25d366] px-1 py-0.5 text-[10px] font-semibold leading-none text-[#111b21]">
+                <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-[#25d366] px-1 py-0.5 text-[10px] font-semibold leading-none text-white">
                   {tabUnread[tab.id] > 99 ? "99+" : tabUnread[tab.id]}
                 </span>
               )}
@@ -241,8 +241,8 @@ export function WaConversationList(props: WaConversationListProps) {
       </div>
 
       {/* ── Conversation list ────────────────────────────────────────────────── */}
-      <div className="min-h-0 flex-1 overflow-auto bg-[#111b21]">
-        {loading ? <div className="px-4 py-3 text-sm text-[#8696a0]">加载中...</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto bg-white">
+        {loading ? <div className="px-4 py-3 text-sm text-[#667781]">加载中...</div> : null}
         <div>
           {visibleConversations.map((conversation) => {
             const active = conversation.waConversationId === selectedConversationId;
@@ -259,9 +259,9 @@ export function WaConversationList(props: WaConversationListProps) {
             // Avatar letter / icon
             const avatarLetter = isChannel ? "📢" : isGroup ? "👥" : (title || "?").slice(0, 1).toUpperCase();
             const avatarBg = isChannel
-              ? "bg-[#1b3a5c] text-[#53bdeb]"
+              ? "bg-[#e7f3ff] text-[#1f6feb]"
               : isGroup
-                ? "bg-[#2a3942] text-[#aebac1]"
+                ? "bg-[#e9edef] text-[#54656f]"
                 : "bg-[#d9fdd3] text-[#005c4b]";
 
             return (
@@ -269,10 +269,10 @@ export function WaConversationList(props: WaConversationListProps) {
                 key={conversation.waConversationId}
                 type="button"
                 onClick={() => onSelectConversation(conversation.waConversationId)}
-                className={`w-full border-b border-[#202c33] px-3 py-3 text-left transition-colors ${
+                className={`w-full border-b border-[#e9edef] px-3 py-3 text-left transition-colors ${
                   active
-                    ? "bg-[#202c33]"
-                    : "bg-[#111b21] hover:bg-[#182229]"
+                    ? "bg-[#f0f2f5]"
+                    : "bg-white hover:bg-[#f5f6f6]"
                 }`}
               >
                 <div className="flex items-start gap-3">
@@ -291,27 +291,27 @@ export function WaConversationList(props: WaConversationListProps) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[16px] font-normal text-[#e9edef]">{title}</div>
-                        <div className="mt-0.5 truncate text-[13px] text-[#8696a0]">{secondary}</div>
+                        <div className="truncate text-[16px] font-normal text-[#111b21]">{title}</div>
+                        <div className="mt-0.5 truncate text-[13px] text-[#667781]">{secondary}</div>
                       </div>
                       <div className="shrink-0 text-right">
-                        <div className="text-[11px] text-[#8696a0]">{formatListTime(conversation.lastMessageAt)}</div>
+                        <div className="text-[11px] text-[#667781]">{formatListTime(conversation.lastMessageAt)}</div>
                         {conversation.unreadCount > 0 ? (
-                          <div className="mt-2 inline-flex min-w-5 items-center justify-center rounded-full bg-[#25d366] px-1.5 py-0.5 text-[11px] font-semibold text-[#111b21]">
+                          <div className="mt-2 inline-flex min-w-5 items-center justify-center rounded-full bg-[#25d366] px-1.5 py-0.5 text-[11px] font-semibold text-white">
                             {conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}
                           </div>
                         ) : null}
                       </div>
                     </div>
-                    <div className="mt-1 truncate text-[14px] text-[#aebac1]">{subtitle}</div>
+                    <div className="mt-1 truncate text-[14px] text-[#667781]">{subtitle}</div>
                     {!isChannel && (
-                      <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-[#8696a0]">
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-[#667781]">
                         <span>{conversation.currentReplierName || "未接管"}</span>
                         <span>{conversation.accountDisplayName || "WA"}</span>
                       </div>
                     )}
                     {isChannel && (
-                      <div className="mt-2 text-[12px] text-[#8696a0]">
+                      <div className="mt-2 text-[12px] text-[#667781]">
                         <span>{conversation.accountDisplayName || "WA"}</span>
                       </div>
                     )}
@@ -321,15 +321,15 @@ export function WaConversationList(props: WaConversationListProps) {
             );
           })}
           {!loading && visibleConversations.length === 0 ? (
-            <div className="px-6 py-14 text-center text-sm text-[#8696a0]">
+            <div className="px-6 py-14 text-center text-sm text-[#667781]">
               {keyword ? "没有匹配的会话" : activeTab === "channels" ? "暂无频道消息" : activeTab === "groups" ? "暂无群聊" : "暂无会话"}
             </div>
           ) : null}
 
           {/* Contacts without conversation — Chats tab only */}
           {contactsWithoutConversation.length > 0 ? (
-            <div className="border-t border-[#202c33] px-3 py-3">
-              <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[#8696a0]">
+            <div className="border-t border-[#e9edef] px-3 py-3">
+              <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[#667781]">
                 联系人
               </div>
               <div className="space-y-1">
@@ -338,12 +338,12 @@ export function WaConversationList(props: WaConversationListProps) {
                     key={contact.contactId}
                     type="button"
                     onClick={() => onOpenContact(contact.contactId)}
-                    className="w-full rounded-[10px] border border-[#202c33] bg-[#111b21] px-3 py-3 text-left transition-colors hover:bg-[#182229]"
+                    className="w-full rounded-[10px] border border-[#e9edef] bg-[#f8f9fa] px-3 py-3 text-left transition-colors hover:bg-[#f0f2f5]"
                   >
-                    <div className="truncate text-[14px] text-[#e9edef]">
+                    <div className="truncate text-[14px] text-[#111b21]">
                       {contact.displayName || contact.notifyName || contact.phoneE164 || contact.contactJid}
                     </div>
-                    <div className="mt-1 truncate text-[12px] text-[#8696a0]">
+                    <div className="mt-1 truncate text-[12px] text-[#667781]">
                       {contact.phoneE164 || contact.contactJid}
                     </div>
                   </button>

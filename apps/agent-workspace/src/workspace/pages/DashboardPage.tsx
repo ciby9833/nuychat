@@ -67,6 +67,7 @@ export function DashboardPage() {
 
   const seatEnabled = Boolean(vm.agentId);
   const waEnabled = vm.waSeatEnabled && vm.waRuntimeAvailable;
+  const waRuntimePending = vm.waSeatEnabled && !vm.waRuntimeChecked;
   const headerProps = {
     tenantId: vm.tenantId,
     tenantSlug: vm.tenantSlug,
@@ -83,6 +84,7 @@ export function DashboardPage() {
       <WorkspaceShell
         section={section}
         unreadCount={vm.totalUnreadMessages}
+        waUnreadCount={vm.waUnreadMessages}
         taskCount={vm.filteredMyTasks.length}
         seatEnabled={seatEnabled}
         waEnabled={waEnabled}
@@ -125,7 +127,15 @@ export function DashboardPage() {
             />
             <Route
               path="wa"
-              element={<WaDashboardPage enabled={waEnabled} session={vm.session} />}
+              element={
+                waRuntimePending ? (
+                  <div className="flex h-full items-center justify-center text-sm text-slate-400">Loading…</div>
+                ) : waEnabled ? (
+                  <WaDashboardPage session={vm.session} />
+                ) : (
+                  <Navigate to="/dashboard/home" replace />
+                )
+              }
             />
             <Route path="*" element={<Navigate to="/dashboard/home" replace />} />
           </Routes>

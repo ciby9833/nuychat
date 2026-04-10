@@ -19,6 +19,7 @@ import {
   enqueueWorkbenchTextMessage,
   forceAssignWorkbenchConversation,
   getWorkbenchConversationDetail,
+  getWorkbenchSummary,
   listWorkbenchAccounts,
   listWorkbenchConversations,
   loadMoreWorkbenchMessages,
@@ -38,6 +39,11 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
   app.get("/api/wa/workbench/accounts", async (req) => {
     const auth = requireWaSeatAccess(app, req);
     return withTenantTransaction(auth.tenantId, async (trx) => listWorkbenchAccounts(trx, auth));
+  });
+
+  app.get("/api/wa/workbench/summary", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    return withTenantTransaction(auth.tenantId, async (trx) => getWorkbenchSummary(trx, auth));
   });
 
   // ─── Manual sync ────────────────────────────────────────────────────────────

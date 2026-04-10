@@ -175,8 +175,14 @@ export function deriveWaActions(input: {
   const loginInProgress = ["qr_required", "qr_scanned", "connecting"].includes(input.status.code);
   const connected = input.status.code === "connected";
   const sessionExpired = input.status.code === "session_expired";
-  const canReconnect = Boolean(input.lastConnectedAt) && !loginInProgress && !sessionExpired;
-  const canLogout = input.hasSession && !loginInProgress;
+  const wasManuallyLoggedOut = session?.disconnectReason === "manual_logout";
+  const canReconnect =
+    Boolean(input.lastConnectedAt) &&
+    !connected &&
+    !loginInProgress &&
+    !sessionExpired &&
+    !wasManuallyLoggedOut;
+  const canLogout = input.hasSession && !loginInProgress && !wasManuallyLoggedOut;
   const canStartLogin = !connected && !loginInProgress;
 
   return {
@@ -186,9 +192,11 @@ export function deriveWaActions(input: {
     canLogout,
     logoutReason: !input.hasSession
       ? "当前账号还没有登录会话"
-      : loginInProgress
-        ? "当前账号正在登录中"
-        : null,
+      : wasManuallyLoggedOut
+        ? "当前账号已主动退出"
+        : loginInProgress
+          ? "当前账号正在登录中"
+          : null,
     canReconnect,
     startLoginReason: connected
       ? "当前账号已在线，无需重新扫码登录"
@@ -197,10 +205,14 @@ export function deriveWaActions(input: {
         : null,
     reconnectReason: !input.lastConnectedAt
       ? "请先完成扫码登录后再重连"
-      : sessionExpired
-        ? "当前会话已失效，请重新扫码登录"
-        : loginInProgress
-          ? "当前账号正在登录中"
-          : null
+      : connected
+        ? "当前账号已在线，无需重连"
+        : wasManuallyLoggedOut
+          ? "账号已主动退出，请重新扫码登录"
+          : sessionExpired
+            ? "当前会话已失效，请重新扫码登录"
+            : loginInProgress
+              ? "当前账号正在登录中"
+              : null
   };
 }

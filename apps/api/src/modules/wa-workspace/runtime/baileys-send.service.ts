@@ -33,63 +33,63 @@ function resolveMediaUrl(url: string): string {
 }
 
 /**
- * Cleans a WAMessage["message"] object that was round-tripped through JSON storage.
+ * Converts a WAMessage["message"] that was round-tripped through JSON storage
+ * into a form that Baileys' protobuf serializer can safely handle.
  *
- * When Node.js Buffer objects are serialized to JSON they become
- * `{"type":"Buffer","data":[...]}` plain objects.  Baileys calls
- * `proto.Message.fromObject()` on quoted message content, and protobufjs
- * cannot reconstruct `bytes` fields from that plain-object form — it either
- * silently produces empty buffers or throws, causing the entire send to fail.
+ * Problem: Node.js Buffer fields (mediaKey, fileSha256, jpegThumbnail, waveform …)
+ * are stored in the DB as `{"type":"Buffer","data":[...]}` plain objects after
+ * JSON.stringify.  When Baileys calls `proto.Message.fromObject()` on the quoted
+ * context it cannot reconstruct proto `bytes` fields from that form — it either
+ * emits empty buffers or throws, crashing the send.
  *
- * For quoted-message context we only need human-readable fields (text, caption,
- * mimetype, dimensions, duration …).  Binary blobs (mediaKey, file hashes,
- * jpeg thumbnail, waveform …) are not needed for a reply preview, so we strip
- * them before handing the content to Baileys.
+ * Solution: For text messages keep the text content as-is.  For ALL media types
+ * (image, video, audio, document, sticker …) replace the whole media object with
+ * a simple `{conversation: "[类型]"}` fallback.  WhatsApp only needs the message
+ * ID (stanzaId) to look up the original message on its servers; the quoted content
+ * object is merely a local preview shown in the bubble.
  */
 function sanitizeMessageForQuote(rawMsg: unknown): WAMessage["message"] {
   if (!rawMsg || typeof rawMsg !== "object") {
     return { conversation: "[引用消息]" };
   }
 
-  // Shallow-copy the top-level message object.
-  const msg = { ...(rawMsg as Record<string, unknown>) };
+  const msg = rawMsg as Record<string, unknown>;
 
-  // Binary fields that Baileys stores on every media message type but that are
-  // not needed for a quoted-message preview.
-  const binaryFields = [
-    "jpegThumbnail",
-    "thumbnailDirectPath",
-    "thumbnailEncSha256",
-    "thumbnailSha256",
-    "mediaKey",
-    "mediaKeyTimestamp",
-    "fileEncSha256",
-    "fileSha256",
-    "streamingSidecarBytes",
-    "waveform",
-    "ptt",       // boolean, not binary, but safe to keep — listed here for completeness
-  ] as const;
+  // Plain text — safe to pass as-is.
+  if (typeof msg.conversation === "string") {
+    return { conversation: msg.conversation };
+  }
 
-  const mediaMessageTypes = [
-    "imageMessage",
-    "videoMessage",
-    "audioMessage",
-    "documentMessage",
-    "stickerMessage",
-    "gifMessage",
-  ];
-
-  for (const mediaType of mediaMessageTypes) {
-    if (msg[mediaType] && typeof msg[mediaType] === "object") {
-      const mediaContent = { ...(msg[mediaType] as Record<string, unknown>) };
-      for (const field of binaryFields) {
-        delete mediaContent[field];
-      }
-      msg[mediaType] = mediaContent;
+  // Extended text (links etc.) — keep only the text field.
+  if (msg.extendedTextMessage && typeof msg.extendedTextMessage === "object") {
+    const ext = msg.extendedTextMessage as Record<string, unknown>;
+    if (typeof ext.text === "string") {
+      return { extendedTextMessage: { text: ext.text } };
     }
   }
 
-  return msg as WAMessage["message"];
+  // Media types: replace with safe text label so protobuf serialization never
+  // chokes on JSON-serialized Buffer objects.
+  const mediaLabels: Record<string, string> = {
+    imageMessage:    "[图片消息]",
+    videoMessage:    "[视频消息]",
+    audioMessage:    "[语音消息]",
+    documentMessage: "[文件消息]",
+    stickerMessage:  "[贴纸]",
+    gifMessage:      "[GIF]",
+    locationMessage: "[位置消息]",
+    contactMessage:  "[联系人名片]",
+    productMessage:  "[商品消息]",
+    listMessage:     "[列表消息]",
+    buttonsMessage:  "[按钮消息]",
+  };
+
+  for (const [key, label] of Object.entries(mediaLabels)) {
+    if (msg[key]) return { conversation: label };
+  }
+
+  // Unknown type — use a generic fallback.
+  return { conversation: "[引用消息]" };
 }
 
 async function buildQuotedMessage(

@@ -11,7 +11,12 @@ import type { Knex } from "knex";
 import { waProviderAdapter } from "./provider/provider-registry.js";
 import { deriveWaActions, deriveWaStatus } from "./wa-session-status.js";
 import { assertCanReplyToWaConversation, releaseWaConversation, takeOverWaConversation } from "./wa-assignment.service.js";
-import { createWaLoginTask, listAccessibleWaAccounts, upsertWaAccountSession } from "./wa-account.repository.js";
+import {
+  createWaLoginTask,
+  getAccessibleWaAccountUnreadSummary,
+  listAccessibleWaAccounts,
+  upsertWaAccountSession
+} from "./wa-account.repository.js";
 import {
   getConversationMembers,
   getConversationMessages,
@@ -62,6 +67,17 @@ export async function listWorkbenchAccounts(
   input: { tenantId: string; membershipId: string; role: string }
 ) {
   return listAccessibleWaAccounts(trx, {
+    tenantId: input.tenantId,
+    membershipId: input.membershipId,
+    includeAllForAdmins: false
+  });
+}
+
+export async function getWorkbenchSummary(
+  trx: Knex.Transaction,
+  input: { tenantId: string; membershipId: string; role: string }
+) {
+  return getAccessibleWaAccountUnreadSummary(trx, {
     tenantId: input.tenantId,
     membershipId: input.membershipId,
     includeAllForAdmins: false

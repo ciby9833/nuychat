@@ -59,7 +59,10 @@ export function useWaWorkspace(session: Session | null) {
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [composerText, setComposerText] = useState("");
-  const [quotedMessageId, setQuotedMessageId] = useState<string | null>(null);
+  // Store the full quoted message item directly so clearing it is always
+  // reliable — deriving it from detail.messages caused race conditions where a
+  // loadDetail() triggered by socket events would re-surface a cleared quote.
+  const [quotedMessage, setQuotedMessage] = useState<WaMessageItem | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState<UploadingAttachment[]>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
@@ -151,6 +154,10 @@ export function useWaWorkspace(session: Session | null) {
     if (!session || !accountId) return;
     setActionLoading("open-contact");
     setError("");
+    // Clear composer state so previous conversation drafts don't leak in.
+    setQuotedMessage(null);
+    setComposerText("");
+    setUploadingAttachments([]);
     try {
       const next = await openWaWorkbenchContactConversation(session, { accountId, contactId });
       setDetail(next);
@@ -262,14 +269,13 @@ export function useWaWorkspace(session: Session | null) {
     [conversations, selectedConversationId]
   );
 
-  const quotedMessage = useMemo(
-    () => detail?.messages.find((item) => item.providerMessageId === quotedMessageId || item.waMessageId === quotedMessageId) ?? null,
-    [detail?.messages, quotedMessageId]
-  );
-
   const sendCurrentMessage = useCallback(async () => {
     if (!session || !selectedConversationId) return;
     if (!composerText.trim() && uploadingAttachments.length === 0) return;
+
+    // Derive the ID used by the backend — prefer the WhatsApp provider ID so
+    // the backend can build a proper quote context without an extra DB lookup.
+    const quotedMessageId = quotedMessage?.providerMessageId || quotedMessage?.waMessageId || null;
 
     setActionLoading("send");
     setError("");
@@ -308,10 +314,10 @@ export function useWaWorkspace(session: Session | null) {
     } finally {
       // Always clear the quoted message — either it was sent successfully, or the
       // send failed (user should re-select the quote if they want to retry).
-      setQuotedMessageId(null);
+      setQuotedMessage(null);
       setActionLoading(null);
     }
-  }, [composerText, loadConversations, loadDetail, quotedMessageId, selectedConversationId, session, uploadingAttachments]);
+  }, [composerText, loadConversations, loadDetail, quotedMessage, selectedConversationId, session, uploadingAttachments]);
 
   const uploadFiles = useCallback(async (files: FileList | null) => {
     if (!session || !files?.length) return;
@@ -373,7 +379,7 @@ export function useWaWorkspace(session: Session | null) {
     setSelectedConversationId(id);
     // Clear composer state on conversation switch so stale quote bars /
     // attachments from the previous conversation don't appear.
-    setQuotedMessageId(null);
+    setQuotedMessage(null);
     setComposerText("");
     setUploadingAttachments([]);
   }, [conversations]);
@@ -442,9 +448,8 @@ export function useWaWorkspace(session: Session | null) {
     detailLoading,
     composerText,
     setComposerText,
-    quotedMessageId,
-    setQuotedMessageId,
     quotedMessage,
+    setQuotedMessage,
     uploadingAttachments,
     setUploadingAttachments,
     actionLoading,

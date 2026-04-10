@@ -63,6 +63,7 @@ function mapAccount(row: Record<string, unknown>) {
     memberCount: Number(row.member_count ?? 0),
     lastConnectedAt,
     lastDisconnectedAt: row.last_disconnected_at ? new Date(String(row.last_disconnected_at)).toISOString() : null,
+    unreadMessageCount: Number(row.unread_message_count ?? 0),
     session: normalizedSession,
     status,
     actions: deriveWaActions({
@@ -138,6 +139,12 @@ async function loadWaAccounts(
         order by ${LATEST_SESSION_ORDER_SQL}
         limit 1
       ) as session_meta`),
+      trx.raw(`(
+        select coalesce(sum(c.unread_count), 0)
+        from wa_conversations c
+        where c.tenant_id = a.tenant_id
+          and c.wa_account_id = a.wa_account_id
+      ) as unread_message_count`),
       trx.raw("coalesce(json_agg(distinct wam.membership_id) filter (where wam.membership_id is not null), '[]'::json) as member_ids"),
       trx.raw("count(distinct wam.membership_id) as member_count")
     )
@@ -320,4 +327,29 @@ export async function listAccessibleWaAccounts(
   const accountIds = rows.map((row) => String(row.wa_account_id));
   if (accountIds.length === 0) return [];
   return loadWaAccounts(trx, { tenantId: input.tenantId, accountIds });
+}
+
+export async function getAccessibleWaAccountUnreadSummary(
+  trx: Knex.Transaction,
+  input: { tenantId: string; membershipId: string; includeAllForAdmins: boolean }
+) {
+  const accounts = await listAccessibleWaAccounts(trx, input);
+  if (accounts.length === 0) {
+    return {
+      accountCount: 0,
+      totalUnreadMessages: 0
+    };
+  }
+
+  const waAccountIds = accounts.map((account) => account.waAccountId);
+  const row = await trx("wa_conversations")
+    .where({ tenant_id: input.tenantId })
+    .whereIn("wa_account_id", waAccountIds)
+    .sum<{ total_unread_messages?: string | number | null }>("unread_count as total_unread_messages")
+    .first();
+
+  return {
+    accountCount: waAccountIds.length,
+    totalUnreadMessages: Number(row?.total_unread_messages ?? 0)
+  };
 }

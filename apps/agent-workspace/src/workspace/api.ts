@@ -23,6 +23,7 @@ import type {
   PaginatedMessagesResponse,
   RealtimeReplayEvent,
   Session,
+  WaWorkbenchSummary,
   WaRuntimeStatus
 } from "./types";
 
@@ -118,6 +119,10 @@ export async function apiFetch<T>(path: string, session: Session): Promise<T> {
 
 export function getWaWorkbenchRuntime(session: Session) {
   return apiFetch<WaRuntimeStatus>("/api/wa/workbench/runtime", session);
+}
+
+export function getWaWorkbenchSummary(session: Session) {
+  return apiFetch<WaWorkbenchSummary>("/api/wa/workbench/summary", session);
 }
 
 export async function apiPost(

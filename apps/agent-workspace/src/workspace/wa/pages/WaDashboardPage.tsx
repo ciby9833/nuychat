@@ -8,21 +8,19 @@
  */
 
 import { Suspense, lazy } from "react";
-import { Navigate } from "react-router-dom";
 
 import type { Session } from "../../types";
 
 const WaWorkspace = lazy(() => import("../components/WaWorkspace").then((module) => ({ default: module.WaWorkspace })));
 
 type WaDashboardPageProps = {
-  enabled: boolean;
   session: Session;
 };
 
-export function WaDashboardPage({ enabled, session }: WaDashboardPageProps) {
+export function WaDashboardPage({ session }: WaDashboardPageProps) {
   return (
     <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-slate-400">Loading…</div>}>
-      {enabled ? <WaWorkspace session={session} /> : <Navigate to="/dashboard/home" replace />}
+      <WaWorkspace session={session} />
     </Suspense>
   );
 }

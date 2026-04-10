@@ -33,6 +33,8 @@ export async function up(knex: Knex): Promise<void> {
     t.integer("version_no").notNullable().defaultTo(1);
     t.text("metadata_yaml").notNullable().defaultTo("");
     t.text("skill_md").notNullable().defaultTo("");
+    t.text("forms_md").notNullable().defaultTo("");
+    t.text("reference_md").notNullable().defaultTo("");
     t.jsonb("input_schema_json").notNullable().defaultTo(knex.raw("'{}'::jsonb"));
     t.jsonb("output_schema_json").notNullable().defaultTo(knex.raw("'{}'::jsonb"));
     t.text("change_log");
@@ -41,6 +43,27 @@ export async function up(knex: Knex): Promise<void> {
     t.unique(["capability_id", "version_no"], "capability_versions_capability_version_uniq");
     t.index(["capability_id", "version_no"], "capability_versions_capability_version_idx");
   });
+
+  // Also create capability_scripts here (dependency on capability_versions above).
+  // Migration 20260327_091 skips creating it when capability_versions doesn't exist yet.
+  const hasScriptsTable = await knex.schema.hasTable("capability_scripts");
+  if (!hasScriptsTable) {
+    await knex.schema.createTable("capability_scripts", (t) => {
+      t.uuid("script_id").primary().defaultTo(knex.raw("gen_random_uuid()"));
+      t.uuid("version_id").notNullable().references("version_id").inTable("capability_versions").onDelete("CASCADE");
+      t.string("script_key", 120).notNullable();
+      t.string("name", 200).notNullable();
+      t.string("file_name", 200).notNullable();
+      t.string("language", 40).notNullable().defaultTo("python");
+      t.text("source_code").notNullable().defaultTo("");
+      t.jsonb("env_refs_json").notNullable().defaultTo(knex.raw("'[]'::jsonb"));
+      t.boolean("enabled").notNullable().defaultTo(true);
+      t.timestamp("created_at", { useTz: true }).notNullable().defaultTo(knex.fn.now());
+      t.timestamp("updated_at", { useTz: true }).notNullable().defaultTo(knex.fn.now());
+      t.unique(["version_id", "script_key"], { indexName: "capability_scripts_version_key_uniq" });
+      t.index(["version_id", "created_at"], "capability_scripts_version_created_idx");
+    });
+  }
 
   await knex.schema.createTable("capability_resources", (t) => {
     t.uuid("resource_id").primary().defaultTo(knex.raw("uuid_generate_v4()"));

@@ -18,9 +18,9 @@ export function getDatabaseSummary() {
 
 export function assertExpectedDevelopmentDatabase() {
   const summary = getDatabaseSummary();
+  const isLoopbackHost = summary.host === "localhost" || summary.host === "127.0.0.1";
   const unexpected =
-    summary.host !== "localhost" ||
-    summary.port !== 5433 ||
+    !isLoopbackHost ||
     summary.database !== "nuychat_dev" ||
     summary.user !== "nuychat";
 
