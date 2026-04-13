@@ -1,4 +1,11 @@
 /**
+ * 作用：提供 orchestrator、copilot、skills/assist 共享的统一事实层，聚合工具结果、任务状态和客户状态。
+ * 上游：orchestrator.service.ts、copilot.service.ts、后续 evidence layer
+ * 下游：prompt-assembler.ts、sandbox-evaluator.ts、copilot.service.ts
+ * 协作对象：tasks/*、customer-intelligence.service.ts、knowledge-retrieval.service.ts
+ * 不负责：不做知识检索，不做记忆召回排序，不直接生成回复。
+ * 变更注意：新增证据来源时优先复用 VerifiedFact 契约，避免再造并行事实结构。
+ *
  * Fact Layer Service
  *
  * 公共事实层 — 为 orchestrator、copilot、skills/assist 三条链提供统一的事实源。
@@ -17,6 +24,7 @@
  */
 
 import type { Knex } from "knex";
+import type { KnowledgeEntry } from "../knowledge/knowledge-retrieval.service.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -186,6 +194,56 @@ export function buildVerifiedFactFromToolResult(
     result,
     summary: summarizeSkillResult(result),
     keyFacts: extractKeyFacts(result, args),
+  };
+}
+
+export function buildVerifiedFactFromKnowledgeEntry(
+  entry: KnowledgeEntry,
+  queryText: string,
+): VerifiedFact {
+  const normalizedUpdatedAt = entry.updated_at
+    ? new Date(entry.updated_at).toISOString()
+    : new Date().toISOString();
+  const content = entry.content.trim();
+  return {
+    skillName: "knowledge_base",
+    invokedAt: normalizedUpdatedAt,
+    args: {
+      queryText,
+      entryId: entry.entry_id,
+      title: entry.title
+    },
+    result: {
+      entryId: entry.entry_id,
+      title: entry.title,
+      category: entry.category,
+      content: content.slice(0, 1200),
+      source: "knowledge_base"
+    },
+    summary: [entry.title, entry.category ? `category: ${entry.category}` : null, summarizeKnowledgeContent(content)]
+      .filter(Boolean)
+      .join("; "),
+    keyFacts: {
+      referenceId: entry.entry_id,
+      trackingNumber: entry.entry_id,
+      status: "knowledge_verified",
+      time: normalizedUpdatedAt,
+      location: entry.category,
+      description: content.slice(0, 240) || entry.title
+    }
+  };
+}
+
+export function mergeKnowledgeFacts(
+  snapshot: FactSnapshot,
+  knowledgeFacts: VerifiedFact[],
+): FactSnapshot {
+  if (knowledgeFacts.length === 0) return snapshot;
+
+  const dedupedOperationalFacts = snapshot.verifiedFacts.filter((fact) => fact.skillName !== "knowledge_base");
+  return {
+    ...snapshot,
+    verifiedFacts: [...knowledgeFacts, ...dedupedOperationalFacts]
   };
 }
 
@@ -468,6 +526,13 @@ export function summarizeSkillResult(result: Record<string, unknown>): string {
     .slice(0, 6)
     .map(([key, value]) => `${key}: ${formatSummaryValue(value)}`)
     .join("; ");
+}
+
+function summarizeKnowledgeContent(content: string): string {
+  return content
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
 }
 
 /**

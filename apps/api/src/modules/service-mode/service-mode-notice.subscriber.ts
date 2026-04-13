@@ -11,6 +11,7 @@ export function registerServiceModeNoticeSubscriber() {
     void (async () => {
       const scenario = resolveNoticeScenario(event);
       if (!scenario) return;
+      if (!shouldSendNotice(event, scenario)) return;
 
       const notice = await withTenantTransaction(event.tenantId, async (trx) =>
         routingNoticeService.buildNotice(trx, {
@@ -52,4 +53,28 @@ function resolveNoticeScenario(event: ServiceModeChangedEvent): "human_assigned"
     default:
       return null;
   }
+}
+
+function shouldSendNotice(
+  event: ServiceModeChangedEvent,
+  scenario: "human_assigned" | "human_queue" | "fallback_ai"
+) {
+  const previousMode = event.from?.serviceMode ?? null;
+
+  if (scenario === "fallback_ai") {
+    return previousMode !== "fallback_ai";
+  }
+
+  if (scenario === "human_assigned") {
+    return (
+      previousMode !== "human_assigned" ||
+      event.from?.assignedAgentId !== event.to.assignedAgentId
+    );
+  }
+
+  if (scenario === "human_queue") {
+    return previousMode !== "queued_human";
+  }
+
+  return true;
 }

@@ -1,3 +1,12 @@
+/**
+ * 作用：管理 capability 的租户后台定义与版本化持久化，向运行时提供可读取的能力配置。
+ * 上游：capability-admin/index.ts
+ * 下游：agent-skills/skill-definition.service.ts、capability availability/runtime 读取方
+ * 协作对象：tenant-admin.shared.ts、infra/db/client.ts、capability_versions/capability_scripts 表
+ * 不负责：不做运行时 skill 规划，不做 tool 暴露决策，不做知识检索。
+ * 变更注意：新增 capability 运行时字段时，必须同时补齐 create/update/read 三条链路，避免出现半接入状态。
+ */
+
 import { withTenantTransaction } from "../../infra/db/client.js";
 import { parseJsonObject, toIsoString } from "../tenant/tenant-admin.shared.js";
 
@@ -12,6 +21,7 @@ export type CapabilityUpsertInput = {
   referenceMarkdown?: string | null;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  triggerHints?: Record<string, unknown>;
   scripts?: Array<{
     scriptKey: string;
     name: string;
@@ -26,6 +36,10 @@ export type CapabilityUpsertInput = {
     enabled?: boolean;
   }>;
 };
+
+function normalizeTriggerHints(value: unknown): Record<string, unknown> {
+  return parseJsonObject(value);
+}
 
 export async function listCapabilitiesForTenant(tenantId: string) {
   return withTenantTransaction(tenantId, async (trx) => {
@@ -80,6 +94,7 @@ export async function createCapabilityForTenant(tenantId: string, input: Capabil
         reference_md: typeof input.referenceMarkdown === "string" ? input.referenceMarkdown : "",
         input_schema_json: input.inputSchema ?? {},
         output_schema_json: input.outputSchema ?? {},
+        trigger_hints_json: normalizeTriggerHints(input.triggerHints),
         change_log: "Created from capability admin"
       })
       .returning(["version_id"]);
@@ -185,6 +200,9 @@ export async function updateCapabilityForTenant(tenantId: string, capabilityId: 
           : (typeof latestVersion?.reference_md === "string" ? latestVersion.reference_md : ""),
         input_schema_json: input.inputSchema ?? parseJsonObject(latestVersion?.input_schema_json),
         output_schema_json: input.outputSchema ?? parseJsonObject(latestVersion?.output_schema_json),
+        trigger_hints_json: input.triggerHints !== undefined
+          ? normalizeTriggerHints(input.triggerHints)
+          : normalizeTriggerHints(latestVersion?.trigger_hints_json),
         change_log: "Updated from capability admin"
       })
       .returning(["version_id"]);
@@ -342,6 +360,7 @@ async function readCapabilityDetail(trx: any, tenantId: string, capabilityId: st
     referenceMarkdown: typeof version?.reference_md === "string" ? version.reference_md : "",
     inputSchema: parseJsonObject(version?.input_schema_json),
     outputSchema: parseJsonObject(version?.output_schema_json),
+    triggerHints: normalizeTriggerHints(version?.trigger_hints_json),
     scripts: scriptRows.map((item: any) => ({
       scriptId: item.script_id,
       scriptKey: item.script_key,

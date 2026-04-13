@@ -1,34 +1,33 @@
 /**
- * Harness Engineering — Context Pipeline
- *
- * Unified context assembly: collects all contextual signals into
- * a structured HarnessContext object.
- *
- * Pipeline stages:
- *   1. Customer Intelligence — long-term memory + profile
- *   2. Fact Snapshot — verified facts, task facts, state facts
- *   3. Conversation State — capability state (multi-turn)
- *
- * Each stage runs independently and contributes to the prompt.
- * The pipeline is designed to be extensible: add new context sources
- * (e.g., knowledge base search, RAG) by adding new stages.
+ * 作用：统一组装数字员工主链上下文，当前负责客户记忆、业务知识、事实快照三层上下文。
+ * 上游：orchestrator.service.ts
+ * 下游：prompt-assembler.ts
+ * 协作对象：customer-intelligence.service.ts、fact-layer.service.ts、knowledge-retrieval.service.ts
+ * 不负责：不决定轨道，不执行 tool，不生成最终回复。
+ * 变更注意：新增上下文来源优先以独立 stage 接入，不要继续把查询逻辑塞回 orchestrator。
  */
 
 import type { Knex } from "knex";
 import type { HarnessContext } from "./types.js";
 import {
   buildFactSnapshot,
+  buildVerifiedFactFromKnowledgeEntry,
   formatFactSnapshotForPrompt,
+  mergeKnowledgeFacts,
   type FactSnapshot
 } from "../fact-layer.service.js";
 import {
   buildCustomerIntelligenceContext
 } from "../../memory/customer-intelligence.service.js";
+import { formatKnowledgeEntriesAsContext, searchKnowledgeEntries } from "../../knowledge/knowledge-retrieval.service.js";
+import type { SemanticTrack } from "../semantic-router.types.js";
 
 export interface ContextPipelineInput {
   tenantId: string;
   conversationId: string;
   customerId: string;
+  track: SemanticTrack;
+  knowledgeQuery: string;
   /** If a skill is active, exclude certain memory types to reduce noise */
   activeSkillSlug: string | null;
 }
@@ -45,7 +44,7 @@ export async function runContextPipeline(
   db: Knex | Knex.Transaction,
   input: ContextPipelineInput
 ): Promise<HarnessContext> {
-  const [customerIntelligence, factSnapshot] = await Promise.all([
+  const [customerIntelligence, knowledgeEntries, factSnapshot] = await Promise.all([
     buildCustomerIntelligenceContext(
       db,
       input.tenantId,
@@ -55,6 +54,13 @@ export async function runContextPipeline(
         excludeMemoryTypes: input.activeSkillSlug ? ["unresolved_issue"] : []
       }
     ),
+    input.track === "knowledge_track"
+      ? searchKnowledgeEntries(db, {
+          tenantId: input.tenantId,
+          queryText: input.knowledgeQuery,
+          limit: 4
+        })
+      : Promise.resolve([]),
     buildFactSnapshot(db, {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
@@ -62,10 +68,17 @@ export async function runContextPipeline(
     })
   ]);
 
+  const knowledgeContext = formatKnowledgeEntriesAsContext(knowledgeEntries);
+  const knowledgeFacts = knowledgeEntries.map((entry) =>
+    buildVerifiedFactFromKnowledgeEntry(entry, input.knowledgeQuery)
+  );
+  const mergedFactSnapshot = mergeKnowledgeFacts(factSnapshot, knowledgeFacts);
+
   return {
     customerIntelligence,
-    factSnapshot,
-    factContext: formatFactSnapshotForPrompt(factSnapshot),
+    knowledgeContext,
+    factSnapshot: mergedFactSnapshot,
+    factContext: formatFactSnapshotForPrompt(mergedFactSnapshot),
     conversationState: null
   };
 }

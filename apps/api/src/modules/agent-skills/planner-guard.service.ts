@@ -1,27 +1,20 @@
+/**
+ * 作用：提供 planner 阶段的候选能力校验与 skill run 记录，防止无效建议进入执行链。
+ * 上游：orchestrator.service.ts、conversation.routes.ts
+ * 下游：skill_runs 记录、后续 hydration / execution
+ * 协作对象：agent-skills/contracts.ts、skill_runs 表
+ * 不负责：不做运行时 tool 准入，不做权限校验，不记录 tool invocation 审计。
+ * 变更注意：本层只保留 planner 侧职责；运行时 scope 校验应由 runtime-governance 单层承担。
+ */
+
 import type { Knex } from "knex";
 
 import type { CapabilitySuggestionResult, TenantSkillDefinition } from "./contracts.js";
-
-type GuardResult =
-  | {
-      allowed: true;
-      skill: TenantSkillDefinition;
-      scriptKey: string;
-    }
-  | {
-      allowed: false;
-      reason: string;
-      fallbackAction: "clarify" | "handoff" | "defer";
-    };
 
 function normalizeScore(value: unknown, fallback: number) {
   const score = Number(value);
   if (!Number.isFinite(score)) return fallback;
   return Math.max(0, Math.min(1, score));
-}
-
-function stringifyArgs(args: Record<string, unknown>) {
-  return JSON.stringify(args ?? {});
 }
 
 export async function validateCapabilitySuggestions(
@@ -68,26 +61,6 @@ export async function validateCapabilitySuggestions(
     requiresClarification: input.suggestions.requiresClarification,
     clarificationQuestion: input.suggestions.clarificationQuestion
   };
-}
-
-/**
- * Thin assertion: check if the tool name belongs to a candidate skill.
- *
- * No DB queries — buildRuntimeTools already constrains exposed tools,
- * so this only catches hallucinated tool names from the LLM.
- * Duplicate call detection is handled by the orchestrator's seenToolCalls set.
- */
-export function assertToolInCandidateScope(
-  candidateSkills: TenantSkillDefinition[],
-  toolName: string
-): { allowed: true; reason?: undefined } | { allowed: false; reason: string } {
-  const found = candidateSkills.some((skill) =>
-    skill.scripts.some((script) => script.enabled && script.scriptKey === toolName)
-  );
-  if (!found) {
-    return { allowed: false, reason: "tool_not_in_candidate_scope" };
-  }
-  return { allowed: true };
 }
 
 export async function recordSkillRun(

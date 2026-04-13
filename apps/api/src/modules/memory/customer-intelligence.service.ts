@@ -1,3 +1,12 @@
+/**
+ * 作用：维护客户短期/长期记忆、画像快照与记忆召回，为主链和 Copilot 提供客户上下文。
+ * 上游：orchestrator.service.ts、copilot.service.ts、memory encoder / task jobs
+ * 下游：context-pipeline.ts、copilot.service.ts
+ * 协作对象：vector-memory.service.ts、task-vector-memory.service.ts、fact-layer.service.ts
+ * 不负责：不替代业务知识库，不决定轨道，不直接生成客户回复。
+ * 变更注意：客户记忆是“懂客户”，不是“懂业务”，后续不要再把它当知识库替代。
+ */
+
 import crypto from "node:crypto";
 import type { Knex } from "knex";
 

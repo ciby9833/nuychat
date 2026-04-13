@@ -1,3 +1,12 @@
+/**
+ * 作用：把 capability 运行时配置整理成 skill planner 可消费的租户技能目录。
+ * 上游：orchestrator.service.ts、conversation.routes.ts、runtime-governance.service.ts
+ * 下游：skill-planner.service.ts、skill-hydration.service.ts、runtime tool builder
+ * 协作对象：capability-definition.service.ts、capability_versions/capability_scripts 表
+ * 不负责：不做最终轨道判定，不执行脚本，不决定知识轨道回答策略。
+ * 变更注意：这里返回的字段必须与 capability 持久化结构同步，禁止再用写死默认值掩盖缺失数据。
+ */
+
 import type { Knex } from "knex";
 
 import type { SkillPlanningInput, TenantSkillDefinition } from "./contracts.js";
@@ -19,6 +28,7 @@ type CapabilityVersionRow = {
   reference_md: string | null;
   input_schema_json: unknown;
   output_schema_json: unknown;
+  trigger_hints_json: unknown;
 };
 
 type CapabilityScriptRow = {
@@ -117,7 +127,7 @@ export async function listTenantSkillsForPlanning(
   const versionRows = await db("capability_versions")
     .whereIn("capability_id", capabilityIds)
     .orderBy([{ column: "capability_id", order: "asc" }, { column: "version_no", order: "desc" }, { column: "created_at", order: "desc" }])
-    .select("version_id", "capability_id", "skill_md", "forms_md", "reference_md", "input_schema_json", "output_schema_json");
+    .select("version_id", "capability_id", "skill_md", "forms_md", "reference_md", "input_schema_json", "output_schema_json", "trigger_hints_json");
 
   const latestCapabilityVersions = new Map<string, CapabilityVersionRow>();
   for (const row of versionRows as CapabilityVersionRow[]) {
@@ -160,7 +170,7 @@ export async function listTenantSkillsForPlanning(
       name: capability.name,
       description: capability.description,
       status: capability.status,
-      triggerHints: {},
+      triggerHints: parseObject(version?.trigger_hints_json),
       inputSchema: parseObject(version?.input_schema_json),
       outputSchema: parseObject(version?.output_schema_json),
       policyConfig: {},

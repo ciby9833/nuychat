@@ -1,6 +1,16 @@
+/**
+ * 作用：提供运行时技能执行治理，包括作用域内 policy 装载、执行准入判断与调用审计。
+ * 上游：orchestrator.service.ts、conversation.routes.ts
+ * 下游：tool execution gate、skill_invocations 审计日志
+ * 协作对象：agent-skills/skill-definition.service.ts、agent-skills/contracts.ts
+ * 不负责：不做 capability 规划，不做 LLM prompt 注入，不承担 planner 侧候选过滤。
+ * 变更注意：运行时 gate 只保留一层准入职责；若已按 hydrated skills 收缩 policy，不要再叠加重复 scope guard。
+ */
+
 import type { Knex } from "knex";
 
 import { listTenantSkillsForPlanning } from "../agent-skills/skill-definition.service.js";
+import type { TenantSkillDefinition } from "../agent-skills/contracts.js";
 
 type RuntimeActorType = "ai" | "agent" | "workflow";
 
@@ -56,6 +66,25 @@ export async function getBoundRuntimePolicies(
   }
 
   return policies;
+}
+
+export function filterRuntimePoliciesForSkills(
+  policyMap: Map<string, RuntimeSkillPolicy>,
+  skills: TenantSkillDefinition[]
+): Map<string, RuntimeSkillPolicy> {
+  if (skills.length === 0) return new Map();
+
+  const allowedScriptKeys = new Set(
+    skills.flatMap((skill) =>
+      skill.scripts
+        .filter((script) => script.enabled)
+        .map((script) => script.scriptKey)
+    )
+  );
+
+  return new Map(
+    [...policyMap.entries()].filter(([scriptKey]) => allowedScriptKeys.has(scriptKey))
+  );
 }
 
 export async function evaluateSkillExecutionGate(

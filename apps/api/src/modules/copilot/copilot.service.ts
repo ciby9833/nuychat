@@ -1,9 +1,24 @@
+/**
+ * 作用：生成座席侧 Copilot 摘要与建议，复用数字员工的统一事实层，避免 agent 视角与自动回复口径漂移。
+ * 上游：conversation.routes.ts
+ * 下游：Copilot 面板、agent assist UI
+ * 协作对象：fact-layer.service.ts、customer-intelligence.service.ts、knowledge-retrieval.service.ts
+ * 不负责：不执行业务 tool，不维护会话状态机，不替代 orchestrator 主回复链。
+ * 变更注意：新增证据来源时优先并入 FactSnapshot，而不是在 Copilot 内部拼第二套上下文。
+ */
+
 import type { Knex } from "knex";
 import type { AIProvider } from "../../../../../packages/ai-sdk/src/index.ts";
 import { resolveTenantAISettingsForScene } from "../ai/provider-config.service.js";
 import { assertTenantAIBudgetAllowsUsage, recordAIUsage } from "../ai/usage-meter.service.js";
 import { buildCustomerIntelligenceContext } from "../memory/customer-intelligence.service.js";
-import { buildFactSnapshot, formatFactSnapshotForPrompt } from "../ai/fact-layer.service.js";
+import {
+  buildFactSnapshot,
+  buildVerifiedFactFromKnowledgeEntry,
+  formatFactSnapshotForPrompt,
+  mergeKnowledgeFacts
+} from "../ai/fact-layer.service.js";
+import { searchKnowledgeEntries } from "../knowledge/knowledge-retrieval.service.js";
 
 type MsgRow = {
   message_id: string;
@@ -67,7 +82,8 @@ export class CopilotService {
     const entities = extractEntities(textFeed.join(" "));
 
     // ── Fact Layer: shared fact source with orchestrator & skills/assist ──
-    const [factSnapshot, memoryContext] = await Promise.all([
+    const latestUserText = [...messages].reverse().find((message) => message.direction !== "outbound")?.content?.text?.trim() ?? "";
+    const [factSnapshot, memoryContext, knowledgeEntries] = await Promise.all([
       buildFactSnapshot(db, {
         tenantId: input.tenantId,
         conversationId: input.conversationId,
@@ -78,19 +94,32 @@ export class CopilotService {
         input.tenantId,
         input.conversationId,
         conversationRow?.customer_id ?? undefined
-      ).catch(() => "")
+      ).catch(() => ""),
+      latestUserText
+        ? searchKnowledgeEntries(db, {
+            tenantId: input.tenantId,
+            queryText: latestUserText,
+            limit: 3
+          }).catch(() => [])
+        : Promise.resolve([])
     ]);
 
-    const factLayerContext = formatFactSnapshotForPrompt(factSnapshot);
-    const topFact = factSnapshot.verifiedFacts[0] ?? null;
-    const latestToolResult = topFact ? {
+    const factSnapshotWithKnowledge = mergeKnowledgeFacts(
+      factSnapshot,
+      knowledgeEntries.map((entry) => buildVerifiedFactFromKnowledgeEntry(entry, latestUserText))
+    );
+
+    const factLayerContext = formatFactSnapshotForPrompt(factSnapshotWithKnowledge);
+    const latestOperationalFact = factSnapshot.verifiedFacts[0] ?? null;
+    const latestUnifiedFact = factSnapshotWithKnowledge.verifiedFacts[0] ?? null;
+    const latestToolResult = latestOperationalFact ? {
       type: "tool_result",
-      tool_name: topFact.skillName,
-      invoked_at: topFact.invokedAt,
-      args: topFact.args,
-      result: topFact.result
+      tool_name: latestOperationalFact.skillName,
+      invoked_at: latestOperationalFact.invokedAt,
+      args: latestOperationalFact.args,
+      result: latestOperationalFact.result
     } : null;
-    const latestSkillFacts = topFact?.keyFacts ?? null;
+    const latestSkillFacts = latestOperationalFact?.keyFacts ?? latestUnifiedFact?.keyFacts ?? null;
 
     // ── LLM-powered analysis (when API key is available) ─────────────────────
     const aiSettings = await resolveTenantAISettingsForScene(db, input.tenantId, "agent_assist");

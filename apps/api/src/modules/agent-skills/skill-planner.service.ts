@@ -1,3 +1,12 @@
+/**
+ * 作用：根据用户请求从租户能力目录中建议候选 skills，当前服务主要用于 action track 的能力预选。
+ * 上游：orchestrator.service.ts
+ * 下游：planner-guard.service.ts、后续 skill-hydration.service.ts
+ * 协作对象：skill-definition.service.ts、usage-meter.service.ts
+ * 不负责：不决定知识轨道，不执行脚本，不做最终回复生成。
+ * 变更注意：第一阶段后 knowledge/clarification 轨道不应再依赖本服务；后续应从“选技能”演进为“选动作域”。
+ */
+
 import type { AIMessage, AIProvider } from "../../../../../packages/ai-sdk/src/index.ts";
 import type { Knex } from "knex";
 import type { ProviderName } from "../../../../../packages/ai-sdk/src/index.js";

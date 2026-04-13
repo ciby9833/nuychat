@@ -1,3 +1,12 @@
+/**
+ * 作用：统一编排数字员工主链，串联轨道判定、上下文组装、工具执行、事实回填与最终回复。
+ * 上游：AI seat dispatch / routing execution
+ * 下游：semantic-router.service.ts、harness/context-pipeline.ts、runtime-governance、sandbox-evaluator
+ * 协作对象：fact-layer.service.ts、customer-intelligence.service.ts、agent-skills/*、tasks/*
+ * 不负责：不实现知识检索算法，不承载具体业务脚本逻辑，不长期保存知识编排策略。
+ * 变更注意：新增步骤优先下沉到独立 service，避免继续向 orchestrator 堆流程。
+ */
+
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Knex } from "knex";
@@ -6,6 +15,7 @@ import { getUploadsDir } from "../../infra/storage/upload.service.js";
 import { runCapabilityScriptExecution } from "../tasks/task-script-execution.service.js";
 import {
   evaluateSkillExecutionGate,
+  filterRuntimePoliciesForSkills,
   getBoundRuntimePolicies,
   recordSkillInvocation
 } from "../skills/runtime-governance.service.js";
@@ -13,10 +23,10 @@ import {
   listTenantSkillsForPlanning,
 } from "../agent-skills/skill-definition.service.js";
 import { smartPlanCapabilities } from "../agent-skills/skill-planner.service.js";
+import { hydrateSkillsForTurn } from "../agent-skills/skill-hydration.service.js";
 import {
   recordSkillRun,
-  validateCapabilitySuggestions,
-  assertToolInCandidateScope
+  validateCapabilitySuggestions
 } from "../agent-skills/planner-guard.service.js";
 import {
   clearConversationCapabilityState,
@@ -39,7 +49,10 @@ import {
   type AISentiment
 } from "../ai/ai-runtime-contract.js";
 import {
-  enforcePreReplyPolicy,
+  composeClarificationTurn,
+  composeFinalAnswer
+} from "../ai/answer-composer.service.js";
+import {
   evaluatePreReplyPolicy
 } from "../ai/pre-reply-policy.service.js";
 import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
@@ -56,6 +69,8 @@ import {
   runContextPipeline,
   SandboxState
 } from "../ai/harness/index.js";
+import { routeMessage } from "../ai/semantic-router.service.js";
+import type { SemanticTrack } from "../ai/semantic-router.types.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -141,6 +156,9 @@ export class OrchestratorService {
     const model = aiSettings.model;
     const providerName = aiSettings.providerName;
     const actorType = input.actorType ?? "ai";
+    const semanticRoute = await routeMessage({
+      chatHistory
+    });
     const runtimePolicy = await getBoundRuntimePolicies(db, {
       tenantId: input.tenantId,
       capabilityScope: input.capabilityScope,
@@ -148,17 +166,21 @@ export class OrchestratorService {
       conversationId: input.conversationId
     });
     const requestedPreferredSkills = normalizePreferredSkills(input.preferredSkillNames ?? []);
-    const tenantSkills = await listTenantSkillsForPlanning(db, {
-      tenantId: input.tenantId,
-      channelType: input.channelType,
-      actorRole: actorType,
-      capabilityScope: input.capabilityScope ?? null,
-      ownerMode: actorType
-    });
-    const activeCapabilityState = await getConversationCapabilityState(db, {
-      tenantId: input.tenantId,
-      conversationId: input.conversationId
-    });
+    const tenantSkills = semanticRoute.track === "action_track"
+      ? await listTenantSkillsForPlanning(db, {
+          tenantId: input.tenantId,
+          channelType: input.channelType,
+          actorRole: actorType,
+          capabilityScope: input.capabilityScope ?? null,
+          ownerMode: actorType
+        })
+      : [];
+    const activeCapabilityState = semanticRoute.track === "action_track"
+      ? await getConversationCapabilityState(db, {
+          tenantId: input.tenantId,
+          conversationId: input.conversationId
+        })
+      : null;
     const continuationSkill = activeCapabilityState
       ? tenantSkills.find((skill) => skill.capabilityId === activeCapabilityState.capabilityId) ?? null
       : null;
@@ -168,12 +190,20 @@ export class OrchestratorService {
         conversationId: input.conversationId
       });
     }
-    const preReplyPolicy = await evaluatePreReplyPolicy(db, {
-      tenantId: input.tenantId,
-      chatHistory,
-      preferredSkillNames: requestedPreferredSkills,
-      availableSkills: tenantSkills
-    });
+    const preReplyPolicy = semanticRoute.track === "action_track"
+      ? await evaluatePreReplyPolicy(db, {
+          tenantId: input.tenantId,
+          chatHistory,
+          preferredSkillNames: requestedPreferredSkills,
+          availableSkills: tenantSkills
+        })
+      : {
+          enabled: false,
+          intent: semanticRoute.intent,
+          requiredChecks: [],
+          requiredBindingKeysByCheck: {},
+          preferredBindingKeys: requestedPreferredSkills
+        };
     const preferredScriptKeys = preReplyPolicy.preferredBindingKeys;
     const plannerSkills = continuationSkill
       ? [continuationSkill]
@@ -187,17 +217,28 @@ export class OrchestratorService {
     // focused answer from existing context.  This prevents redundant re-invocation
     // when the customer asks a follow-up like "what is the latest status?" right
     // after receiving a full logistics dump.
-    const hasRecentSkillContext = !continuationSkill && await checkRecentSkillContext(db, {
-      tenantId: input.tenantId,
-      conversationId: input.conversationId,
-      chatHistory
-    });
+    const hasRecentSkillContext = semanticRoute.track === "action_track" && !continuationSkill
+      ? await checkRecentSkillContext(db, {
+          tenantId: input.tenantId,
+          conversationId: input.conversationId,
+          chatHistory
+        })
+      : false;
 
     // ── Smart Skill Planning ─────────────────────────────────────────────────
     // Tier 1 (≤ 5 skills): skip LLM planner, use all as candidates.
     // Tier 2 (> 5, keyword-filtered ≤ 5): rule-based pre-filter.
     // Tier 3 (> 5, keyword can't narrow): call LLM planner.
-    const capabilitySuggestions = continuationSkill
+    const capabilitySuggestions = semanticRoute.track !== "action_track"
+      ? {
+          candidates: [],
+          requiresClarification: semanticRoute.track === "clarification_track",
+          clarificationQuestion: semanticRoute.track === "clarification_track"
+            ? "Could you share the specific order number, reference, or detail you want me to check?"
+            : null,
+          plannerStrategy: "direct" as const
+        }
+      : continuationSkill
       ? {
           candidates: [{ skillSlug: continuationSkill.slug, reason: "continue_capability_state", confidence: 1 }],
           requiresClarification: false,
@@ -222,7 +263,13 @@ export class OrchestratorService {
             db,
             tenantId: input.tenantId
           });
-    const validatedSuggestions = continuationSkill
+    const validatedSuggestions = semanticRoute.track !== "action_track"
+      ? {
+          candidates: [],
+          requiresClarification: capabilitySuggestions.requiresClarification,
+          clarificationQuestion: capabilitySuggestions.clarificationQuestion
+        }
+      : continuationSkill
       ? {
           candidates: [{ skill: continuationSkill, reason: "continue_capability_state", confidence: 1 }],
           requiresClarification: false,
@@ -236,6 +283,14 @@ export class OrchestratorService {
         });
     const candidateSkills = validatedSuggestions.candidates.map((item) => item.skill).slice(0, 5);
     const selectedSkill = candidateSkills[0] ?? null;
+    const hydratedSkills = semanticRoute.track === "action_track"
+      ? hydrateSkillsForTurn({
+          candidateSkills,
+          selectedSkill,
+          preferredScriptKeys,
+          maxSkills: 2
+        })
+      : [];
     const selectedScriptKey = selectedSkill?.scripts.find(
       (script) => script.enabled && (preferredScriptKeys.length === 0 || preferredScriptKeys.includes(script.scriptKey))
     )?.scriptKey ?? selectedSkill?.scripts.find((script) => script.enabled)?.scriptKey ?? null;
@@ -261,6 +316,7 @@ export class OrchestratorService {
           reason: item.reason,
           confidence: item.confidence
         })),
+        hydratedSkillSlugs: hydratedSkills.map((skill) => skill.slug),
         availableSkillCount: plannerSkills.length,
         selectedSkillSlug: selectedSkill?.slug ?? null,
         selectedScriptKey
@@ -278,18 +334,10 @@ export class OrchestratorService {
               status: "completed",
               updated_at: db.fn.now()
             });
-          return {
-            action: "reply",
-            response: clarificationReply,
-            intent: "clarification_request",
-            sentiment: "neutral",
-            shouldHandoff: false,
-            handoffReason: undefined,
-            tokensUsed: 0,
-            confidence: 0.5,
-            skillsInvoked: [],
-            skillsBlocked: []
-          };
+          return composeClarificationTurn({
+            reply: clarificationReply,
+            confidence: 0.5
+          });
         }
       }
     }
@@ -317,26 +365,19 @@ export class OrchestratorService {
           status: "waiting_input",
           updated_at: db.fn.now()
         });
-      return {
-        action: "reply",
-        response: clarificationReply,
-        intent: "clarification_request",
-        sentiment: "neutral",
-        shouldHandoff: false,
-        handoffReason: undefined,
-        tokensUsed: 0,
-        confidence: Math.max(validatedSuggestions.candidates[0]?.confidence ?? 0, 0.5),
-        skillsInvoked: [],
-        skillsBlocked: []
-      };
+      return composeClarificationTurn({
+        reply: clarificationReply,
+        confidence: Math.max(validatedSuggestions.candidates[0]?.confidence ?? 0, 0.5)
+      });
     }
     const tools = buildRuntimeTools({
-      candidateSkills,
-      runtimePolicy,
+      candidateSkills: hydratedSkills,
+      runtimePolicy: filterRuntimePoliciesForSkills(runtimePolicy, hydratedSkills),
       preferredScriptKeys
     });
     const skillsInvoked: string[] = [];
     const skillsBlocked: Array<{ name: string; reason: string }> = [];
+    const hydratedRuntimePolicy = filterRuntimePoliciesForSkills(runtimePolicy, hydratedSkills);
 
     // ── Harness: Context Pipeline ──────────────────────────────────────────────
     // Load customer intelligence + fact snapshot + conversation state in parallel.
@@ -345,6 +386,8 @@ export class OrchestratorService {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       customerId: input.customerId,
+      track: semanticRoute.track,
+      knowledgeQuery: chatHistory.filter((message) => message.role === "user").at(-1)?.content ?? "",
       activeSkillSlug: (selectedSkill || continuationSkill)?.slug ?? null
     });
     const factSnapshot = harnessContext.factSnapshot;
@@ -356,9 +399,11 @@ export class OrchestratorService {
     const promptLayers = buildPromptLayers({ aiAgent: aiAgent ?? null });
     const runtimePrompt = assembleSystemPrompt({
       layers: promptLayers,
+      routeContext: buildSemanticRoutePrompt(semanticRoute.track, semanticRoute.reason, semanticRoute.intent),
       customerIntelligence: harnessContext.customerIntelligence,
+      knowledgeContext: harnessContext.knowledgeContext,
       factContext: harnessContext.factContext,
-      candidateSkills,
+      candidateSkills: hydratedSkills,
       responseContract: ORCHESTRATOR_RESPONSE_CONTRACT
     });
 
@@ -411,7 +456,7 @@ export class OrchestratorService {
         });
 
         for (const toolCall of turn.toolCalls) {
-          const toolOwner = candidateSkills.find((skill) =>
+          const toolOwner = hydratedSkills.find((skill) =>
             skill.scripts.some((script) => script.enabled && script.scriptKey === toolCall.function.name)
           ) ?? null;
           const dynamicScript = toolOwner?.scripts.find(
@@ -444,16 +489,12 @@ export class OrchestratorService {
               capabilityScope: input.capabilityScope,
               actorType,
               requesterId: input.requesterId ?? null,
-              policyMap: runtimePolicy,
+              policyMap: hydratedRuntimePolicy,
               skillName: toolCall.function.name,
               args
             });
-            // Thin assertion: ensure the tool name is in candidate scope.
-            // buildRuntimeTools already limits exposed tools, but this catches
-            // any hallucinated tool names from the LLM.
-            const plannerToolGuard = assertToolInCandidateScope(candidateSkills, toolCall.function.name);
 
-            if (gate.action === "allow" && plannerToolGuard.allowed) {
+            if (gate.action === "allow") {
               const startedAt = Date.now();
               skillsInvoked.push(toolCall.function.name);
               // Execute the capability script synchronously so the LLM receives
@@ -501,7 +542,7 @@ export class OrchestratorService {
                 decision: "allowed",
                 durationMs: Date.now() - startedAt,
                 result,
-                policyMap: runtimePolicy
+                policyMap: hydratedRuntimePolicy
               });
               toolResult = JSON.stringify(result);
 
@@ -523,9 +564,7 @@ export class OrchestratorService {
                 creatorId: input.aiAgentId ?? null
               }).catch(() => null);
             } else {
-              const reason = gate.action === "allow"
-                ? (plannerToolGuard.allowed ? "guard_unknown" : plannerToolGuard.reason)
-                : gate.reason;
+              const reason = gate.reason;
               skillsBlocked.push({ name: toolCall.function.name, reason });
               await recordSkillInvocation(db, {
                 tenantId: input.tenantId,
@@ -536,18 +575,13 @@ export class OrchestratorService {
                 decision: "blocked",
                 denyReason: reason,
                 result: {
-                  message: gate.action === "allow"
-                    ? `Planner guard blocked ${toolCall.function.name}`
-                    : gate.detail
+                  message: gate.detail
                 },
-                policyMap: runtimePolicy
+                policyMap: hydratedRuntimePolicy
               });
-              // Guard block details are captured in skill_invocations.denyReason
               toolResult = JSON.stringify({
                 error: reason,
-                message: gate.action === "allow"
-                  ? `Planner guard blocked ${toolCall.function.name}`
-                  : gate.detail
+                message: gate.detail
               });
             }
           } else {
@@ -647,10 +681,12 @@ export class OrchestratorService {
           conversationId: input.conversationId,
           aiAgentId: input.aiAgentId ?? null,
           actorType,
+          semanticTrack: semanticRoute.track,
           capabilityScope: input.capabilityScope ?? null,
           skillsInvoked,
           selectedSkillSlug: selectedSkill?.slug ?? null,
-          candidateSkillSlugs: candidateSkills.map((skill) => skill.slug)
+          candidateSkillSlugs: candidateSkills.map((skill) => skill.slug),
+          hydratedSkillSlugs: hydratedSkills.map((skill) => skill.slug)
         }
       });
 
@@ -670,34 +706,25 @@ export class OrchestratorService {
           aiDecision.sentiment = revised.sentiment;
           aiDecision.confidence = revised.confidence;
           finalContent = pointBRevision.revisedContent;
-        } else if (pointBRevision.action === "clarify" && pointBRevision.revisedContent) {
-          const revised = normalizeAIInteractionContract(pointBRevision.revisedContent, {
-            chatHistory,
-            defaultAction: "reply"
-          });
-          aiDecision.action = revised.action;
-          aiDecision.response = revised.response;
-          aiDecision.intent = "clarification_request";
-          aiDecision.confidence = revised.confidence;
-          finalContent = pointBRevision.revisedContent;
         }
       }
 
-      const policyEnforcement = enforcePreReplyPolicy({
-        policy: preReplyPolicy,
-        invokedBindings: skillsInvoked,
-        proposedAction: aiDecision.action,
-        currentHandoffReason: aiDecision.handoffReason ?? null
+      const composedAnswer = composeFinalAnswer({
+        track: semanticRoute.track,
+        aiDecision,
+        policyEnforcement: {
+          action: aiDecision.action,
+          handoffReason: aiDecision.handoffReason ?? null
+        },
+        finalContent,
+        tokensUsed,
+        skillsInvoked,
+        skillsBlocked
       });
-      const effectiveAction = policyEnforcement.action;
-      const effectiveHandoffReason = policyEnforcement.handoffReason;
-      const responseText = effectiveAction === "reply" ? aiDecision.response : null;
-      const responseSummary = responseText ?? effectiveHandoffReason ?? finalContent.slice(0, 400);
-      if (policyEnforcement.blocked) {
-        for (const checkName of policyEnforcement.missingChecks) {
-          skillsBlocked.push({ name: checkName, reason: "pre_reply_policy_required" });
-        }
-      }
+      const effectiveAction = composedAnswer.action;
+      const effectiveHandoffReason = composedAnswer.handoffReason;
+      const responseText = composedAnswer.responseText;
+      const responseSummary = composedAnswer.responseSummary;
 
       await db("skill_runs")
         .where({ run_id: skillRunId })
@@ -794,32 +821,7 @@ export class OrchestratorService {
         sandboxSnapshot
       }).catch(() => null);
 
-      if (effectiveAction === "handoff") {
-        return {
-          action: effectiveAction,
-          response: null,
-          intent: aiDecision.intent,
-          sentiment: aiDecision.sentiment,
-          shouldHandoff: true,
-          handoffReason: effectiveHandoffReason ?? "human_review_required",
-          tokensUsed,
-          confidence: aiDecision.confidence,
-          skillsInvoked,
-          skillsBlocked
-        };
-      }
-
-      return {
-        action: effectiveAction,
-        response: responseText,
-        intent: aiDecision.intent,
-        sentiment: aiDecision.sentiment,
-        shouldHandoff: false,
-        tokensUsed,
-        confidence: aiDecision.confidence,
-        skillsInvoked,
-        skillsBlocked
-      };
+      return composedAnswer.result;
     } catch (error) {
       if (selectedSkill) {
         await clearConversationCapabilityState(db, {
@@ -985,6 +987,19 @@ function buildRuntimeTools(input: {
   }
 
   return tools;
+}
+
+function buildSemanticRoutePrompt(track: SemanticTrack, reason: string, intent: string) {
+  return [
+    `Track: ${track}`,
+    `Intent: ${intent}`,
+    `Reason: ${reason}`,
+    track === "knowledge_track"
+      ? "Handle this as a business knowledge request first. Do not invent unavailable tools or verification steps."
+      : track === "clarification_track"
+        ? "The request is underspecified. Prefer asking for the minimum missing detail instead of executing tools."
+        : "This request may require operational facts or actions. Use tools only when truly needed."
+  ].join("\n");
 }
 
 function buildClarificationReply(input: {

@@ -1,23 +1,22 @@
+/**
+ * 作用：为动作执行轨道提供偏好绑定选择，帮助 capability/hydration 优先加载需要的检查型技能。
+ * 上游：orchestrator.service.ts
+ * 下游：当前由 orchestrator 在 skill planning / hydration 前消费；后续将继续前移到能力装载层。
+ * 协作对象：runtime-policy.service.ts、pre-reply-checks.ts、agent-skills/contracts.ts
+ * 不负责：不做轨道判定，不做知识检索，不直接执行工具，不在最终回复阶段二次拦截答案。
+ * 变更注意：非 action_track 应绕过本服务；本阶段已移除 reply gate，避免形成双阶段重复判断。
+ */
+
 import type { Knex } from "knex";
 import type { TenantSkillDefinition } from "../agent-skills/contracts.js";
 
 import { inferConversationIntent } from "./ai-runtime-contract.js";
 import { resolveCheckBindingKeys, type PreReplyCheckRef } from "./pre-reply-checks.js";
-import { getTenantAIRuntimePolicy, type PreReplyPolicyAction } from "./runtime-policy.service.js";
-
-export type PreReplyPolicyMatch = {
-  ruleId: string;
-  name: string;
-  requiredChecks: PreReplyCheckRef[];
-  requiredBindingKeysByCheck: Record<string, string[]>;
-  onMissing: PreReplyPolicyAction;
-  reason: string | null;
-};
+import { getTenantAIRuntimePolicy } from "./runtime-policy.service.js";
 
 export type PreReplyPolicyEvaluation = {
   enabled: boolean;
   intent: string;
-  matchedRules: PreReplyPolicyMatch[];
   requiredChecks: PreReplyCheckRef[];
   requiredBindingKeysByCheck: Record<string, string[]>;
   preferredBindingKeys: string[];
@@ -40,7 +39,6 @@ export async function evaluatePreReplyPolicy(
     .map((message) => message.content.toLowerCase())
     .join(" ");
   const preferred = new Set(normalizeBindingKeys(input.preferredSkillNames ?? []));
-  const matchedRules: PreReplyPolicyMatch[] = [];
   const requiredChecks = new Set<PreReplyCheckRef>();
   const requiredBindingKeysByCheck: Record<string, string[]> = {};
 
@@ -48,7 +46,6 @@ export async function evaluatePreReplyPolicy(
     return {
       enabled: false,
       intent,
-      matchedRules: [],
       requiredChecks: [],
       requiredBindingKeysByCheck: {},
       preferredBindingKeys: [...preferred]
@@ -62,14 +59,6 @@ export async function evaluatePreReplyPolicy(
     if (!matchesIntent && !matchesKeyword) continue;
 
     const ruleBindingsByCheck: Record<string, string[]> = {};
-    matchedRules.push({
-      ruleId: rule.ruleId,
-      name: rule.name,
-      requiredChecks: [...rule.requiredChecks],
-      requiredBindingKeysByCheck: ruleBindingsByCheck,
-      onMissing: rule.onMissing,
-      reason: rule.reason
-    });
 
     for (const checkName of rule.requiredChecks) {
       requiredChecks.add(checkName);
@@ -87,63 +76,9 @@ export async function evaluatePreReplyPolicy(
   return {
     enabled: true,
     intent,
-    matchedRules,
     requiredChecks: [...requiredChecks],
     requiredBindingKeysByCheck,
     preferredBindingKeys: [...preferred]
-  };
-}
-
-export function enforcePreReplyPolicy(input: {
-  policy: PreReplyPolicyEvaluation;
-  invokedBindings: string[];
-  proposedAction: "reply" | "handoff" | "defer";
-  currentHandoffReason?: string | null;
-}) {
-  if (!input.policy.enabled || input.policy.requiredChecks.length === 0) {
-    return {
-      blocked: false,
-      action: input.proposedAction,
-      handoffReason: input.currentHandoffReason ?? null,
-      missingChecks: [] as PreReplyCheckRef[]
-    };
-  }
-
-  if (input.proposedAction !== "reply") {
-    return {
-      blocked: false,
-      action: input.proposedAction,
-      handoffReason: input.currentHandoffReason ?? null,
-      missingChecks: [] as PreReplyCheckRef[]
-    };
-  }
-
-  const invoked = new Set(normalizeBindingKeys(input.invokedBindings));
-  const missingChecks = input.policy.requiredChecks.filter((checkName) => {
-    const bindingKeys = input.policy.requiredBindingKeysByCheck[checkName] ?? [];
-    if (bindingKeys.length === 0) return true;
-    return !bindingKeys.some((bindingKey) => invoked.has(bindingKey));
-  });
-  if (missingChecks.length === 0) {
-    return {
-      blocked: false,
-      action: input.proposedAction,
-      handoffReason: input.currentHandoffReason ?? null,
-      missingChecks
-    };
-  }
-
-  const matchedRule = input.policy.matchedRules.find((rule) =>
-    rule.requiredChecks.some((checkName) => missingChecks.includes(checkName))
-  );
-  const action = matchedRule?.onMissing ?? "handoff";
-  const handoffReason = matchedRule?.reason ?? `pre_reply_policy_missing_${missingChecks.join("_")}`;
-
-  return {
-    blocked: true,
-    action,
-    handoffReason,
-    missingChecks
   };
 }
 

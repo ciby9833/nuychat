@@ -1,21 +1,10 @@
 /**
- * Harness Engineering — Prompt Assembler
- *
- * Assembles the system prompt from layered sources following the
- * progressive disclosure pattern:
- *
- *   Layer 1: Base behavioral rules (always present, ~200 tokens)
- *   Layer 2: Seat persona + instructions (if AI agent configured)
- *   Layer 3: Customer intelligence (long-term memory + profile)
- *   Layer 4: Fact context (verified facts, task states)
- *   Layer 5: Skill documentation (only for candidate skills)
- *   Layer 6: Response contract (JSON format instructions)
- *
- * Design principle: each layer adds context only when relevant,
- * minimizing prompt size while maximizing information density.
- *
- * Reference: Claude's system prompt best practices — "be specific,
- * give examples, use XML tags for structure".
+ * 作用：按轨道与上下文分层组装主模型 system prompt。
+ * 上游：orchestrator.service.ts
+ * 下游：主模型调用、后续 answer-composer.service.ts
+ * 协作对象：context-pipeline.ts、semantic-router.service.ts、agent-skills/contracts.ts
+ * 不负责：不做知识检索，不做工具执行，不做输出解析。
+ * 变更注意：知识轨道默认不注入 skill docs，避免继续把工具世界污染到 FAQ 场景。
  */
 
 import type { HarnessPromptLayer } from "./types.js";
@@ -39,7 +28,9 @@ Rules:
 
 export interface PromptAssemblerInput {
   layers: HarnessPromptLayer;
+  routeContext: string | null;
   customerIntelligence: string | null;
+  knowledgeContext: string | null;
   factContext: string | null;
   candidateSkills: TenantSkillDefinition[];
   responseContract: string;
@@ -82,9 +73,17 @@ export function assembleSystemPrompt(input: PromptAssemblerInput): string {
     sections.push(`Tenant instructions:\n${input.layers.tenantOverrides}`);
   }
 
+  if (input.routeContext) {
+    sections.push(`Routing decision:\n${input.routeContext}`);
+  }
+
   // Layer 3: Customer intelligence (who this customer is)
   if (input.customerIntelligence) {
     sections.push(input.customerIntelligence);
+  }
+
+  if (input.knowledgeContext) {
+    sections.push(input.knowledgeContext);
   }
 
   // Layer 4: Fact context (what we know right now)

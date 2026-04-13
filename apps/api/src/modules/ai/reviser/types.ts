@@ -17,7 +17,6 @@ import type { LLMParams } from "../call-context.js";
 export type ReviserActionId =
   | "continue_tools"     // 补调下一个 tool（复用 agent loop）
   | "rewrite_answer"     // 携带 FactSnapshot 重走最终 LLM 轮
-  | "clarify"            // 生成澄清问题 + 存 capability state
   | "handoff";           // 直接转人工
 
 // ─── Reviser outcome ─────────────────────────────────────────────────────────
@@ -27,7 +26,7 @@ export interface ReviserOutcome {
   action: ReviserActionId | "pass";
   /** Whether the reviser modified the output */
   modified: boolean;
-  /** New final content (only for rewrite_answer / clarify) */
+  /** New final content (only for rewrite_answer) */
   revisedContent?: string;
   /** Handoff reason (only for handoff) */
   handoffReason?: string;
@@ -53,7 +52,7 @@ export interface ReviserPointAContext {
   chatHistory: AIMessage[];
 }
 
-/** Context available at Point B (post-answer) for rewrite/clarify/handoff */
+/** Context available at Point B (post-answer) for rewrite/handoff */
 export interface ReviserPointBContext {
   verdict: VerifierVerdict;
   finalContent: string;
@@ -63,6 +62,6 @@ export interface ReviserPointBContext {
   skillsInvoked: string[];
   loopMessages: AIMessage[];
   chatHistory: AIMessage[];
-  /** LLM infrastructure for rewrite_answer / clarify */
+  /** LLM infrastructure for rewrite_answer */
   llm: LLMParams;
 }

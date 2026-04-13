@@ -14,7 +14,6 @@ import type { AIMessage } from "../../../../../../packages/ai-sdk/src/index.js";
 export type VerifierRuleId =
   | "insufficient_tool_evidence"
   | "answer_conflicts_with_verified_facts"
-  | "missing_multimodal_evidence"
   | "should_continue_tool_loop"
   | "should_handoff_to_human";
 
@@ -33,7 +32,6 @@ export type VerifierAction =
   | "pass"               // all rules pass — proceed normally
   | "continue_tools"     // should keep calling tools in agent loop
   | "rewrite_answer"     // final answer needs revision (Phase C will auto-rewrite)
-  | "clarify"            // ask customer for more info
   | "handoff";           // escalate to human agent
 
 export interface VerifierVerdict {

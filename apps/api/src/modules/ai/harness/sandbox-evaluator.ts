@@ -21,7 +21,7 @@
  *   - Point A: rule-based only (no LLM calls)
  *   - Point B handoff: rule-based only (no LLM calls)
  *   - Point B rewrite: LLM call only for critical-severity findings
- *   - Point B clarify: LLM call only when evidence is critically insufficient
+ *   - Point B clarify path removed in Phase 2 to keep only high-value post-answer corrections
  */
 
 import type { AIMessage } from "../../../../../../packages/ai-sdk/src/index.js";
@@ -111,7 +111,7 @@ export class SandboxState {
 
   /**
    * Run Point B evaluation (post-answer).
-   * May invoke an LLM call for rewrite/clarify if critical findings exist.
+   * May invoke an LLM call for rewrite if critical findings exist.
    */
   async runPointB(input: {
     finalContent: string;
@@ -168,7 +168,6 @@ export class SandboxState {
     if (revision.modified) {
       if (revision.action === "handoff") this._overrideAction = "handoff";
       else if (revision.action === "rewrite_answer") this._overrideAction = "rewrite";
-      else if (revision.action === "clarify") this._overrideAction = "clarify";
     }
 
     return revision;

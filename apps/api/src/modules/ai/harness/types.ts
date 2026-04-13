@@ -1,16 +1,10 @@
 /**
- * Harness Engineering — Type Definitions
- *
- * harness = prompt + context + experience + skills + sandbox
- *
- * The Harness is the unified orchestration contract that assembles all five
- * dimensions into a coherent LLM interaction. Each dimension is independently
- * configurable per tenant / scene / conversation.
- *
- * Design references:
- * - Claude's "system prompt → tools → context window" architecture
- * - OpenAI's "instructions → tools → file_search → code_interpreter" pattern
- * - Anthropic's "constitutional AI" approach for sandbox/guardrails
+ * 作用：定义 harness 相关类型，作为数字员工主链的统一编排契约。
+ * 上游：orchestrator.service.ts、harness/index.ts
+ * 下游：context-pipeline.ts、prompt-assembler.ts、sandbox-evaluator.ts
+ * 协作对象：fact-layer.service.ts、agent-skills/contracts.ts、后续 semantic-router.service.ts
+ * 不负责：不实现上下文检索、prompt 组装或工具执行本身。
+ * 变更注意：新增轨道或知识上下文字段时，优先扩展类型而非复用无关字段。
  */
 
 import type { AIMessage } from "../../../../../../packages/ai-sdk/src/index.js";
@@ -39,6 +33,8 @@ export interface HarnessPromptLayer {
 export interface HarnessContext {
   /** Long-term customer intelligence (profile, preferences, history) */
   customerIntelligence: string | null;
+  /** Business knowledge retrieved for the current request */
+  knowledgeContext: string | null;
   /** Fact Layer snapshot (verified facts, task facts, state facts) */
   factSnapshot: FactSnapshot;
   /** Formatted fact context for prompt injection */
@@ -111,8 +107,8 @@ export interface HarnessSandbox {
   /** Accumulated verified facts during this run */
   runVerifiedFacts: VerifiedFact[];
   /** Whether the sandbox forced a handoff or rewrite */
-  overrideAction: "none" | "handoff" | "rewrite" | "clarify";
-  /** Extra tokens consumed by sandbox LLM calls (rewrites, clarifications) */
+  overrideAction: "none" | "handoff" | "rewrite";
+  /** Extra tokens consumed by sandbox LLM calls (currently rewrite only) */
   sandboxTokens: { input: number; output: number };
 }
 

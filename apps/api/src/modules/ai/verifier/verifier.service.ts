@@ -5,7 +5,7 @@
  *
  * 两个插入点：
  * - Point A: agent loop 内部，每轮 tool result 回填后，下一轮 LLM 调用前
- * - Point B: 最终回复生成后，enforcePreReplyPolicy() 之前
+ * - Point B: 最终回复生成后，由 orchestrator/answer composer 落地前
  */
 
 import type {
@@ -18,7 +18,6 @@ import type {
 } from "./types.js";
 import { insufficientEvidenceRule } from "./rules/insufficient-evidence.js";
 import { factConflictRule } from "./rules/fact-conflict.js";
-import { missingMultimodalRule } from "./rules/missing-multimodal.js";
 import { shouldContinueToolsRule } from "./rules/should-continue-tools.js";
 import { shouldHandoffRule } from "./rules/should-handoff.js";
 
@@ -27,7 +26,6 @@ import { shouldHandoffRule } from "./rules/should-handoff.js";
 const ALL_RULES: VerifierRule[] = [
   insufficientEvidenceRule,
   factConflictRule,
-  missingMultimodalRule,
   shouldContinueToolsRule,
   shouldHandoffRule
 ];
@@ -58,7 +56,7 @@ export function evaluatePointA(ctx: PointAContext): VerifierVerdict {
 
 /**
  * Run all Point B rules (post-answer evaluation).
- * Returns a verdict: "pass", "rewrite_answer", "clarify", or "handoff".
+ * Returns a verdict: "pass", "rewrite_answer", or "handoff".
  */
 export function evaluatePointB(ctx: PointBContext): VerifierVerdict {
   const findings: RuleFinding[] = [];
@@ -98,17 +96,11 @@ function resolvePointBAction(findings: RuleFinding[]): VerifierAction {
   const triggered = findings.filter((f) => f.triggered);
   if (triggered.length === 0) return "pass";
 
-  // Priority: handoff > rewrite > clarify > pass
+  // Priority: handoff > rewrite > pass
   if (triggered.some((f) => f.ruleId === "should_handoff_to_human")) {
     return "handoff";
   }
   if (triggered.some((f) => f.ruleId === "answer_conflicts_with_verified_facts")) {
-    return "rewrite_answer";
-  }
-  if (triggered.some((f) => f.ruleId === "insufficient_tool_evidence" && f.severity === "critical")) {
-    return "clarify";
-  }
-  if (triggered.some((f) => f.ruleId === "missing_multimodal_evidence")) {
     return "rewrite_answer";
   }
 
