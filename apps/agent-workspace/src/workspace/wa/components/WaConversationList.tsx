@@ -28,6 +28,7 @@ type WaConversationListProps = {
   onOpenContact: (contactId: string) => void;
   onSync?: () => void;
   syncing?: boolean;
+  syncEnabled?: boolean;
 };
 
 /** Derives which tab a conversation belongs to from its chatJid suffix. */
@@ -52,7 +53,8 @@ export function WaConversationList(props: WaConversationListProps) {
     onSelectConversation,
     onOpenContact,
     onSync,
-    syncing = false
+    syncing = false,
+    syncEnabled = false
   } = props;
 
   const [keyword, setKeyword] = useState("");
@@ -162,7 +164,7 @@ export function WaConversationList(props: WaConversationListProps) {
             <div className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-[#54656f] shadow-sm">
               {tabCounts[activeTab]}
             </div>
-            {onSync && (
+            {onSync && syncEnabled && (
               <button
                 type="button"
                 title={t("wa.conversationList.syncTitle")}

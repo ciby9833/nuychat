@@ -73,6 +73,9 @@ type RuntimeEntry = {
   receivedPendingNotifications: boolean | null;
   restartRequested: boolean;
   syncFinalizeTimer: NodeJS.Timeout | null;
+  postConnectSyncScheduled: boolean;
+  reconcileScheduled: boolean;
+  avatarSyncScheduled: boolean;
   recentHistory: Map<string, ReturnType<typeof mapBaileysMessageToInbound>[]>;
 };
 
@@ -85,6 +88,24 @@ type LoginTicket = {
 };
 
 const runtimes = new Map<string, RuntimeEntry>();
+const loggedBaileysErrors = new Map<string, number>();
+
+function shouldLogBaileysError(trace: string): boolean {
+  const now = Date.now();
+  const previous = loggedBaileysErrors.get(trace) ?? 0;
+  if (now - previous < 30_000) {
+    return false;
+  }
+  loggedBaileysErrors.set(trace, now);
+  if (loggedBaileysErrors.size > 100) {
+    for (const [key, seenAt] of loggedBaileysErrors.entries()) {
+      if (now - seenAt > 5 * 60_000) {
+        loggedBaileysErrors.delete(key);
+      }
+    }
+  }
+  return true;
+}
 
 const baileysLogger = {
   level: "info",
@@ -101,6 +122,10 @@ const baileysLogger = {
     console.warn("[baileys]", msg ?? "", obj);
   },
   error(obj: unknown, msg?: string) {
+    const trace = typeof obj === "object" && obj && "trace" in (obj as Record<string, unknown>)
+      ? String((obj as Record<string, unknown>).trace ?? "")
+      : "";
+    if (trace && !shouldLogBaileysError(trace)) return;
     console.error("[baileys]", msg ?? "", obj);
   },
   fatal(obj: unknown, msg?: string) {
@@ -396,6 +421,9 @@ async function buildSocket(input: {
     receivedPendingNotifications: null,
     restartRequested: false,
     syncFinalizeTimer: null,
+    postConnectSyncScheduled: false,
+    reconcileScheduled: false,
+    avatarSyncScheduled: false,
     recentHistory: new Map()
   };
 
@@ -463,13 +491,17 @@ async function buildSocket(input: {
     // all group metadata (names + members) and then fetch avatars in the background.
     // We delay by 8s to let Baileys finish its own messaging-history.set / groups.update
     // event flood first, so our proactive fetches fill in gaps rather than race with them.
-    if (update.receivedPendingNotifications === true) {
+    if (update.receivedPendingNotifications === true && !entry.postConnectSyncScheduled) {
+      entry.postConnectSyncScheduled = true;
       setTimeout(() => {
         void syncAllGroupsForAccount(socket, input.tenantId, input.waAccountId).catch((error) => {
           console.error("[wa-sync] proactive group sync failed", { tenantId: input.tenantId, waAccountId: input.waAccountId, error });
         });
       }, 8_000);
+    }
 
+    if (update.receivedPendingNotifications === true && !entry.reconcileScheduled) {
+      entry.reconcileScheduled = true;
       // Message reconciliation: compare in-memory cache with DB and backfill gaps.
       // Runs 15s after reconnect to let messaging-history.set complete first.
       setTimeout(() => {
@@ -480,7 +512,10 @@ async function buildSocket(input: {
           console.error("[wa-reconcile] post-reconnect reconciliation failed", { tenantId: input.tenantId, waAccountId: input.waAccountId, error });
         });
       }, 15_000);
+    }
 
+    if (update.receivedPendingNotifications === true && !entry.avatarSyncScheduled) {
+      entry.avatarSyncScheduled = true;
       // Avatar sync runs after group sync finishes (offset by 60s to avoid racing)
       setTimeout(() => {
         void syncAvatarsForAccount(socket, input.tenantId, input.waAccountId).catch((error) => {
@@ -510,6 +545,9 @@ async function buildSocket(input: {
     }
 
     if (update.connection === "close") {
+      entry.postConnectSyncScheduled = false;
+      entry.reconcileScheduled = false;
+      entry.avatarSyncScheduled = false;
       const shouldReconnect =
         config.autoReconnect &&
         disconnectCode !== DisconnectReason.loggedOut &&

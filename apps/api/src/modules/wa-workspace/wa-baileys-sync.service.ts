@@ -28,6 +28,8 @@ import {
 } from "./wa-conversation.repository.js";
 import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
 
+const groupMetadataRateLimitCooldowns = new Map<string, number>();
+
 function isNonConversationJid(jid: string | null) {
   return jid === "status@broadcast";
 }
@@ -463,6 +465,16 @@ export async function syncAllGroupsForAccount(
   tenantId: string,
   waAccountId: string
 ): Promise<void> {
+  const accountKey = `${tenantId}:${waAccountId}`;
+  const cooldownUntil = groupMetadataRateLimitCooldowns.get(accountKey) ?? 0;
+  if (cooldownUntil > Date.now()) {
+    console.info("[wa-sync] skip proactive group metadata sync during cooldown", {
+      tenantId,
+      waAccountId,
+      retryAfterMs: cooldownUntil - Date.now()
+    });
+    return;
+  }
   // Get all known group JIDs for this account from our DB
   const groupJids = await withTenantTransaction(tenantId, async (trx) => {
     const rows = await trx("wa_conversations")
@@ -479,6 +491,18 @@ export async function syncAllGroupsForAccount(
       const metadata = await socket.groupMetadata(jid);
       await ingestBaileysGroupsUpdate({ tenantId, waAccountId, groups: [metadata] });
     } catch (error) {
+      const maybeStatus = Number((error as { data?: unknown })?.data ?? (error as { output?: { statusCode?: unknown } })?.output?.statusCode ?? 0);
+      if (maybeStatus === 429 || String(error).includes("rate-overlimit")) {
+        const retryAfterMs = 15 * 60_000;
+        groupMetadataRateLimitCooldowns.set(accountKey, Date.now() + retryAfterMs);
+        console.warn("[wa-sync] groupMetadata rate-limited; entering cooldown", {
+          tenantId,
+          waAccountId,
+          jid,
+          retryAfterMs
+        });
+        break;
+      }
       console.warn("[wa-sync] groupMetadata fetch failed for", jid, { error });
     }
     // Brief pause to avoid rate-limiting

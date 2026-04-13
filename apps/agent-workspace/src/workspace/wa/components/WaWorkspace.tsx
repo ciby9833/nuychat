@@ -59,6 +59,7 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               onOpenContact={vm.openContactConversation}
               onSync={() => { void vm.triggerSync(); }}
               syncing={vm.syncing}
+              syncEnabled={accountConnected}
             />
           </div>
           <div className="min-h-0 bg-[#efeae2]">

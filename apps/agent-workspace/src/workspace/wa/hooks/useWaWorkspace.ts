@@ -75,10 +75,12 @@ export function useWaWorkspace(session: Session | null) {
   const selectedConversationIdRef = useRef<string | null>(null);
   const loadDetailRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const accountIdRef = useRef<string | null>(null);
+  const accountsRef = useRef<WaAccountItem[]>([]);
 
   const loadAccounts = useCallback(async () => {
     if (!session?.waSeatEnabled) return;
     const rows = await listWaWorkbenchAccounts(session);
+    accountsRef.current = rows;
     setAccounts(rows);
     setAccountId((current) => current ?? rows[0]?.waAccountId ?? null);
   }, [session]);
@@ -174,6 +176,7 @@ export function useWaWorkspace(session: Session | null) {
   selectedConversationIdRef.current = selectedConversationId;
   loadDetailRef.current = loadDetail;
   accountIdRef.current = accountId;
+  accountsRef.current = accounts;
 
   useEffect(() => {
     void loadAccounts();
@@ -408,6 +411,8 @@ export function useWaWorkspace(session: Session | null) {
 
   const triggerSync = useCallback(async () => {
     if (!session || !accountId || syncing) return;
+    const selectedAccount = accountsRef.current.find((item) => item.waAccountId === accountId) ?? null;
+    if (!selectedAccount || selectedAccount.status.code !== "connected") return;
     setSyncing(true);
     try {
       await triggerWaAccountSync(session, accountId);
