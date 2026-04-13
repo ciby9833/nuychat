@@ -1,6 +1,7 @@
 import messages from "./modules/zh/messages";
 import skillAssist from "./modules/zh/skill-assist";
 import tasks from "./modules/zh/tasks";
+import wa from "./modules/zh/wa";
 
 export default {
   ...messages,
@@ -51,4 +52,6 @@ export default {
     logout: "退出登录"
   },
   ...skillAssist
+  ,
+  ...wa
 } as const;

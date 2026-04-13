@@ -15,6 +15,7 @@ import { createWaOutboundWorker } from "./workers/wa-outbound.worker.js";
 import { initClickhouseTables } from "./infra/clickhouse/client.js";
 import { customerProfileRefreshQueue } from "./infra/queue/queues.js";
 import { recoverOverdueAssignmentAcceptTimeouts, recoverOverdueFollowUpTimeouts } from "./modules/sla/conversation-sla.service.js";
+import { registerServiceModeNoticeSubscriber } from "./modules/service-mode/service-mode-notice.subscriber.js";
 import { runWaStartup } from "./modules/wa-workspace/wa-startup.service.js";
 
 const port = readRequiredIntEnv("PORT");
@@ -31,6 +32,7 @@ const customerProfileRefreshWorker = createCustomerProfileRefreshWorker();
 const conversationTimeoutWorker = createConversationTimeoutWorker();
 const waOutboundWorker = createWaOutboundWorker();
 createRealtimeGateway(app);
+const unsubscribeServiceModeNotice = registerServiceModeNoticeSubscriber();
 
 // Fire-and-forget: initialise ClickHouse tables (no-ops if CH unavailable)
 void initClickhouseTables();
@@ -74,6 +76,7 @@ try {
   await customerProfileRefreshWorker.close();
   await conversationTimeoutWorker.close();
   await waOutboundWorker.close();
+  unsubscribeServiceModeNotice();
   process.exit(1);
 }
 
@@ -86,6 +89,7 @@ const shutdown = async () => {
   await customerProfileRefreshWorker.close();
   await conversationTimeoutWorker.close();
   await waOutboundWorker.close();
+  unsubscribeServiceModeNotice();
   await app.close();
   process.exit(0);
 };

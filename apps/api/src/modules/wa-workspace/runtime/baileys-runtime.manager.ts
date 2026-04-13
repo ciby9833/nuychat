@@ -30,11 +30,32 @@ import {
   syncAvatarsForAccount
 } from "../wa-baileys-sync.service.js";
 import { ingestBaileysMessageReceipts } from "../wa-baileys-receipt.service.js";
+import { reconcileAfterReconnect } from "../wa-reconcile.service.js";
 import { emitWaAccountUpdated } from "../wa-realtime.service.js";
 import { deriveWaAccountStatus, deriveWaStatus } from "../wa-session-status.js";
 import { createBaileysAuthState, persistBaileysAuthSnapshot, resetBaileysAuthState } from "./baileys-auth.repository.js";
 import { getBaileysRuntimeConfig } from "./baileys-config.js";
 import { mapBaileysMessageToInbound } from "./baileys-message.mapper.js";
+
+/**
+ * 带重试的异步执行器。消息入库失败时最多重试 maxRetries 次，避免因瞬时 DB 故障丢消息。
+ */
+async function withRetry<T>(fn: () => Promise<T>, opts: { maxRetries: number; label: string; context: Record<string, unknown> }): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= opts.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < opts.maxRetries) {
+        const delay = Math.min(1000 * 2 ** attempt, 8000);
+        console.warn(`[wa-baileys] ${opts.label} attempt ${attempt + 1} failed, retrying in ${delay}ms`, { ...opts.context, error });
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
 
 type RuntimeEntry = {
   tenantId: string;
@@ -449,6 +470,17 @@ async function buildSocket(input: {
         });
       }, 8_000);
 
+      // Message reconciliation: compare in-memory cache with DB and backfill gaps.
+      // Runs 15s after reconnect to let messaging-history.set complete first.
+      setTimeout(() => {
+        void reconcileAfterReconnect({
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId
+        }).catch((error) => {
+          console.error("[wa-reconcile] post-reconnect reconciliation failed", { tenantId: input.tenantId, waAccountId: input.waAccountId, error });
+        });
+      }, 15_000);
+
       // Avatar sync runs after group sync finishes (offset by 60s to avoid racing)
       setTimeout(() => {
         void syncAvatarsForAccount(socket, input.tenantId, input.waAccountId).catch((error) => {
@@ -503,27 +535,34 @@ async function buildSocket(input: {
       bucket.push(mapped);
       entry.recentHistory.set(mapped.chatJid, bucket.slice(-200));
     }
-    void ingestBaileysMessagesUpsert({
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      messages: event.messages,
-      type: event.type
-    }).catch((error) => {
-      console.error("[wa-baileys] messages.upsert ingest failed", {
+    void withRetry(
+      () => ingestBaileysMessagesUpsert({
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
+        messages: event.messages,
+        type: event.type
+      }),
+      { maxRetries: 2, label: "messages.upsert", context: { tenantId: input.tenantId, waAccountId: input.waAccountId, count: event.messages.length } }
+    ).catch((error) => {
+      console.error("[wa-baileys] messages.upsert ingest failed after retries", {
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        count: event.messages.length,
         error
       });
     });
   });
 
   socket.ev.on("messages.update", (updates) => {
-    void ingestBaileysMessagesUpdate({
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      updates
-    }).catch((error) => {
-      console.error("[wa-baileys] messages.update ingest failed", {
+    void withRetry(
+      () => ingestBaileysMessagesUpdate({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        updates
+      }),
+      { maxRetries: 2, label: "messages.update", context: { tenantId: input.tenantId, waAccountId: input.waAccountId, count: updates.length } }
+    ).catch((error) => {
+      console.error("[wa-baileys] messages.update ingest failed after retries", {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
         error
@@ -532,12 +571,15 @@ async function buildSocket(input: {
   });
 
   socket.ev.on("message-receipt.update", (receipts) => {
-    void ingestBaileysMessageReceipts({
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      receipts
-    }).catch((error) => {
-      console.error("[wa-baileys] message-receipt.update ingest failed", {
+    void withRetry(
+      () => ingestBaileysMessageReceipts({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        receipts
+      }),
+      { maxRetries: 2, label: "message-receipt.update", context: { tenantId: input.tenantId, waAccountId: input.waAccountId, count: receipts.length } }
+    ).catch((error) => {
+      console.error("[wa-baileys] message-receipt.update ingest failed after retries", {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
         error

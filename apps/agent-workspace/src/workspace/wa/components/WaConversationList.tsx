@@ -8,6 +8,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { WaAccountItem, WaContactItem, WaConversationItem } from "../types";
 
@@ -36,13 +37,8 @@ function getConversationTab(conversation: WaConversationItem): ConversationTab {
   return "chats";
 }
 
-const TAB_CONFIG: { id: ConversationTab; label: string; icon: string }[] = [
-  { id: "chats", label: "Chats", icon: "💬" },
-  { id: "groups", label: "群聊", icon: "👥" },
-  { id: "channels", label: "频道", icon: "📢" }
-];
-
 export function WaConversationList(props: WaConversationListProps) {
+  const { t, i18n } = useTranslation();
   const {
     accounts,
     accountId,
@@ -61,6 +57,11 @@ export function WaConversationList(props: WaConversationListProps) {
 
   const [keyword, setKeyword] = useState("");
   const [activeTab, setActiveTab] = useState<ConversationTab>("chats");
+  const TAB_CONFIG: { id: ConversationTab; label: string; icon: string }[] = [
+    { id: "chats", label: t("wa.conversationList.tabs.chats"), icon: "💬" },
+    { id: "groups", label: t("wa.conversationList.tabs.groups"), icon: "👥" },
+    { id: "channels", label: t("wa.conversationList.tabs.channels"), icon: "📢" }
+  ];
 
   // Count per tab (before keyword filter) for badge display
   const tabCounts = useMemo<Record<ConversationTab, number>>(() => {
@@ -137,8 +138,8 @@ export function WaConversationList(props: WaConversationListProps) {
     const now = new Date();
     const sameDay = now.toDateString() === date.toDateString();
     return sameDay
-      ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-      : date.toLocaleDateString([], { month: "numeric", day: "numeric" });
+      ? date.toLocaleTimeString(i18n.language, { hour: "numeric", minute: "2-digit" })
+      : date.toLocaleDateString(i18n.language, { month: "numeric", day: "numeric" });
   };
 
   return (
@@ -151,9 +152,9 @@ export function WaConversationList(props: WaConversationListProps) {
               {selectedAccount?.displayName?.slice(0, 1).toUpperCase() || "W"}
             </div>
             <div>
-              <div className="text-[17px] font-medium text-[#111b21]">WhatsApp</div>
+              <div className="text-[17px] font-medium text-[#111b21]">{t("wa.common.whatsapp")}</div>
               <div className="mt-0.5 text-[12px] text-[#667781]">
-                {selectedAccount?.displayName || "全部账号"}
+                {selectedAccount?.displayName || t("wa.conversationList.allAccounts")}
               </div>
             </div>
           </div>
@@ -164,7 +165,7 @@ export function WaConversationList(props: WaConversationListProps) {
             {onSync && (
               <button
                 type="button"
-                title="同步群组与通讯录"
+                title={t("wa.conversationList.syncTitle")}
                 onClick={onSync}
                 disabled={syncing}
                 className="flex h-7 w-7 items-center justify-center rounded-full text-[#667781] transition-colors hover:bg-white hover:text-[#111b21] disabled:opacity-40"
@@ -182,7 +183,7 @@ export function WaConversationList(props: WaConversationListProps) {
           <input
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
-            placeholder="搜索或开始新聊天"
+            placeholder={t("wa.conversationList.searchPlaceholder")}
             className="w-full border-0 bg-transparent text-sm text-[#111b21] outline-none placeholder:text-[#667781]"
           />
         </div>
@@ -192,7 +193,7 @@ export function WaConversationList(props: WaConversationListProps) {
             value={accountId ?? ""}
             onChange={(event) => onAccountChange(event.target.value || null)}
           >
-            <option value="">全部账号</option>
+            <option value="">{t("wa.conversationList.allAccounts")}</option>
             {accounts.map((account) => (
               <option key={account.waAccountId} value={account.waAccountId}>
                 {account.displayName}
@@ -206,7 +207,7 @@ export function WaConversationList(props: WaConversationListProps) {
                 checked={assignedToMeOnly}
                 onChange={(event) => onAssignedToMeOnlyChange(event.target.checked)}
               />
-              只看我当前接管
+              {t("wa.conversationList.assignedToMeOnly")}
             </label>
           )}
         </div>
@@ -242,7 +243,7 @@ export function WaConversationList(props: WaConversationListProps) {
 
       {/* ── Conversation list ────────────────────────────────────────────────── */}
       <div className="min-h-0 flex-1 overflow-auto bg-white">
-        {loading ? <div className="px-4 py-3 text-sm text-[#667781]">加载中...</div> : null}
+        {loading ? <div className="px-4 py-3 text-sm text-[#667781]">{t("wa.conversationList.listLoading")}</div> : null}
         <div>
           {visibleConversations.map((conversation) => {
             const active = conversation.waConversationId === selectedConversationId;
@@ -254,7 +255,7 @@ export function WaConversationList(props: WaConversationListProps) {
               : isChannel
                 ? (conversation.chatJid)
                 : (conversation.contactPhoneE164 || conversation.contactJid || conversation.chatJid);
-            const subtitle = conversation.lastMessagePreview || secondary || "暂无消息";
+            const subtitle = conversation.lastMessagePreview || secondary || t("wa.conversationList.noMessage");
 
             // Avatar letter / icon
             const avatarLetter = isChannel ? "📢" : isGroup ? "👥" : (title || "?").slice(0, 1).toUpperCase();
@@ -279,7 +280,7 @@ export function WaConversationList(props: WaConversationListProps) {
                   {conversation.avatarUrl ? (
                     <img
                       src={conversation.avatarUrl}
-                      alt={title || "头像"}
+                      alt={title || t("wa.conversationList.avatarAlt")}
                       className="h-12 w-12 shrink-0 rounded-full object-cover"
                       onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                     />
@@ -306,13 +307,13 @@ export function WaConversationList(props: WaConversationListProps) {
                     <div className="mt-1 truncate text-[14px] text-[#667781]">{subtitle}</div>
                     {!isChannel && (
                       <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-[#667781]">
-                        <span>{conversation.currentReplierName || "未接管"}</span>
-                        <span>{conversation.accountDisplayName || "WA"}</span>
+                        <span>{conversation.currentReplierName || t("wa.conversationList.unassigned")}</span>
+                        <span>{conversation.accountDisplayName || t("wa.common.waShort")}</span>
                       </div>
                     )}
                     {isChannel && (
                       <div className="mt-2 text-[12px] text-[#667781]">
-                        <span>{conversation.accountDisplayName || "WA"}</span>
+                        <span>{conversation.accountDisplayName || t("wa.common.waShort")}</span>
                       </div>
                     )}
                   </div>
@@ -322,7 +323,13 @@ export function WaConversationList(props: WaConversationListProps) {
           })}
           {!loading && visibleConversations.length === 0 ? (
             <div className="px-6 py-14 text-center text-sm text-[#667781]">
-              {keyword ? "没有匹配的会话" : activeTab === "channels" ? "暂无频道消息" : activeTab === "groups" ? "暂无群聊" : "暂无会话"}
+              {keyword
+                ? t("wa.conversationList.empty.search")
+                : activeTab === "channels"
+                  ? t("wa.conversationList.empty.channels")
+                  : activeTab === "groups"
+                    ? t("wa.conversationList.empty.groups")
+                    : t("wa.conversationList.empty.chats")}
             </div>
           ) : null}
 
@@ -330,7 +337,7 @@ export function WaConversationList(props: WaConversationListProps) {
           {contactsWithoutConversation.length > 0 ? (
             <div className="border-t border-[#e9edef] px-3 py-3">
               <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[#667781]">
-                联系人
+                {t("wa.conversationList.contacts")}
               </div>
               <div className="space-y-1">
                 {contactsWithoutConversation.map((contact) => (

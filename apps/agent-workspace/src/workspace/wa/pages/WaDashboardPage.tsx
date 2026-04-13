@@ -8,6 +8,7 @@
  */
 
 import { Suspense, lazy } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { Session } from "../../types";
 
@@ -18,8 +19,9 @@ type WaDashboardPageProps = {
 };
 
 export function WaDashboardPage({ session }: WaDashboardPageProps) {
+  const { t } = useTranslation();
   return (
-    <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-slate-400">Loading…</div>}>
+    <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-slate-400">{t("wa.common.loading")}</div>}>
       <WaWorkspace session={session} />
     </Suspense>
   );

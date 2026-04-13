@@ -258,3 +258,34 @@ export async function logoutAdminWaAccount(trx: Knex.Transaction, input: { tenan
 
   return { accepted: true };
 }
+
+export async function deleteAdminWaAccount(trx: Knex.Transaction, input: { tenantId: string; waAccountId: string }) {
+  const account = await trx("wa_accounts")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .first<Record<string, unknown> | undefined>();
+  if (!account) throw new Error("WA account not found");
+
+  // If there's a live session, logout first to clean up the Baileys runtime
+  const session = await trx("wa_account_sessions")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .first<Record<string, unknown> | undefined>();
+  if (session && String(session.connection_state) !== "close") {
+    try {
+      await waProviderAdapter.logoutSession({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        instanceKey: String(account.instance_key)
+      });
+    } catch {
+      // ignore logout errors during deletion — the DB cascade will clean up
+    }
+  }
+
+  // CASCADE deletes sessions, members, login_tasks, conversations, messages, etc.
+  const deleted = await trx("wa_accounts")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .del();
+  if (!deleted) throw new Error("WA account not found");
+
+  return { deleted: true };
+}

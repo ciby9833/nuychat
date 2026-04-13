@@ -21,6 +21,7 @@ import {
   patchWaConversationChatState,
   patchWaConversationContactProfile,
   patchWaConversationMemberProfile,
+  resolveWaMessageGapsByTarget,
   upsertWaContact,
   upsertWaConversation,
   upsertWaConversationMember
@@ -293,6 +294,13 @@ export async function ingestBaileysHistorySet(input: {
           displayName: pushName
         });
       }
+      // History messages should also close gaps that were opened by live messages
+      // referencing this message before it arrived.
+      await resolveWaMessageGapsByTarget(trx, {
+        tenantId: input.tenantId,
+        waConversationId: conversation.waConversationId,
+        targetProviderMessageId: mapped.providerMessageId
+      });
       inserted += 1;
     }
     await updateSessionSyncMeta(trx, {

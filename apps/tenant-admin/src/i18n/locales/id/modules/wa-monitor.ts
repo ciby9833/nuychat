@@ -57,7 +57,13 @@ export default {
         manageMembers: "Atur Anggota",
         viewHealth: "Status Kesehatan",
         logout: "Keluar WA",
-        reconnect: "Reconnect"
+        reconnect: "Reconnect",
+        delete: "Hapus",
+        deleteConfirm: "Hapus akun WA ini?",
+        deleteWarning: "Semua percakapan dan pesan akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.",
+        deleteSuccess: "Akun WA berhasil dihapus",
+        deleteOk: "Hapus",
+        deleteCancel: "Batal"
       },
       createModal: {
         title: "Tambah Akun WA",

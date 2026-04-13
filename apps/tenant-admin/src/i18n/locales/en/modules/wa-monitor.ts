@@ -57,7 +57,13 @@ export default {
         manageMembers: "Assign Members",
         viewHealth: "Health",
         logout: "Logout WA",
-        reconnect: "Reconnect"
+        reconnect: "Reconnect",
+        delete: "Delete",
+        deleteConfirm: "Delete this WA account?",
+        deleteWarning: "This will permanently remove all conversations and messages. This action cannot be undone.",
+        deleteSuccess: "WA account deleted",
+        deleteOk: "Delete",
+        deleteCancel: "Cancel"
       },
       createModal: {
         title: "New WA Account",

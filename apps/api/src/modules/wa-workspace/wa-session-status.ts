@@ -185,10 +185,18 @@ export function deriveWaActions(input: {
   const canLogout = input.hasSession && !loginInProgress && !wasManuallyLoggedOut;
   const canStartLogin = !connected && !loginInProgress;
 
+  const canDelete = !connected && !loginInProgress;
+
   return {
     canStartLogin,
     canManageMembers: true,
     canViewHealth: true,
+    canDelete,
+    deleteReason: connected
+      ? "当前账号在线，请先退出后再删除"
+      : loginInProgress
+        ? "当前账号正在登录中，请等待完成后再删除"
+        : null,
     canLogout,
     logoutReason: !input.hasSession
       ? "当前账号还没有登录会话"

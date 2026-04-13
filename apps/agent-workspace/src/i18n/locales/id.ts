@@ -1,6 +1,7 @@
 import messages from "./modules/id/messages";
 import skillAssist from "./modules/id/skill-assist";
 import tasks from "./modules/id/tasks";
+import wa from "./modules/id/wa";
 
 export default {
   ...messages,
@@ -51,4 +52,6 @@ export default {
     logout: "Keluar"
   },
   ...skillAssist
+  ,
+  ...wa
 } as const;

@@ -270,6 +270,7 @@ export function createConversationTimeoutWorker() {
               handoff_required: false,
               handoff_reason: null,
               service_request_mode: "normal",
+              human_progress: "none",
               queue_mode: "none",
               queue_position: null,
               estimated_wait_sec: null,

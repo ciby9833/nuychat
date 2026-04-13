@@ -27,7 +27,8 @@ type ConversationUpdatedEvent = RealtimeEventBase & {
   status?: string;
   queueStatus?: string;
   assignedAgentId?: string | null;
-  serviceRequestMode?: "normal" | "human_requested";
+  serviceRequestMode?: "normal" | "human_requested" | "ai_opt_in";
+  humanProgress?: "none" | "assigned_waiting" | "queued_waiting" | "human_active" | "unavailable_fallback_ai";
   queueMode?: "none" | "assigned_waiting" | "pending_unavailable";
   queuePosition?: number | null;
   estimatedWaitSec?: number | null;

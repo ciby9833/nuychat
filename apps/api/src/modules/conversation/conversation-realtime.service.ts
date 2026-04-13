@@ -33,6 +33,7 @@ export async function buildConversationUpdatedSnapshot(
       db.raw("coalesce(uc.unread_count, 0)::int as unread_count"),
       "qa.status as queue_status",
       "qa.service_request_mode",
+      "qa.human_progress",
       "qa.queue_mode",
       "qa.queue_position",
       "qa.estimated_wait_sec",
@@ -49,6 +50,7 @@ export async function buildConversationUpdatedSnapshot(
       unread_count: number | string | null;
       queue_status: string | null;
       service_request_mode: string | null;
+      human_progress: string | null;
       queue_mode: string | null;
       queue_position: number | string | null;
       estimated_wait_sec: number | string | null;
@@ -61,7 +63,19 @@ export async function buildConversationUpdatedSnapshot(
     assignedAgentId: row?.assigned_agent_id ?? null,
     lastMessagePreview: row?.last_message_preview ?? null,
     unreadCount: Number(row?.unread_count ?? 0),
-    serviceRequestMode: row?.service_request_mode === "human_requested" ? "human_requested" : "normal",
+    serviceRequestMode:
+      row?.service_request_mode === "human_requested"
+        ? "human_requested"
+        : row?.service_request_mode === "ai_opt_in"
+          ? "ai_opt_in"
+          : "normal",
+    humanProgress:
+      row?.human_progress === "assigned_waiting" ||
+      row?.human_progress === "queued_waiting" ||
+      row?.human_progress === "human_active" ||
+      row?.human_progress === "unavailable_fallback_ai"
+        ? row.human_progress
+        : "none",
     queueMode: row?.queue_mode === "assigned_waiting" || row?.queue_mode === "pending_unavailable" ? row.queue_mode : "none",
     queuePosition: row?.queue_position === null || row?.queue_position === undefined ? null : Number(row.queue_position),
     estimatedWaitSec: row?.estimated_wait_sec === null || row?.estimated_wait_sec === undefined ? null : Number(row.estimated_wait_sec),

@@ -25,7 +25,7 @@ export class RoutingExecutionService {
       status: plan.statusPlan.queueStatus,
       reason: plan.trace.decision.reason,
       serviceRequestMode: plan.statusPlan.serviceRequestMode,
-      queueMode: plan.statusPlan.queueMode,
+      humanProgress: plan.statusPlan.humanProgress,
       queuePosition: plan.statusPlan.queuePosition,
       estimatedWaitSec: plan.statusPlan.estimatedWaitSec,
       aiFallbackAllowed: plan.statusPlan.aiFallbackAllowed,

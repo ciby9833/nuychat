@@ -1,5 +1,6 @@
 import type { Knex } from "knex";
 
+import { EXPLICIT_AI_OPT_IN_COMMAND } from "../service-mode/service-mode.constants.js";
 import { HumanDispatchService } from "./human-dispatch.service.js";
 import type { RoutingContext } from "./types.js";
 
@@ -47,6 +48,7 @@ export class RoutingContextService {
           "handoff_required",
           "handoff_reason",
           "service_request_mode",
+          "human_progress",
           "queue_mode",
           "queue_position",
           "estimated_wait_sec",
@@ -63,6 +65,7 @@ export class RoutingContextService {
           handoff_required: boolean | null;
           handoff_reason: string | null;
           service_request_mode: string | null;
+          human_progress: string | null;
           queue_mode: string | null;
           queue_position: number | string | null;
           estimated_wait_sec: number | string | null;
@@ -150,7 +153,8 @@ export class RoutingContextService {
             status: assignment.status ?? null,
             handoffRequired: Boolean(assignment.handoff_required),
             handoffReason: assignment.handoff_reason ?? null,
-            serviceRequestMode: assignment.service_request_mode === "human_requested" ? "human_requested" : "normal",
+            serviceRequestMode: normalizeServiceRequestMode(assignment.service_request_mode),
+            humanProgress: normalizeHumanProgress(assignment.human_progress),
             queueMode: normalizeQueueMode(assignment.queue_mode),
             queuePosition: assignment.queue_position === null || assignment.queue_position === undefined
               ? null
@@ -164,6 +168,27 @@ export class RoutingContextService {
         : null
     };
   }
+}
+
+function normalizeServiceRequestMode(value: string | null | undefined): "normal" | "human_requested" | "ai_opt_in" {
+  if (value === "human_requested" || value === "ai_opt_in") {
+    return value;
+  }
+  return "normal";
+}
+
+function normalizeHumanProgress(
+  value: string | null | undefined
+): "none" | "assigned_waiting" | "queued_waiting" | "human_active" | "unavailable_fallback_ai" {
+  if (
+    value === "assigned_waiting" ||
+    value === "queued_waiting" ||
+    value === "human_active" ||
+    value === "unavailable_fallback_ai"
+  ) {
+    return value;
+  }
+  return "none";
 }
 
 function normalizeQueueMode(value: string | null | undefined): "none" | "assigned_waiting" | "pending_unavailable" {
@@ -190,6 +215,10 @@ function parseStringArray(value: unknown): string[] {
     }
   }
   return [];
+}
+
+export function isExplicitAIOptInMessage(value: string | null | undefined) {
+  return (value ?? "").trim().toUpperCase() === EXPLICIT_AI_OPT_IN_COMMAND;
 }
 
 async function shouldPreserveHumanOwner(

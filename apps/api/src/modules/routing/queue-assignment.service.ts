@@ -14,8 +14,8 @@ export class QueueAssignmentService {
       priority: number;
       status: string;
       reason?: string | null;
-      serviceRequestMode?: "normal" | "human_requested";
-      queueMode?: "none" | "assigned_waiting" | "pending_unavailable";
+      serviceRequestMode?: "normal" | "human_requested" | "ai_opt_in";
+      humanProgress?: "none" | "assigned_waiting" | "queued_waiting" | "human_active" | "unavailable_fallback_ai";
       queuePosition?: number | null;
       estimatedWaitSec?: number | null;
       aiFallbackAllowed?: boolean;
@@ -23,7 +23,8 @@ export class QueueAssignmentService {
     }
   ) {
     const serviceRequestMode = input.serviceRequestMode ?? "normal";
-    const queueMode = input.queueMode ?? "none";
+    const humanProgress = input.humanProgress ?? "none";
+    const queueMode = deriveQueueMode(humanProgress);
     const aiFallbackAllowed = input.aiFallbackAllowed ?? false;
     const lockedHumanSide = input.lockedHumanSide ?? false;
     const derivedHandoffRequired = serviceRequestMode === "human_requested";
@@ -46,6 +47,7 @@ export class QueueAssignmentService {
         handoff_required: derivedHandoffRequired,
         handoff_reason: derivedHandoffReason,
         service_request_mode: serviceRequestMode,
+        human_progress: humanProgress,
         queue_mode: queueMode,
         queue_position: input.queuePosition ?? null,
         estimated_wait_sec: input.estimatedWaitSec ?? null,
@@ -65,6 +67,7 @@ export class QueueAssignmentService {
         handoff_required: derivedHandoffRequired,
         handoff_reason: derivedHandoffReason,
         service_request_mode: serviceRequestMode,
+        human_progress: humanProgress,
         queue_mode: queueMode,
         queue_position: input.queuePosition ?? null,
         estimated_wait_sec: input.estimatedWaitSec ?? null,
@@ -87,6 +90,7 @@ export class QueueAssignmentService {
         status: input.status,
         reason: input.reason ?? null,
         serviceRequestMode,
+        humanProgress,
         queueMode,
         queuePosition: input.queuePosition ?? null,
         estimatedWaitSec: input.estimatedWaitSec ?? null,
@@ -97,4 +101,12 @@ export class QueueAssignmentService {
 
     return { assignmentId: assignment.assignment_id as string };
   }
+}
+
+function deriveQueueMode(
+  humanProgress: "none" | "assigned_waiting" | "queued_waiting" | "human_active" | "unavailable_fallback_ai"
+): "none" | "assigned_waiting" | "pending_unavailable" {
+  if (humanProgress === "assigned_waiting") return "assigned_waiting";
+  if (humanProgress === "queued_waiting") return "pending_unavailable";
+  return "none";
 }

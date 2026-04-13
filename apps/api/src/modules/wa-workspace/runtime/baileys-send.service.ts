@@ -32,6 +32,10 @@ function resolveMediaUrl(url: string): string {
   return url;
 }
 
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 /**
  * Converts a WAMessage["message"] that was round-tripped through JSON storage
  * into a form that Baileys' protobuf serializer can safely handle.
@@ -100,19 +104,28 @@ async function buildQuotedMessage(
 ): Promise<WAMessage | undefined> {
   if (!quotedMessageId) return undefined;
 
+  const normalizedQuotedMessageId = quotedMessageId.trim();
+  const quotedMessageIdIsUuid = isUuidLike(normalizedQuotedMessageId);
+
   const row = await withTenantTransaction(tenantId, async (trx) =>
     trx("wa_messages")
       .where("tenant_id", tenantId)
       .where("wa_account_id", waAccountId)
       .andWhere((builder) => {
-        builder.where("provider_message_id", quotedMessageId).orWhere("wa_message_id", quotedMessageId);
+        builder.where("provider_message_id", normalizedQuotedMessageId);
+        if (quotedMessageIdIsUuid) {
+          builder.orWhere("wa_message_id", normalizedQuotedMessageId);
+        }
       })
       .select("provider_message_id", "direction", "participant_jid", "sender_jid", "provider_payload")
       .orderBy("created_at", "desc")
       .first<Record<string, unknown> | undefined>()
   );
   if (!row) {
-    console.warn("[baileys-send] buildQuotedMessage: message not found", { quotedMessageId });
+    console.warn("[baileys-send] buildQuotedMessage: message not found", {
+      quotedMessageId: normalizedQuotedMessageId,
+      lookupBy: quotedMessageIdIsUuid ? ["provider_message_id", "wa_message_id"] : ["provider_message_id"]
+    });
     return undefined;
   }
 
@@ -123,7 +136,9 @@ async function buildQuotedMessage(
       : null;
   if (!providerMessageId) {
     // Message hasn't been delivered to WhatsApp yet (still pending/failed). Skip the quote.
-    console.warn("[baileys-send] buildQuotedMessage: no provider_message_id yet", { quotedMessageId });
+    console.warn("[baileys-send] buildQuotedMessage: no provider_message_id yet", {
+      quotedMessageId: normalizedQuotedMessageId
+    });
     return undefined;
   }
 

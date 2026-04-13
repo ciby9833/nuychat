@@ -26,7 +26,7 @@ import { realtimeEventBus } from "../modules/realtime/realtime.events.js";
 import { RoutingPlanRepository } from "../modules/routing-engine/routing-plan.repository.js";
 import { RoutingPlanStepService } from "../modules/routing-engine/routing-plan-step.service.js";
 import { RoutingContextService } from "../modules/routing-engine/routing-context.service.js";
-import { RoutingNoticeService } from "../modules/routing-engine/routing-notice.service.js";
+import { ServiceModeEngine } from "../modules/service-mode/service-mode.engine.js";
 import { UnifiedRoutingEngineService } from "../modules/routing-engine/unified-routing-engine.service.js";
 import { scheduleAssignmentAcceptTimeout } from "../modules/sla/conversation-sla.service.js";
 import {
@@ -42,7 +42,7 @@ const routingPlanRepository = new RoutingPlanRepository();
 const routingPlanStepService = new RoutingPlanStepService();
 const routingContextService = new RoutingContextService();
 const unifiedRoutingEngineService = new UnifiedRoutingEngineService();
-const routingNoticeService = new RoutingNoticeService();
+const serviceModeEngine = new ServiceModeEngine();
 
 function fitAiTraceReason(value: string | null | undefined) {
   if (!value) return null;
@@ -477,6 +477,7 @@ async function releaseConversationToHumanQueue(input: {
   stepStatus: "failed" | "completed";
   stepPayload: Record<string, unknown>;
 }) {
+  let serviceModeFrom = null;
   const resolvedHandoffTarget = input.handoffTarget.assignedAgentId
     ? input.handoffTarget
     : await withTenantTransaction(input.tenantId, async (trx) => {
@@ -516,6 +517,55 @@ async function releaseConversationToHumanQueue(input: {
       });
 
   await withTenantTransaction(input.tenantId, async (trx) => {
+    const existingAssignment = await trx("queue_assignments")
+      .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
+      .select(
+        "assigned_agent_id",
+        "assigned_ai_agent_id",
+        "service_request_mode",
+        "human_progress",
+        "queue_mode",
+        "queue_position",
+        "estimated_wait_sec",
+        "ai_fallback_allowed",
+        "locked_human_side"
+      )
+      .first<{
+        assigned_agent_id: string | null;
+        assigned_ai_agent_id: string | null;
+        service_request_mode: "normal" | "human_requested" | "ai_opt_in" | null;
+        human_progress: "none" | "assigned_waiting" | "queued_waiting" | "human_active" | "unavailable_fallback_ai" | null;
+        queue_mode: "none" | "assigned_waiting" | "pending_unavailable" | null;
+        queue_position: number | null;
+        estimated_wait_sec: number | null;
+        ai_fallback_allowed: boolean | null;
+        locked_human_side: boolean | null;
+      } | undefined>();
+    serviceModeFrom = serviceModeEngine.snapshotFromExistingAssignment(existingAssignment
+      ? {
+          departmentId: null,
+          teamId: null,
+          assignedAgentId: existingAssignment.assigned_agent_id,
+          assignmentStrategy: null,
+          priority: null,
+          status: null,
+          handoffRequired: existingAssignment.service_request_mode === "human_requested",
+          handoffReason: null,
+          serviceRequestMode:
+            existingAssignment.service_request_mode === "human_requested"
+              ? "human_requested"
+              : existingAssignment.service_request_mode === "ai_opt_in"
+                ? "ai_opt_in"
+                : "normal",
+          humanProgress: existingAssignment.human_progress ?? "none",
+          queueMode: existingAssignment.queue_mode ?? "none",
+          queuePosition: existingAssignment.queue_position,
+          estimatedWaitSec: existingAssignment.estimated_wait_sec,
+          aiFallbackAllowed: Boolean(existingAssignment.ai_fallback_allowed),
+          lockedHumanSide: Boolean(existingAssignment.locked_human_side)
+        }
+      : null);
+
     const fromSegmentId = await trx("conversations")
       .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
       .select("current_segment_id")
@@ -569,6 +619,7 @@ async function releaseConversationToHumanQueue(input: {
         handoff_required: true,
         handoff_reason: input.reason,
         service_request_mode: "human_requested",
+        human_progress: resolvedHandoffTarget.assignedAgentId ? "assigned_waiting" : "queued_waiting",
         queue_mode: resolvedHandoffTarget.assignedAgentId ? "assigned_waiting" : "pending_unavailable",
         queue_position: resolvedHandoffTarget.queuePosition,
         estimated_wait_sec: resolvedHandoffTarget.estimatedWaitSec,
@@ -594,12 +645,20 @@ async function releaseConversationToHumanQueue(input: {
     occurredAt: new Date().toISOString()
   });
 
-  await queueHumanRoutingNotice({
+  serviceModeEngine.publishTransition({
     tenantId: input.tenantId,
     conversationId: input.conversationId,
     channelId: input.conversation.channel_id as string,
     channelType: input.channelType,
-    handoffTarget: resolvedHandoffTarget
+    from: serviceModeFrom,
+    to: serviceModeEngine.snapshotFromHumanQueueTarget({
+      assignedAgentId: resolvedHandoffTarget.assignedAgentId,
+      queuePosition: resolvedHandoffTarget.queuePosition,
+      estimatedWaitSec: resolvedHandoffTarget.estimatedWaitSec,
+      aiFallbackAllowed: true
+    }),
+    aiAgentName: "AI",
+    reason: input.reason
   });
 }
 
@@ -640,39 +699,4 @@ async function resolveReservedHumanTarget(
     queuePosition: null,
     estimatedWaitSec: null
   };
-}
-
-async function queueHumanRoutingNotice(input: {
-  tenantId: string;
-  conversationId: string;
-  channelId: string;
-  channelType: string;
-  handoffTarget: ReservedHumanTarget;
-}) {
-  const scenario = input.handoffTarget.assignedAgentId ? "human_assigned" : "human_queue";
-  const notice = await withTenantTransaction(input.tenantId, async (trx) =>
-    routingNoticeService.buildNotice(trx, {
-      tenantId: input.tenantId,
-      conversationId: input.conversationId,
-      scenario,
-      aiAgentName: "AI"
-    })
-  );
-
-  if (!notice) return;
-
-  await outboundQueue.add(
-    "outbound.routing_notice",
-    {
-      tenantId: input.tenantId,
-      conversationId: input.conversationId,
-      channelId: input.channelId,
-      channelType: input.channelType,
-      message: {
-        text: notice.text,
-        aiAgentName: notice.aiAgentName
-      }
-    },
-    { removeOnComplete: 100, removeOnFail: 50 }
-  );
 }

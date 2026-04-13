@@ -2,12 +2,13 @@
 // 菜单路径: 系统设置 -> 坐席与成员管理 -> WA账号管理。
 // 交互: 调用 WA 管理端 API，依赖成员列表完成负责人/可见成员分配。
 
-import { CheckCircleFilled, LinkOutlined, LoadingOutlined, MessageOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import { CheckCircleFilled, DeleteOutlined, LinkOutlined, LoadingOutlined, MessageOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
   Button,
   Form,
   Input,
   Modal,
+  Popconfirm,
   QRCode,
   Select,
   Space,
@@ -25,6 +26,7 @@ import {
   API_BASE,
   createWaAccount,
   createWaAccountLoginTask,
+  deleteWaAccount,
   getWaAccountHealth,
   assignWaAccountMembers,
   logoutWaAccount,
@@ -495,6 +497,35 @@ export function WaAccountsPane({
                   >
                     {t("waMonitor.pane.actions.reconnect")}
                   </Button>
+                  <Popconfirm
+                    title={t("waMonitor.pane.actions.deleteConfirm")}
+                    description={t("waMonitor.pane.actions.deleteWarning")}
+                    onConfirm={() => {
+                      void (async () => {
+                        try {
+                          await deleteWaAccount(row.waAccountId);
+                          void message.success(t("waMonitor.pane.actions.deleteSuccess"));
+                          onReload();
+                        } catch (err) {
+                          void message.error((err as Error).message);
+                        }
+                      })();
+                    }}
+                    okText={t("waMonitor.pane.actions.deleteOk")}
+                    cancelText={t("waMonitor.pane.actions.deleteCancel")}
+                    okButtonProps={{ danger: true }}
+                    disabled={!row.actions.canDelete}
+                  >
+                    <Button
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      disabled={!row.actions.canDelete}
+                      title={row.actions.deleteReason ?? undefined}
+                    >
+                      {t("waMonitor.pane.actions.delete")}
+                    </Button>
+                  </Popconfirm>
                 </Space>
               );
               }

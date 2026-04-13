@@ -5,7 +5,6 @@ import { db, withTenantTransaction } from "../infra/db/client.js";
 import { duplicateRedisConnection } from "../infra/redis/client.js";
 import {
   inboundQueue,
-  outboundQueue,
   routingQueue,
   type InboundJobPayload
 } from "../infra/queue/queues.js";
@@ -26,7 +25,7 @@ import { UnifiedRoutingEngineService } from "../modules/routing-engine/unified-r
 import { RoutingPlanRepository } from "../modules/routing-engine/routing-plan.repository.js";
 import { RoutingExecutionService } from "../modules/routing-engine/routing-execution.service.js";
 import { RoutingPlanStepService } from "../modules/routing-engine/routing-plan-step.service.js";
-import { RoutingNoticeService } from "../modules/routing-engine/routing-notice.service.js";
+import { ServiceModeEngine } from "../modules/service-mode/service-mode.engine.js";
 import { trackEvent } from "../modules/analytics/analytics.service.js";
 import {
   cancelFollowUpTimeout,
@@ -51,7 +50,7 @@ const unifiedRoutingEngineService = new UnifiedRoutingEngineService();
 const routingPlanRepository = new RoutingPlanRepository();
 const routingExecutionService = new RoutingExecutionService();
 const routingPlanStepService = new RoutingPlanStepService();
-const routingNoticeService = new RoutingNoticeService();
+const serviceModeEngine = new ServiceModeEngine();
 
 export function createInboundWorker() {
   const workerConnection = duplicateRedisConnection();
@@ -267,6 +266,7 @@ export function createInboundWorker() {
           createdConversation: conversation.created,
           createdCase: currentCase.created,
           routingPlan,
+          serviceModeFrom: serviceModeEngine.snapshotFromExistingAssignment(routingContext.existingAssignment),
           preserveHumanOwner: routingContext.preserveHumanOwner,
           conversationStatus: routingPlan.statusPlan.conversationStatus
         };
@@ -321,12 +321,15 @@ export function createInboundWorker() {
         occurredAt: new Date().toISOString()
       });
 
-      await maybeQueueRoutingNotice({
+      serviceModeEngine.publishTransition({
         tenantId: job.data.tenantId,
         conversationId: result.conversationId,
         channelId: job.data.channelId,
         channelType: job.data.channelType,
-        routingPlan: result.routingPlan
+        from: result.serviceModeFrom,
+        to: serviceModeEngine.snapshotFromRoutingPlan(result.routingPlan),
+        aiAgentName: result.routingPlan.target.aiAgentName ?? "AI",
+        reason: result.routingPlan.trace.decision.reason
       });
 
   // ── Conversation timeout scheduling ──────────────────────────────────
@@ -353,51 +356,6 @@ export function createInboundWorker() {
       connection: workerConnection as any,
       concurrency: 5
     }
-  );
-}
-
-async function maybeQueueRoutingNotice(input: {
-  tenantId: string;
-  conversationId: string;
-  channelId: string;
-  channelType: string;
-  routingPlan: Awaited<ReturnType<UnifiedRoutingEngineService["createPlan"]>>;
-}) {
-  const { routingPlan } = input;
-  if (routingPlan.statusPlan.serviceRequestMode !== "human_requested") {
-    return;
-  }
-
-  const scenario = routingPlan.statusPlan.selectedOwnerType === "ai"
-    ? "fallback_ai"
-    : routingPlan.statusPlan.queueMode === "assigned_waiting"
-      ? "human_assigned"
-      : "human_queue";
-
-  const notice = await withTenantTransaction(input.tenantId, async (trx) =>
-    routingNoticeService.buildNotice(trx, {
-      tenantId: input.tenantId,
-      conversationId: input.conversationId,
-      scenario,
-      aiAgentName: routingPlan.target.aiAgentName ?? "AI"
-    })
-  );
-
-  if (!notice) return;
-
-  await outboundQueue.add(
-    "outbound.routing_notice",
-    {
-      tenantId: input.tenantId,
-      conversationId: input.conversationId,
-      channelId: input.channelId,
-      channelType: input.channelType,
-      message: {
-        text: notice.text,
-        aiAgentName: notice.aiAgentName
-      }
-    },
-    { removeOnComplete: 100, removeOnFail: 50 }
   );
 }
 

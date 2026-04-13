@@ -4,6 +4,7 @@ import type { AIMessage } from "../../../../../packages/ai-sdk/src/index.js";
 import { buildCallContext, trackedComplete } from "../ai/call-context.js";
 import { resolveTenantAISettingsForScene } from "../ai/provider-config.service.js";
 import { assertTenantAIBudgetAllowsUsage } from "../ai/usage-meter.service.js";
+import { EXPLICIT_AI_OPT_IN_COMMAND } from "../service-mode/service-mode.constants.js";
 
 type RoutingNoticeScenario = "human_assigned" | "human_queue" | "fallback_ai";
 
@@ -13,15 +14,15 @@ type QueueAssignmentRow = {
   team_id: string | null;
   assigned_agent_id: string | null;
   assigned_ai_agent_id: string | null;
+  human_progress: "none" | "assigned_waiting" | "queued_waiting" | "human_active" | "unavailable_fallback_ai";
   queue_position: number | null;
   estimated_wait_sec: number | null;
-  service_request_mode: "normal" | "human_requested";
+  service_request_mode: "normal" | "human_requested" | "ai_opt_in";
   queue_mode: "none" | "assigned_waiting" | "pending_unavailable";
   ai_fallback_allowed: boolean | null;
 };
 
 type ConversationRow = {
-  last_message_preview: string | null;
   updated_at: string | Date | null;
   channel_id: string | null;
   channel_type: string | null;
@@ -33,6 +34,11 @@ type CustomerRow = {
 
 type AgentRow = {
   display_name: string | null;
+};
+
+type LastCustomerMessageRow = {
+  content: { text?: string | null } | null;
+  created_at: string | Date | null;
 };
 
 const NOTICE_SYSTEM_PROMPT = `You write short customer-facing service-routing notices for support conversations.
@@ -47,6 +53,7 @@ Rules:
 - If a human agent has been assigned, clearly say the transfer succeeded and mention the agent name when provided.
 - If the customer is waiting in a human queue, mention the queue position and estimated wait when provided.
 - If no human is currently serviceable and AI fallback is active, explain that no human is available right now and mention the next schedule summary only if provided.
+- When the facts include a switchBackCommand for a queue or fallback scenario, mention that exact command as the explicit way to continue with AI now.
 - Do not mention internal field names or system implementation details.`;
 
 export class RoutingNoticeService {
@@ -74,6 +81,7 @@ export class RoutingNoticeService {
           "team_id",
           "assigned_agent_id",
           "assigned_ai_agent_id",
+          "human_progress",
           "queue_position",
           "estimated_wait_sec",
           "service_request_mode",
@@ -83,7 +91,7 @@ export class RoutingNoticeService {
         .first<QueueAssignmentRow | undefined>(),
       db("conversations")
         .where({ tenant_id: input.tenantId, conversation_id: input.conversationId })
-        .select("last_message_preview", "updated_at", "channel_id", "channel_type", "customer_id")
+        .select("updated_at", "channel_id", "channel_type", "customer_id")
         .first<(ConversationRow & { customer_id: string | null }) | undefined>(),
       db("conversations as c")
         .join("customers as cu", function joinCustomers() {
@@ -95,6 +103,18 @@ export class RoutingNoticeService {
     ]);
 
     if (!assignment || !conversation) return null;
+
+    const lastCustomerMessage = await db("messages")
+      .where({
+        tenant_id: input.tenantId,
+        conversation_id: input.conversationId,
+        direction: "inbound",
+        sender_type: "customer"
+      })
+      .whereNotNull("content")
+      .select("content", "created_at")
+      .orderBy("created_at", "desc")
+      .first<LastCustomerMessageRow | undefined>();
 
     const assignedAgent = assignment.assigned_agent_id
       ? await db("agent_profiles")
@@ -118,17 +138,37 @@ export class RoutingNoticeService {
     const facts = {
       scenario: input.scenario,
       customerLanguage: customer?.language ?? null,
-      latestCustomerMessage: conversation.last_message_preview ?? null,
+      latestCustomerMessage: lastCustomerMessage?.content?.text ?? null,
       assignedAgentName: assignedAgent?.display_name ?? null,
       queuePosition: assignment.queue_position ?? null,
       estimatedWaitSec: assignment.estimated_wait_sec ?? null,
       serviceRequestMode: assignment.service_request_mode,
+      humanProgress: assignment.human_progress,
       queueMode: assignment.queue_mode,
       aiFallbackAllowed: Boolean(assignment.ai_fallback_allowed),
       humanAvailability: availability,
       nextScheduleSummary: nextSchedules.summary,
-      nextScheduleItems: nextSchedules.items
+      nextScheduleItems: nextSchedules.items,
+      switchBackCommand:
+        input.scenario === "human_queue" || input.scenario === "fallback_ai"
+          ? EXPLICIT_AI_OPT_IN_COMMAND
+          : null
     };
+
+    const dedupeState = buildDedupeState({
+      scenario: input.scenario,
+      assignedAgentId: assignment.assigned_agent_id,
+      queueMode: assignment.queue_mode,
+      queuePosition: assignment.queue_position,
+      estimatedWaitSec: assignment.estimated_wait_sec,
+      aiFallbackAllowed: Boolean(assignment.ai_fallback_allowed)
+    });
+    const alreadySent = await hasMatchingRecentNotice(db, {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      state: dedupeState
+    });
+    if (alreadySent) return null;
 
     const ctx = buildCallContext(
       db,
@@ -152,6 +192,16 @@ export class RoutingNoticeService {
       const parsed = safeParseJson(completion.content);
       const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
       if (!text) return null;
+      await db("conversation_events").insert({
+        tenant_id: input.tenantId,
+        conversation_id: input.conversationId,
+        event_type: "routing_notice_sent",
+        actor_type: "system",
+        payload: {
+          scenario: input.scenario,
+          state: dedupeState
+        }
+      });
       return {
         text,
         aiAgentName: input.aiAgentName?.trim() || "AI"
@@ -295,4 +345,54 @@ function safeParseJson(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function buildDedupeState(input: {
+  scenario: RoutingNoticeScenario;
+  assignedAgentId: string | null;
+  queueMode: string;
+  queuePosition: number | null;
+  estimatedWaitSec: number | null;
+  aiFallbackAllowed: boolean;
+}) {
+  return {
+    scenario: input.scenario,
+    assignedAgentId: input.assignedAgentId,
+    queueMode: input.queueMode,
+    queuePosition: input.queuePosition,
+    estimatedWaitSecBucket: bucketWaitSec(input.estimatedWaitSec),
+    aiFallbackAllowed: input.aiFallbackAllowed
+  };
+}
+
+function bucketWaitSec(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return null;
+  if (value <= 0) return 0;
+  if (value <= 60) return 60;
+  if (value <= 300) return 300;
+  if (value <= 900) return 900;
+  if (value <= 1800) return 1800;
+  return 3600;
+}
+
+async function hasMatchingRecentNotice(
+  db: Knex | Knex.Transaction,
+  input: {
+    tenantId: string;
+    conversationId: string;
+    state: Record<string, unknown>;
+  }
+) {
+  const row = await db("conversation_events")
+    .where({
+      tenant_id: input.tenantId,
+      conversation_id: input.conversationId,
+      event_type: "routing_notice_sent"
+    })
+    .select("payload")
+    .orderBy("created_at", "desc")
+    .first<{ payload: { state?: Record<string, unknown> } | null } | undefined>();
+
+  const previousState = row?.payload?.state;
+  return JSON.stringify(previousState ?? null) === JSON.stringify(input.state);
 }

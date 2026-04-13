@@ -16,6 +16,7 @@ import {
   assignAdminWaAccountMembers,
   createAdminLoginTask,
   createAdminWaAccount,
+  deleteAdminWaAccount,
   getAdminWaAccountHealth,
   listAdminWaAccounts,
   logoutAdminWaAccount,
@@ -203,6 +204,13 @@ export async function waAdminRoutes(app: FastifyInstance) {
     }
     const { waAccountId } = req.params as { waAccountId: string };
     return withTenantTransaction(tenantId, async (trx) => logoutAdminWaAccount(trx, { tenantId, waAccountId }));
+  });
+
+  app.delete("/api/admin/wa/accounts/:waAccountId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waAccountId } = req.params as { waAccountId: string };
+    return withTenantTransaction(tenantId, async (trx) => deleteAdminWaAccount(trx, { tenantId, waAccountId }));
   });
 
   app.patch("/api/admin/wa/members/:membershipId/seat", async (req) => {

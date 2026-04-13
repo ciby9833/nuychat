@@ -7,6 +7,7 @@
  */
 
 import { type ChangeEvent, type ClipboardEvent, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 
 import { API_BASE_URL } from "../../api";
 import type { Session } from "../../types";
@@ -95,6 +96,7 @@ function docIcon(mimeType: string | null, fileName: string | null): string {
 
 /** Image message — shows inline preview with error fallback. */
 function ImageBody({ att, caption, mine, token }: { att: WaAttachment; caption: string | null; mine: boolean; token: string }) {
+  const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   const url = mediaProxyUrl(att, token);
 
@@ -104,7 +106,7 @@ function ImageBody({ att, caption, mine, token }: { att: WaAttachment; caption: 
         <a href={url} target="_blank" rel="noreferrer" className="block">
           <img
             src={url}
-            alt={caption || "图片"}
+            alt={caption || t("wa.chat.imageAlt")}
             className="block max-h-[300px] w-full rounded-[8px] object-cover"
             onError={() => setFailed(true)}
           />
@@ -117,7 +119,7 @@ function ImageBody({ att, caption, mine, token }: { att: WaAttachment; caption: 
           <div className="text-center">
             <div className="text-3xl">🖼️</div>
             <div className="mt-1 text-[11px] text-[#667781]">
-              {att.width && att.height ? `${att.width} × ${att.height}` : "图片"}
+              {att.width && att.height ? `${att.width} × ${att.height}` : t("wa.chat.imageLabel")}
             </div>
           </div>
         </div>
@@ -160,6 +162,7 @@ function VideoBody({ att, caption, token }: { att: WaAttachment; caption: string
 
 /** Audio / voice-note message — native audio element with waveform decoration. */
 function AudioBody({ att, token }: { att: WaAttachment; token: string }) {
+  const { t } = useTranslation();
   const url = mediaProxyUrl(att, token);
   const duration = fmtDuration(att.durationMs);
   const isVoice = (att.mimeType ?? "").includes("ogg") || (att.mimeType ?? "").includes("opus");
@@ -185,7 +188,7 @@ function AudioBody({ att, token }: { att: WaAttachment; token: string }) {
           </div>
         )}
         <div className="mt-0.5 text-[11px] text-[#667781]">
-          {duration !== "0:00" ? duration : "语音消息"}
+          {duration !== "0:00" ? duration : t("wa.chat.voiceMessage")}
         </div>
       </div>
     </div>
@@ -194,9 +197,10 @@ function AudioBody({ att, token }: { att: WaAttachment; token: string }) {
 
 /** Document / file message — file card with icon, name, size and download. */
 function DocumentBody({ att, caption, token }: { att: WaAttachment; caption: string | null; token: string }) {
+  const { t } = useTranslation();
   const url = mediaProxyUrl(att, token);
   const icon = docIcon(att.mimeType, att.fileName);
-  const name = att.fileName || "文件";
+  const name = att.fileName || t("wa.chat.fileLabel");
   const size = fmtSize(att.fileSize);
 
   return (
@@ -214,7 +218,7 @@ function DocumentBody({ att, caption, token }: { att: WaAttachment; caption: str
             rel="noreferrer"
             download={att.fileName || true}
             className="shrink-0 rounded-full bg-[#00a884] p-2 text-white hover:bg-[#017a61]"
-            title="下载"
+            title={t("wa.chat.download")}
           >
             ↓
           </a>
@@ -227,13 +231,14 @@ function DocumentBody({ att, caption, token }: { att: WaAttachment; caption: str
 
 /** Sticker — transparent, no bubble background. */
 function StickerBody({ att, token }: { att: WaAttachment; token: string }) {
+  const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   const url = mediaProxyUrl(att, token);
   if (url && !failed) {
     return (
       <img
         src={url}
-        alt="贴纸"
+        alt={t("wa.chat.stickerAlt")}
         className="max-h-[160px] max-w-[160px] object-contain"
         onError={() => setFailed(true)}
       />
@@ -244,6 +249,7 @@ function StickerBody({ att, token }: { att: WaAttachment; token: string }) {
 
 /** Location — map thumbnail with link to Google Maps. */
 function LocationBody({ att, token }: { att: WaAttachment; token: string }) {
+  const { t } = useTranslation();
   const lat = att.width;  // stored lat in width field
   const lng = att.height; // stored lng in height field
   const name = att.fileName;
@@ -253,7 +259,7 @@ function LocationBody({ att, token }: { att: WaAttachment; token: string }) {
   return (
     <div className="max-w-[240px]">
       {thumbUrl ? (
-        <img src={thumbUrl} alt="位置" className="mb-2 w-full rounded-[8px] object-cover" />
+        <img src={thumbUrl} alt={t("wa.chat.locationAlt")} className="mb-2 w-full rounded-[8px] object-cover" />
       ) : (
         <div className="mb-2 flex h-[100px] items-center justify-center rounded-[8px] bg-[#e8f5e9]">
           <span className="text-3xl">📍</span>
@@ -265,7 +271,7 @@ function LocationBody({ att, token }: { att: WaAttachment; token: string }) {
       )}
       {mapsUrl && (
         <a href={mapsUrl} target="_blank" rel="noreferrer" className="mt-1 block text-[12px] text-[#00a884] underline-offset-2 hover:underline">
-          在地图中查看
+          {t("wa.chat.openInMaps")}
         </a>
       )}
     </div>
@@ -274,12 +280,13 @@ function LocationBody({ att, token }: { att: WaAttachment; token: string }) {
 
 /** Reaction message — shown as a tiny center-aligned pill, not a regular bubble. */
 function ReactionPill({ message }: { message: WaMessageItem }) {
+  const { t } = useTranslation();
   const emoji = message.bodyText || "👍";
-  const actor = message.senderDisplayName || message.senderJid?.split("@")[0] || "对方";
+  const actor = message.senderDisplayName || message.senderJid?.split("@")[0] || t("wa.chat.otherParty");
   return (
     <div className="my-1 flex justify-center">
       <div className="rounded-full bg-white/70 px-3 py-1 text-[11px] text-[#667781] shadow-sm">
-        {actor} 回应了 <span className="text-base leading-none">{emoji}</span>
+        {t("wa.chat.reactionBy", { actor })} <span className="text-base leading-none">{emoji}</span>
       </div>
     </div>
   );
@@ -287,23 +294,25 @@ function ReactionPill({ message }: { message: WaMessageItem }) {
 
 /** Revoked / deleted message. */
 function RevokedBody({ mine }: { mine: boolean }) {
+  const { t } = useTranslation();
   return (
     <div className={`flex items-center gap-2 text-[13px] italic ${mine ? "text-[#075e54]/60" : "text-[#667781]"}`}>
       <span>🚫</span>
-      <span>此消息已被撤回</span>
+      <span>{t("wa.chat.revoked")}</span>
     </div>
   );
 }
 
 /** Contact card placeholder. */
 function ContactCardBody({ message }: { message: WaMessageItem }) {
-  const name = message.bodyText || "联系人";
+  const { t } = useTranslation();
+  const name = message.bodyText || t("wa.chat.contactCard");
   return (
     <div className="flex items-center gap-3 rounded-[8px] bg-black/[0.04] px-3 py-3 max-w-[240px]">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#d1d7db] text-lg">👤</div>
       <div className="min-w-0">
         <div className="truncate text-[13px] font-medium">{name}</div>
-        <div className="text-[11px] text-[#667781]">联系人名片</div>
+        <div className="text-[11px] text-[#667781]">{t("wa.chat.contactCardLabel")}</div>
       </div>
     </div>
   );
@@ -311,10 +320,11 @@ function ContactCardBody({ message }: { message: WaMessageItem }) {
 
 /** Unknown / unsupported message type fallback. */
 function UnsupportedBody({ messageType }: { messageType: string }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center gap-2 text-[13px] italic text-[#667781]">
       <span>⚠️</span>
-      <span>此消息类型暂不支持（{messageType}）</span>
+      <span>{t("wa.chat.unsupported", { type: messageType })}</span>
     </div>
   );
 }
@@ -346,6 +356,7 @@ function ReactionsBar({ reactions }: { reactions: WaReaction[] }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function WaChatPanel(props: WaChatPanelProps) {
+  const { t, i18n } = useTranslation();
   const {
     session,
     detail,
@@ -376,11 +387,11 @@ export function WaChatPanel(props: WaChatPanelProps) {
     detail?.conversation.subject ||
     detail?.conversation.contactJid ||
     detail?.conversation.chatJid ||
-    "选择会话";
-  const currentReplier = detail?.conversation.currentReplierName || "未接管";
+    t("wa.chat.selectConversation");
+  const currentReplier = detail?.conversation.currentReplierName || t("wa.chat.unassigned");
   const headerMeta = detail?.conversation.conversationType === "group"
-    ? `${detail.members.length} 位成员`
-    : detail?.conversation.contactPhoneE164 || detail?.conversation.contactJid || "单聊";
+    ? t("wa.context.memberCount", { count: detail.members.length })
+    : detail?.conversation.contactPhoneE164 || detail?.conversation.contactJid || t("wa.chat.directChat");
 
   // ── Scroll ────────────────────────────────────────────────────────────────
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -448,7 +459,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
   };
 
   const bubbleTimestamp = (message: WaMessageItem) =>
-    new Date(message.providerTs || message.createdAt).toLocaleTimeString([], {
+    new Date(message.providerTs || message.createdAt).toLocaleTimeString(i18n.language, {
       hour: "numeric",
       minute: "2-digit"
     });
@@ -480,22 +491,22 @@ export function WaChatPanel(props: WaChatPanelProps) {
       case "image":
         return att
           ? <ImageBody att={att} caption={bodyText} mine={mine} token={token} />
-          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType="image (无附件)" />;
+          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentImage")} />;
 
       case "video":
         return att
           ? <VideoBody att={att} caption={bodyText} token={token} />
-          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType="video (无附件)" />;
+          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentVideo")} />;
 
       case "audio":
         return att
           ? <AudioBody att={att} token={token} />
-          : <UnsupportedBody messageType="audio (无附件)" />;
+          : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentAudio")} />;
 
       case "document":
         return att
           ? <DocumentBody att={att} caption={bodyText} token={token} />
-          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType="document (无附件)" />;
+          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentDocument")} />;
 
       case "sticker":
         return att ? <StickerBody att={att} token={token} /> : <div className="text-3xl">🎭</div>;
@@ -513,7 +524,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
         // messageType === "text" with no body and no attachment: could be an interactive
         // message type whose text wasn't extracted, or genuinely empty.
         if (messageType === "text") {
-          return <div className="text-[13px] italic text-[#667781]">（消息内容加载中或格式未知）</div>;
+          return <div className="text-[13px] italic text-[#667781]">{t("wa.chat.unknownFormat")}</div>;
         }
         return <UnsupportedBody messageType={messageType} />;
     }
@@ -552,14 +563,14 @@ export function WaChatPanel(props: WaChatPanelProps) {
               disabled={!detail || actionLoading !== null}
               className="h-8 rounded-full border border-[#d1d7db] bg-white px-3 text-xs font-medium text-[#111b21] transition-colors hover:bg-[#f5f6f6] disabled:opacity-50"
             >
-              {actionLoading === "takeover" ? "接管中..." : "接管"}
+              {actionLoading === "takeover" ? t("wa.chat.takeoverLoading") : t("wa.chat.takeover")}
             </button>
             <button
               type="button" onClick={onRelease}
               disabled={!detail || actionLoading !== null}
               className="h-8 rounded-full bg-[#00a884] px-3 text-xs font-medium text-white transition-colors hover:bg-[#017561] disabled:opacity-50"
             >
-              {actionLoading === "release" ? "释放中..." : "释放"}
+              {actionLoading === "release" ? t("wa.chat.releaseLoading") : t("wa.chat.release")}
             </button>
           </div>
         </div>
@@ -576,7 +587,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
           backgroundSize: "18px 18px, auto"
         }}
       >
-        {detailLoading ? <div className="text-sm text-[#667781]">会话加载中...</div> : null}
+        {detailLoading ? <div className="text-sm text-[#667781]">{t("wa.chat.loadingConversation")}</div> : null}
         {/* ── Load more button (top of list) ─────────────────────────── */}
         {hasMoreMessages && !detailLoading ? (
           <div className="mb-4 flex justify-center">
@@ -586,7 +597,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
               disabled={loadingMoreMessages}
               className="rounded-full bg-white/80 px-4 py-2 text-[12px] font-medium text-[#54656f] shadow-sm hover:bg-white disabled:opacity-50"
             >
-              {loadingMoreMessages ? "加载中..." : "加载更多历史消息"}
+              {loadingMoreMessages ? t("wa.chat.loadMoreLoading") : t("wa.chat.loadMore")}
             </button>
           </div>
         ) : null}
@@ -618,7 +629,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                   <div ref={unreadDividerRef} className="my-4 flex items-center gap-3">
                     <div className="h-px flex-1 bg-[#c9b99a]" />
                     <span className="rounded-full bg-[#fbf3d5] px-3 py-1 text-[11px] font-medium text-[#75591c] shadow-sm">
-                      {firstUnreadCount} 条未读消息
+                      {t("wa.chat.unreadDivider", { count: firstUnreadCount })}
                     </span>
                     <div className="h-px flex-1 bg-[#c9b99a]" />
                   </div>
@@ -647,10 +658,10 @@ export function WaChatPanel(props: WaChatPanelProps) {
                       {message.quotedMessageId ? (
                         <div className={`mb-2 rounded-lg border-l-4 px-3 py-2 text-xs ${mine ? "border-[#53bdeb] bg-[#f0f2f5]" : "border-[#00a884] bg-[#f5f6f6]"}`}>
                           <div className="text-[11px] font-medium text-[#54656f]">
-                            {quotedTarget?.senderDisplayName || "引用消息"}
+                            {quotedTarget?.senderDisplayName || t("wa.chat.quotedMessage")}
                           </div>
                           <div className="mt-0.5 truncate text-[#111b21]">
-                            {quotedTarget?.bodyText || quotedTarget?.attachments[0]?.fileName || "媒体消息"}
+                            {quotedTarget?.bodyText || quotedTarget?.attachments[0]?.fileName || t("wa.chat.mediaMessage")}
                           </div>
                         </div>
                       ) : null}
@@ -662,7 +673,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                       {mine && message.deliveryStatus === "failed" ? (
                         <div className="mt-2 flex items-center gap-1.5 rounded-[6px] bg-[#f15c6d]/10 px-2 py-1.5 text-[12px] text-[#f15c6d]">
                           <span>⚠️</span>
-                          <span className="font-medium">发送失败</span>
+                          <span className="font-medium">{t("wa.chat.sendFailed")}</span>
                         </div>
                       ) : null}
 
@@ -684,7 +695,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                                 className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
                                 onClick={() => onReplyToMessage(message)}
                               >
-                                回复
+                                {t("wa.chat.reply")}
                               </button>
                             )}
                             <button
@@ -711,7 +722,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
           {!detailLoading && !messages.length ? (
             <div className="mx-auto mt-12 max-w-md rounded-[12px] bg-white px-5 py-4 text-center text-sm text-[#667781] shadow-sm">
-              这个聊天暂时还没有消息
+              {t("wa.chat.emptyConversation")}
             </div>
           ) : null}
 
@@ -724,7 +735,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
         {quotedMessage ? (
           <div className="mb-3 flex items-start justify-between gap-3 rounded-[12px] border border-[#b7e4d7] bg-[#ebfff7] px-3 py-2">
             <div className="min-w-0">
-              <div className="text-[11px] font-medium text-[#008069]">引用回复</div>
+              <div className="text-[11px] font-medium text-[#008069]">{t("wa.chat.quoteReply")}</div>
               <div className="truncate text-xs text-[#54656f]">
                 {quotedMessage.bodyText || quotedMessage.attachments[0]?.fileName || quotedMessage.messageType}
               </div>
@@ -733,7 +744,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
               type="button"
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] text-[#008069] hover:bg-[#dff8ef]"
               onClick={onClearQuoted}
-              title="取消引用"
+              title={t("wa.chat.clearQuote")}
             >
               ✕
             </button>
@@ -784,13 +795,13 @@ export function WaChatPanel(props: WaChatPanelProps) {
         <div className="flex items-end gap-3">
           <label className="flex h-10 cursor-pointer items-center gap-1.5 rounded-full border border-[#d1d7db] bg-white px-4 text-xs text-[#54656f] transition-colors hover:bg-[#f5f6f6]">
             <span>📎</span>
-            <span>附件</span>
+            <span>{t("wa.chat.attachment")}</span>
             <input type="file" multiple className="hidden" onChange={handleFileInput} />
           </label>
           <textarea
             value={composerText}
             onChange={(event) => onComposerTextChange(event.target.value)}
-            placeholder="输入消息内容，或粘贴图片"
+            placeholder={t("wa.chat.composerPlaceholder")}
             rows={1}
             className="min-h-[44px] max-h-[140px] flex-1 resize-none rounded-[12px] border border-[#d1d7db] bg-white px-4 py-3 text-sm text-[#111b21] outline-none placeholder:text-[#667781]"
             onKeyDown={(e) => {
@@ -811,7 +822,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
           </button>
         </div>
         {detail && !detail.permissions.canReply ? (
-          <div className="mt-2 text-xs text-[#f15c6d]">当前由其他成员接管，无法发送消息</div>
+          <div className="mt-2 text-xs text-[#f15c6d]">{t("wa.chat.sendBlocked")}</div>
         ) : null}
       </div>
     </div>

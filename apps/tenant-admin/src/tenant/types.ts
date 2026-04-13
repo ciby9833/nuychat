@@ -512,6 +512,8 @@ export type WaAccountListItem = {
     startLoginReason?: string | null;
     canManageMembers: boolean;
     canViewHealth: boolean;
+    canDelete: boolean;
+    deleteReason?: string | null;
     canLogout: boolean;
     logoutReason: string | null;
     canReconnect: boolean;
@@ -657,6 +659,8 @@ export type WaAccountHealth = {
     startLoginReason?: string | null;
     canManageMembers: boolean;
     canViewHealth: boolean;
+    canDelete: boolean;
+    deleteReason?: string | null;
     canLogout: boolean;
     logoutReason: string | null;
     canReconnect: boolean;

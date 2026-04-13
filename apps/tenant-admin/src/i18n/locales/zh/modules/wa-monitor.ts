@@ -57,7 +57,13 @@ export default {
         manageMembers: "成员分配",
         viewHealth: "健康状态",
         logout: "退出WA",
-        reconnect: "重连"
+        reconnect: "重连",
+        delete: "删除",
+        deleteConfirm: "确认删除此WA账号？",
+        deleteWarning: "删除后将清除该账号所有会话与消息记录，此操作不可恢复。",
+        deleteSuccess: "WA账号已删除",
+        deleteOk: "确认删除",
+        deleteCancel: "取消"
       },
       createModal: {
         title: "新增WA账号",

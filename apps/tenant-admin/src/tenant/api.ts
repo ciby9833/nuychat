@@ -934,6 +934,12 @@ export function logoutWaAccount(waAccountId: string) {
   });
 }
 
+export function deleteWaAccount(waAccountId: string) {
+  return api<{ deleted: boolean }>(`/api/admin/wa/accounts/${waAccountId}`, {
+    method: "DELETE"
+  });
+}
+
 export function patchWaSeat(membershipId: string, enabled: boolean) {
   return api<{ membershipId: string; waSeatEnabled: boolean }>(`/api/admin/wa/members/${membershipId}/seat`, {
     method: "PATCH",

@@ -1,6 +1,7 @@
 import type { Knex } from "knex";
 
 import { isHumanHandoffIntent } from "../ai/ai-runtime-contract.js";
+import { isExplicitAIOptInMessage } from "./routing-context.service.js";
 import { AIDispatchService, type AIDispatchTarget } from "./ai-dispatch.service.js";
 import { HumanDispatchService, type HumanDispatchTarget } from "./human-dispatch.service.js";
 import { RoutingDefaultTargetService } from "./routing-default-target.service.js";
@@ -92,7 +93,8 @@ export class RoutingDecisionService {
 
     const fallbackDecision = await buildFallbackDecision(db, context, policy.humanTarget, matchedRule);
     const action = resolvePlanAction(selectedOwnerType, humanDecision.assignedAgentId);
-    const queueMode = resolveQueueMode(action, selectedOwnerType);
+    const humanProgress = resolveHumanProgress(serviceRequestMode, action, selectedOwnerType);
+    const queueMode = resolveQueueMode(humanProgress);
     const queuePosition = selectedOwnerType === "human" ? humanDecision.queuePosition : null;
     const estimatedWaitSec = selectedOwnerType === "human" ? humanDecision.estimatedWaitSec : null;
     const aiFallbackAllowed = serviceRequestMode === "human_requested";
@@ -134,6 +136,7 @@ export class RoutingDecisionService {
         handoffRequired: false,
         selectedOwnerType,
         serviceRequestMode,
+        humanProgress,
         queueMode,
         queuePosition,
         estimatedWaitSec,
@@ -240,6 +243,7 @@ export class RoutingDecisionService {
         handoffRequired: selectedOwnerType !== "ai",
         selectedOwnerType,
         serviceRequestMode: "normal",
+        humanProgress: selectedOwnerType === "human" ? (selectedHumanAgentId ? "assigned_waiting" : "queued_waiting") : "none",
         queueMode: selectedOwnerType === "human" ? (selectedHumanAgentId ? "assigned_waiting" : "pending_unavailable") : "none",
         queuePosition: selectedOwnerType === "human" ? humanDecision.queuePosition : null,
         estimatedWaitSec: selectedOwnerType === "human" ? humanDecision.estimatedWaitSec : null,
@@ -345,6 +349,7 @@ export class RoutingDecisionService {
         handoffRequired: true,
         selectedOwnerType: "human",
         serviceRequestMode: "human_requested",
+        humanProgress: humanDecision.assignedAgentId ? "assigned_waiting" : "queued_waiting",
         queueMode: humanDecision.assignedAgentId ? "assigned_waiting" : "pending_unavailable",
         queuePosition: humanDecision.queuePosition,
         estimatedWaitSec: humanDecision.estimatedWaitSec,
@@ -392,26 +397,48 @@ export class RoutingDecisionService {
 function resolveServiceRequestMode(
   context: RoutingContext,
   overrideReason: string | null
-): "normal" | "human_requested" {
+): "normal" | "human_requested" | "ai_opt_in" {
+  if (overrideReason === "customer_requested_human") {
+    return "human_requested";
+  }
+  if (
+    context.existingAssignment?.serviceRequestMode === "human_requested" &&
+    isExplicitAIOptInMessage(context.issueSummary.lastMessagePreview)
+  ) {
+    return "ai_opt_in";
+  }
+  if (context.existingAssignment?.serviceRequestMode === "ai_opt_in") {
+    return "normal";
+  }
   if (
     context.existingAssignment?.serviceRequestMode === "human_requested" &&
     context.existingAssignment?.lockedHumanSide
   ) {
     return "human_requested";
   }
-  if (overrideReason === "human_handoff_queue_active" || overrideReason === "customer_requested_human") {
+  if (overrideReason === "human_handoff_queue_active") {
     return "human_requested";
   }
   return "normal";
 }
 
-function resolveQueueMode(
+function resolveHumanProgress(
+  serviceRequestMode: "normal" | "human_requested" | "ai_opt_in",
   action: RoutingPlanAction,
   selectedOwnerType: RoutingOwnerSide
-): "none" | "assigned_waiting" | "pending_unavailable" {
-  if (selectedOwnerType !== "human") return "none";
+): "none" | "assigned_waiting" | "queued_waiting" | "human_active" | "unavailable_fallback_ai" {
+  if (serviceRequestMode !== "human_requested") return "none";
+  if (selectedOwnerType === "ai") return "unavailable_fallback_ai";
   if (action === "assign_specific_owner") return "assigned_waiting";
-  if (action === "enqueue_for_human") return "pending_unavailable";
+  if (action === "enqueue_for_human") return "queued_waiting";
+  return "none";
+}
+
+function resolveQueueMode(
+  humanProgress: "none" | "assigned_waiting" | "queued_waiting" | "human_active" | "unavailable_fallback_ai"
+): "none" | "assigned_waiting" | "pending_unavailable" {
+  if (humanProgress === "assigned_waiting") return "assigned_waiting";
+  if (humanProgress === "queued_waiting") return "pending_unavailable";
   return "none";
 }
 
@@ -470,6 +497,23 @@ function resolvePolicyMode(tenantOperatingMode: string, executionMode: RoutingPl
 }
 
 function resolveOverride(context: RoutingContext): { ownerType: RoutingOwnerSide | null; reason: string | null } {
+  if (isHumanHandoffIntent(context.issueSummary.lastIntent)) {
+    return {
+      ownerType: "human",
+      reason: "customer_requested_human"
+    };
+  }
+
+  if (
+    context.existingAssignment?.serviceRequestMode === "human_requested" &&
+    isExplicitAIOptInMessage(context.issueSummary.lastMessagePreview)
+  ) {
+    return {
+      ownerType: "ai",
+      reason: "customer_explicit_ai_opt_in"
+    };
+  }
+
   if (
     context.existingAssignment?.serviceRequestMode === "human_requested" &&
     context.existingAssignment?.lockedHumanSide
@@ -480,12 +524,6 @@ function resolveOverride(context: RoutingContext): { ownerType: RoutingOwnerSide
     };
   }
 
-  if (isHumanHandoffIntent(context.issueSummary.lastIntent)) {
-    return {
-      ownerType: "human",
-      reason: "customer_requested_human"
-    };
-  }
   return { ownerType: null, reason: null };
 }
 
@@ -504,6 +542,11 @@ function resolveOwnerSide(
     if (capacity.humanAvailableAgents > 0) return "human";
     if (capacity.aiAvailableAgents > 0) return "ai";
     return "human";
+  }
+  if (override.ownerType === "ai") {
+    if (capacity.aiAvailableAgents > 0) return "ai";
+    if (capacity.humanAvailableAgents > 0) return "human";
+    return "ai";
   }
 
   if (mode === "human_only") return "human";
@@ -605,6 +648,9 @@ function describeDecisionReason(input: {
   aiSelectionReason: string;
 }): string {
   if (input.overrideReason) {
+    if (input.overrideReason === "customer_explicit_ai_opt_in") {
+      return "customer_explicit_ai_opt_in";
+    }
     if (input.overrideReason === "customer_requested_human" && input.selectedOwnerType === "ai") {
       return "customer_requested_human:fallback_ai_no_serviceable_human";
     }
@@ -648,6 +694,7 @@ function buildPreservedHumanPlan(context: RoutingContext): RoutingPlan {
       handoffRequired: false,
       selectedOwnerType: "human",
       serviceRequestMode: context.existingAssignment?.serviceRequestMode ?? "normal",
+      humanProgress: context.existingAssignment?.humanProgress ?? "human_active",
       queueMode: context.existingAssignment?.queueMode ?? "assigned_waiting",
       queuePosition: context.existingAssignment?.queuePosition ?? null,
       estimatedWaitSec: context.existingAssignment?.estimatedWaitSec ?? null,

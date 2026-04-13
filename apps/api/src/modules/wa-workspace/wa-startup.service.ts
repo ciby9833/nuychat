@@ -10,6 +10,7 @@
 import { db } from "../../infra/db/client.js";
 import { ensureBaileysRuntime } from "./runtime/baileys-runtime.manager.js";
 import { enqueueWaOutboundJob } from "./wa-outbound.service.js";
+import { reconcileOpenGaps } from "./wa-reconcile.service.js";
 import type { WaWorkspaceOutboundJobPayload } from "../../infra/queue/queues.js";
 
 /**
@@ -109,11 +110,48 @@ async function reEnqueueStuckOutboundJobs() {
   }
 }
 
+const GAP_RECONCILE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+let gapReconcileTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * 定期扫描所有活跃账号的 open gaps，尝试从 recentHistory 缓存中补齐。
+ */
+async function runPeriodicGapReconciliation() {
+  try {
+    const accounts = await db("wa_accounts")
+      .where("account_status", "online")
+      .select("tenant_id", "wa_account_id");
+    for (const account of accounts) {
+      try {
+        await reconcileOpenGaps({
+          tenantId: String(account.tenant_id),
+          waAccountId: String(account.wa_account_id)
+        });
+      } catch (error) {
+        console.error("[wa-startup] periodic gap reconciliation failed for account", {
+          waAccountId: account.wa_account_id,
+          error
+        });
+      }
+    }
+  } catch (error) {
+    console.error("[wa-startup] periodic gap reconciliation scan failed", { error });
+  }
+}
+
 export async function runWaStartup() {
   console.info("[wa-startup] Running WA workspace startup tasks...");
   await Promise.allSettled([
     restoreWaRuntimes(),
     reEnqueueStuckOutboundJobs()
   ]);
+
+  // Start periodic gap reconciliation
+  if (gapReconcileTimer) clearInterval(gapReconcileTimer);
+  gapReconcileTimer = setInterval(() => {
+    void runPeriodicGapReconciliation();
+  }, GAP_RECONCILE_INTERVAL_MS);
+  console.info(`[wa-startup] Periodic gap reconciliation scheduled every ${GAP_RECONCILE_INTERVAL_MS / 1000}s`);
+
   console.info("[wa-startup] WA workspace startup tasks complete");
 }
