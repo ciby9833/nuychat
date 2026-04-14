@@ -52,6 +52,7 @@ export default {
       clearQuote: "Hapus kutipan",
       mention: "Sebut",
       mentionMembers: "Sebut anggota",
+      noMentionMatches: "Tidak ada anggota yang cocok",
       attachment: "Lampiran",
       composerPlaceholder: "Ketik pesan, atau tempel gambar",
       sendBlocked: "Percakapan ini sedang diambil alih anggota lain",

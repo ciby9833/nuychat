@@ -553,6 +553,15 @@ export function WaChatPanel(props: WaChatPanelProps) {
           label: member.displayName || member.participantJid.split("@")[0]
         }))
     : [];
+  const mentionQueryMatch = composerText.match(/(?:^|\s)@([^\s@]*)$/);
+  const mentionQuery = mentionQueryMatch?.[1]?.trim().toLowerCase() ?? "";
+  const filteredMentionCandidates = mentionQuery
+    ? mentionCandidates.filter((member) =>
+        member.label.toLowerCase().includes(mentionQuery) ||
+        member.jid.split("@")[0].toLowerCase().includes(mentionQuery)
+      )
+    : mentionCandidates;
+  const showMentionPicker = mentionCandidates.length > 0 && (mentionPickerOpen || Boolean(mentionQueryMatch));
   const firstUnreadIndex =
     firstUnreadCount > 0 ? Math.max(0, messages.length - firstUnreadCount) : -1;
 
@@ -678,10 +687,14 @@ export function WaChatPanel(props: WaChatPanelProps) {
                       {message.quotedMessageId ? (
                         <div className={`mb-2 rounded-lg border-l-4 px-3 py-2 text-xs ${mine ? "border-[#53bdeb] bg-[#f0f2f5]" : "border-[#00a884] bg-[#f5f6f6]"}`}>
                           <div className="text-[11px] font-medium text-[#54656f]">
-                            {quotedTarget?.senderDisplayName || t("wa.chat.quotedMessage")}
+                            {quotedTarget?.senderDisplayName || message.quotedMessagePreview?.senderDisplayName || t("wa.chat.quotedMessage")}
                           </div>
                           <div className="mt-0.5 truncate text-[#111b21]">
-                            {quotedTarget?.bodyText || quotedTarget?.attachments[0]?.fileName || t("wa.chat.mediaMessage")}
+                            {quotedTarget?.bodyText ||
+                              quotedTarget?.attachments[0]?.fileName ||
+                              message.quotedMessagePreview?.bodyText ||
+                              message.quotedMessagePreview?.attachmentFileName ||
+                              t("wa.chat.mediaMessage")}
                           </div>
                         </div>
                       ) : null}
@@ -844,13 +857,13 @@ export function WaChatPanel(props: WaChatPanelProps) {
                 <span>@</span>
                 <span>{t("wa.chat.mention")}</span>
               </button>
-              {mentionPickerOpen ? (
+              {showMentionPicker ? (
                 <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 max-h-64 w-64 overflow-auto rounded-[12px] border border-[#d1d7db] bg-white p-2 shadow-[0_12px_32px_rgba(17,27,33,0.18)]">
                   <div className="px-2 pb-2 text-[11px] font-medium uppercase tracking-wide text-[#667781]">
                     {t("wa.chat.mentionMembers")}
                   </div>
                   <div className="space-y-1">
-                    {mentionCandidates.map((member) => (
+                    {filteredMentionCandidates.map((member) => (
                       <button
                         key={member.jid}
                         type="button"
@@ -864,6 +877,9 @@ export function WaChatPanel(props: WaChatPanelProps) {
                         <span className="ml-3 truncate text-[11px] text-[#667781]">{member.jid.split("@")[0]}</span>
                       </button>
                     ))}
+                    {filteredMentionCandidates.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-[#667781]">{t("wa.chat.noMentionMatches")}</div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -871,7 +887,12 @@ export function WaChatPanel(props: WaChatPanelProps) {
           ) : null}
           <textarea
             value={composerText}
-            onChange={(event) => onComposerTextChange(event.target.value)}
+            onChange={(event) => {
+              onComposerTextChange(event.target.value);
+              if (!event.target.value.match(/(?:^|\s)@([^\s@]*)$/)) {
+                setMentionPickerOpen(false);
+              }
+            }}
             placeholder={t("wa.chat.composerPlaceholder")}
             rows={1}
             className="min-h-[44px] max-h-[140px] flex-1 resize-none rounded-[12px] border border-[#d1d7db] bg-white px-4 py-3 text-sm text-[#111b21] outline-none placeholder:text-[#667781]"

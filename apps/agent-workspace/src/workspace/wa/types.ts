@@ -115,6 +115,14 @@ export type WaMessageItem = {
   senderRole: string;
   participantJid: string | null;
   quotedMessageId: string | null;
+  quotedMessagePreview: {
+    waMessageId: string;
+    providerMessageId: string | null;
+    senderDisplayName: string | null;
+    bodyText: string | null;
+    messageType: string;
+    attachmentFileName: string | null;
+  } | null;
   bodyText: string | null;
   logicalSeq: number;
   deliveryStatus: string;

@@ -52,6 +52,7 @@ export default {
       clearQuote: "Clear quote",
       mention: "Mention",
       mentionMembers: "Mention members",
+      noMentionMatches: "No matching members",
       attachment: "Attachment",
       composerPlaceholder: "Type a message, or paste an image",
       sendBlocked: "This conversation is currently taken over by another member",

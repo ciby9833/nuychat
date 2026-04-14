@@ -52,6 +52,7 @@ export default {
       clearQuote: "取消引用",
       mention: "提及",
       mentionMembers: "提及群成员",
+      noMentionMatches: "没有匹配的成员",
       attachment: "附件",
       composerPlaceholder: "输入消息内容，或粘贴图片",
       sendBlocked: "当前由其他成员接管，无法发送消息",

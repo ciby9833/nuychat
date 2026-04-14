@@ -12,6 +12,10 @@ function asString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function isUuidLike(value: string | null) {
+  return Boolean(value) && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function normalizePhoneE164(value: string | null) {
   if (!value) return null;
   const digits = value.replace(/[^\d]/g, "");
@@ -639,6 +643,13 @@ export async function getConversationMessages(
     .orderBy("logical_seq", "asc");
 
   const waMessageIds = rows.map((row) => String(row.wa_message_id));
+  const quotedMessageIds = Array.from(
+    new Set(
+      rows
+        .map((row) => asString(row.quoted_message_id))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
   const participantJids = Array.from(new Set(rows.map((row) => (row.participant_jid ? String(row.participant_jid) : null)).filter(Boolean))) as string[];
   const contactProfiles = await loadWaContactProfiles(trx, {
     tenantId,
@@ -673,6 +684,25 @@ export async function getConversationMessages(
           .select("*")
           .orderBy("updated_at", "asc")
   ]);
+  const quotedProviderIds = quotedMessageIds;
+  const quotedWaMessageIds = quotedMessageIds.filter((value) => isUuidLike(value));
+  const quotedRows = quotedMessageIds.length === 0
+    ? []
+    : await trx("wa_messages")
+        .where("tenant_id", tenantId)
+        .andWhere((builder) => {
+          builder.whereIn("provider_message_id", quotedProviderIds);
+          if (quotedWaMessageIds.length > 0) {
+            builder.orWhereIn("wa_message_id", quotedWaMessageIds);
+          }
+        })
+        .select("wa_message_id", "provider_message_id", "body_text", "message_type", "sender_jid", "participant_jid", "sender_member_id", "direction", "provider_payload");
+  const quotedAttachmentRows = quotedRows.length === 0
+    ? []
+    : await trx("wa_message_attachments")
+        .where({ tenant_id: tenantId })
+        .whereIn("wa_message_id", quotedRows.map((row) => String(row.wa_message_id)))
+        .select("wa_message_id", "file_name");
   const memberRows = participantJids.length === 0
     ? []
     : await trx("wa_conversation_members")
@@ -710,6 +740,66 @@ export async function getConversationMessages(
     const bucket = receiptsByMessage.get(waMessageId) ?? [];
     bucket.push(row as Record<string, unknown>);
     receiptsByMessage.set(waMessageId, bucket);
+  }
+  const quotedAttachmentByMessage = new Map<string, string>();
+  for (const row of quotedAttachmentRows) {
+    const waMessageId = String(row.wa_message_id);
+    if (!quotedAttachmentByMessage.has(waMessageId) && asString(row.file_name)) {
+      quotedAttachmentByMessage.set(waMessageId, String(row.file_name));
+    }
+  }
+  const quotedPreviewById = new Map<string, {
+    waMessageId: string;
+    providerMessageId: string | null;
+    senderDisplayName: string | null;
+    bodyText: string | null;
+    messageType: string;
+    attachmentFileName: string | null;
+  }>();
+  for (const row of quotedRows) {
+    const participantJid = asString(row.participant_jid);
+    const payloadPushName = extractPayloadPushName(row.provider_payload);
+    const payloadAltPhone = normalizePhoneE164(derivePhoneE164FromJid(extractPayloadAltJid(row.provider_payload)));
+    const senderPhone = normalizePhoneE164(derivePhoneE164FromJid(asString(row.sender_jid)));
+    const waAccountId = conversationRow?.wa_account_id ? String(conversationRow.wa_account_id) : "";
+    const senderProfile = resolveContactProfile(contactProfiles, waAccountId, [
+      participantJid,
+      extractPayloadAltJid(row.provider_payload),
+      asString(row.sender_jid),
+      payloadAltPhone,
+      senderPhone
+    ]);
+    const senderDisplayName =
+      String(conversationRow?.conversation_type ?? "") === "group"
+        ? (
+            (participantJid ? memberNameByParticipant.get(participantJid) : null) ??
+            senderProfile?.displayName ??
+            payloadPushName ??
+            payloadAltPhone ??
+            senderProfile?.phoneE164 ??
+            senderPhone ??
+            participantJid
+          )
+        : (
+            asString(conversationRow?.contact_name) ??
+            asString(conversationRow?.contact_phone_e164) ??
+            senderProfile?.displayName ??
+            senderProfile?.phoneE164 ??
+            asString(conversationRow?.chat_jid)
+          );
+    const preview = {
+      waMessageId: String(row.wa_message_id),
+      providerMessageId: asString(row.provider_message_id),
+      senderDisplayName: String(row.direction) === "outbound" ? null : senderDisplayName,
+      bodyText: asString(row.body_text) ?? extractBodyTextFromPayload(row.provider_payload),
+      messageType: String(row.message_type),
+      attachmentFileName: quotedAttachmentByMessage.get(String(row.wa_message_id)) ?? null
+    };
+    quotedPreviewById.set(String(row.wa_message_id), preview);
+    const providerMessageId = asString(row.provider_message_id);
+    if (providerMessageId) {
+      quotedPreviewById.set(providerMessageId, preview);
+    }
   }
 
   return rows.map((row) => {
@@ -773,6 +863,9 @@ export async function getConversationMessages(
       senderRole: String(row.sender_role),
       participantJid: row.participant_jid ? String(row.participant_jid) : null,
       quotedMessageId: row.quoted_message_id ? String(row.quoted_message_id) : null,
+      quotedMessagePreview: row.quoted_message_id
+        ? (quotedPreviewById.get(String(row.quoted_message_id)) ?? null)
+        : null,
       bodyText: row.body_text
         ? String(row.body_text)
         : extractBodyTextFromPayload(row.provider_payload),
