@@ -61,7 +61,7 @@ export function forceAssignWaConversation(
 export function sendWaTextMessage(
   session: Session,
   waConversationId: string,
-  input: { clientMessageId: string; text: string; quotedMessageId?: string | null }
+  input: { clientMessageId: string; text: string; quotedMessageId?: string | null; mentionJids?: string[] | null }
 ) {
   return apiPostJson<{ jobId: string; waMessageId: string }>(
     `/api/wa/workbench/conversations/${waConversationId}/messages`,
@@ -69,7 +69,8 @@ export function sendWaTextMessage(
       clientMessageId: input.clientMessageId,
       type: "text",
       text: input.text,
-      quotedMessageId: input.quotedMessageId ?? null
+      quotedMessageId: input.quotedMessageId ?? null,
+      mentionJids: input.mentionJids ?? null
     },
     session
   );
@@ -83,6 +84,7 @@ export function sendWaMediaMessage(
     type: "image" | "video" | "audio" | "document";
     text?: string | null;
     quotedMessageId?: string | null;
+    mentionJids?: string[] | null;
     attachment: { url: string; mimeType: string; fileName: string };
   }
 ) {

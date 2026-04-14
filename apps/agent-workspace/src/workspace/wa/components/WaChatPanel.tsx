@@ -13,6 +13,11 @@ import { API_BASE_URL } from "../../api";
 import type { Session } from "../../types";
 import type { WaAttachment, WaConversationDetail, WaMessageItem, WaReaction } from "../types";
 
+type ComposerMention = {
+  jid: string;
+  label: string;
+};
+
 // ─── Prop types ──────────────────────────────────────────────────────────────
 
 type WaChatPanelProps = {
@@ -25,6 +30,9 @@ type WaChatPanelProps = {
   onLoadMoreMessages: () => void;
   composerText: string;
   onComposerTextChange: (value: string) => void;
+  selectedMentions: ComposerMention[];
+  onAddMention: (mention: ComposerMention) => void;
+  onRemoveMention: (jid: string) => void;
   quotedMessage: WaMessageItem | null;
   onClearQuoted: () => void;
   uploadingAttachments: Array<{ localId: string; fileName: string; mimeType: string; url: string }>;
@@ -367,6 +375,9 @@ export function WaChatPanel(props: WaChatPanelProps) {
     onLoadMoreMessages,
     composerText,
     onComposerTextChange,
+    selectedMentions,
+    onAddMention,
+    onRemoveMention,
     quotedMessage,
     onClearQuoted,
     uploadingAttachments,
@@ -381,6 +392,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
   } = props;
 
   const token = session.accessToken;
+  const [mentionPickerOpen, setMentionPickerOpen] = useState(false);
 
   const title =
     detail?.conversation.displayName ||
@@ -533,6 +545,14 @@ export function WaChatPanel(props: WaChatPanelProps) {
   // ── Data ──────────────────────────────────────────────────────────────────
 
   const messages = detail?.messages ?? [];
+  const mentionCandidates = detail?.conversation.conversationType === "group"
+    ? detail.members
+        .filter((member) => member.participantJid)
+        .map((member) => ({
+          jid: member.participantJid,
+          label: member.displayName || member.participantJid.split("@")[0]
+        }))
+    : [];
   const firstUnreadIndex =
     firstUnreadCount > 0 ? Math.max(0, messages.length - firstUnreadCount) : -1;
 
@@ -751,6 +771,22 @@ export function WaChatPanel(props: WaChatPanelProps) {
           </div>
         ) : null}
 
+        {selectedMentions.length > 0 ? (
+          <div className="mb-3 flex flex-wrap gap-2">
+            {selectedMentions.map((mention) => (
+              <button
+                key={mention.jid}
+                type="button"
+                onClick={() => onRemoveMention(mention.jid)}
+                className="inline-flex items-center gap-1 rounded-full bg-[#d9fdd3] px-3 py-1 text-xs font-medium text-[#005c4b] hover:bg-[#c7f2ce]"
+              >
+                <span>@{mention.label}</span>
+                <span>✕</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         {uploadingAttachments.length > 0 ? (
           <div className="mb-3 flex flex-wrap gap-2">
             {uploadingAttachments.map((att) => {
@@ -798,6 +834,41 @@ export function WaChatPanel(props: WaChatPanelProps) {
             <span>{t("wa.chat.attachment")}</span>
             <input type="file" multiple className="hidden" onChange={handleFileInput} />
           </label>
+          {mentionCandidates.length > 0 ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setMentionPickerOpen((current) => !current)}
+                className="flex h-10 items-center gap-1.5 rounded-full border border-[#d1d7db] bg-white px-4 text-xs font-medium text-[#54656f] transition-colors hover:bg-[#f5f6f6]"
+              >
+                <span>@</span>
+                <span>{t("wa.chat.mention")}</span>
+              </button>
+              {mentionPickerOpen ? (
+                <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 max-h-64 w-64 overflow-auto rounded-[12px] border border-[#d1d7db] bg-white p-2 shadow-[0_12px_32px_rgba(17,27,33,0.18)]">
+                  <div className="px-2 pb-2 text-[11px] font-medium uppercase tracking-wide text-[#667781]">
+                    {t("wa.chat.mentionMembers")}
+                  </div>
+                  <div className="space-y-1">
+                    {mentionCandidates.map((member) => (
+                      <button
+                        key={member.jid}
+                        type="button"
+                        onClick={() => {
+                          onAddMention(member);
+                          setMentionPickerOpen(false);
+                        }}
+                        className="flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left hover:bg-[#f5f6f6]"
+                      >
+                        <span className="truncate text-sm text-[#111b21]">{member.label}</span>
+                        <span className="ml-3 truncate text-[11px] text-[#667781]">{member.jid.split("@")[0]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <textarea
             value={composerText}
             onChange={(event) => onComposerTextChange(event.target.value)}

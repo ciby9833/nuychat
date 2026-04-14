@@ -177,6 +177,7 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
       text?: string;
       type?: string;
       quotedMessageId?: string;
+      mentionJids?: unknown;
       attachment?: { url?: string; mimeType?: string; fileName?: string };
     };
     if (typeof body.clientMessageId !== "string" || !body.clientMessageId.trim()) {
@@ -184,6 +185,9 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     }
     const messageType = typeof body.type === "string" ? body.type : "text";
     const quotedMessageId = typeof body.quotedMessageId === "string" ? body.quotedMessageId.trim() || null : null;
+    const mentionJids = Array.isArray(body.mentionJids)
+      ? Array.from(new Set(body.mentionJids.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)))
+      : [];
     const result = await withTenantTransaction(auth.tenantId, async (trx) => {
       if (messageType === "text") {
         // Allow empty text when quoting — the quote provides the context.
@@ -199,7 +203,8 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
           waConversationId,
           clientMessageId: body.clientMessageId!.trim(),
           text: (body.text ?? "").trim(),
-          quotedMessageId
+          quotedMessageId,
+          mentionJids
         });
       }
 
@@ -220,7 +225,8 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
         fileName: body.attachment.fileName,
         mediaUrl: body.attachment.url,
         caption: typeof body.text === "string" ? body.text.trim() : null,
-        quotedMessageId: typeof body.quotedMessageId === "string" ? body.quotedMessageId.trim() || null : null
+        quotedMessageId: typeof body.quotedMessageId === "string" ? body.quotedMessageId.trim() || null : null,
+        mentionJids
       });
     });
     await enqueueWaOutboundJob(result.queuePayload);

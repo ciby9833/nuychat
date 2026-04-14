@@ -133,5 +133,6 @@ export type WaWorkspaceOutboundJobPayload = {
   reactionTargetId?: string;
   remoteJid?: string;
   quotedMessageId?: string | null;
+  mentionJids?: string[] | null;
   delayMs?: number;
 };

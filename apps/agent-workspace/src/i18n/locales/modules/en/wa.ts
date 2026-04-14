@@ -50,6 +50,8 @@ export default {
       emptyConversation: "This chat has no messages yet",
       quoteReply: "Quote reply",
       clearQuote: "Clear quote",
+      mention: "Mention",
+      mentionMembers: "Mention members",
       attachment: "Attachment",
       composerPlaceholder: "Type a message, or paste an image",
       sendBlocked: "This conversation is currently taken over by another member",

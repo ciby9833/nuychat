@@ -73,6 +73,9 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               onLoadMoreMessages={() => { void vm.loadMoreMessages(); }}
               composerText={vm.composerText}
               onComposerTextChange={vm.setComposerText}
+              selectedMentions={vm.selectedMentions}
+              onAddMention={vm.addMention}
+              onRemoveMention={vm.removeMention}
               quotedMessage={vm.quotedMessage}
               onClearQuoted={() => vm.setQuotedMessage(null)}
               uploadingAttachments={vm.uploadingAttachments}

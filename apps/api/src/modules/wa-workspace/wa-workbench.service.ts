@@ -329,6 +329,7 @@ export async function enqueueWorkbenchTextMessage(
     clientMessageId: string;
     text: string;
     quotedMessageId?: string | null;
+    mentionJids?: string[] | null;
   }
 ) {
   await assertConversationAccessible(trx, input);
@@ -368,6 +369,7 @@ export async function enqueueWorkbenchTextMessage(
       payload: JSON.stringify({
         text: input.text,
         quotedMessageId: input.quotedMessageId ?? null,
+        mentionJids: input.mentionJids ?? null,
         waMessageId: String(message.wa_message_id)
       })
     })
@@ -385,7 +387,8 @@ export async function enqueueWorkbenchTextMessage(
       createdByMembershipId: input.membershipId,
       jobType: "send_text",
       text: input.text,
-      quotedMessageId: input.quotedMessageId ?? null
+      quotedMessageId: input.quotedMessageId ?? null,
+      mentionJids: input.mentionJids ?? null
     }
   };
 }
@@ -404,6 +407,7 @@ export async function enqueueWorkbenchMediaMessage(
     mediaUrl: string;
     caption?: string | null;
     quotedMessageId?: string | null;
+    mentionJids?: string[] | null;
   }
 ) {
   await assertConversationAccessible(trx, input);
@@ -455,6 +459,7 @@ export async function enqueueWorkbenchMediaMessage(
         mediaUrl: input.mediaUrl,
         caption: input.caption ?? null,
         quotedMessageId: input.quotedMessageId ?? null,
+        mentionJids: input.mentionJids ?? null,
         waMessageId: String(message.wa_message_id)
       })
     })
@@ -476,7 +481,8 @@ export async function enqueueWorkbenchMediaMessage(
       mimeType: input.mimeType,
       fileName: input.fileName,
       mediaUrl: input.mediaUrl,
-      quotedMessageId: input.quotedMessageId ?? null
+      quotedMessageId: input.quotedMessageId ?? null,
+      mentionJids: input.mentionJids ?? null
     }
   };
 }

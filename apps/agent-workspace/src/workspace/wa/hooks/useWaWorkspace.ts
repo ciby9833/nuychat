@@ -36,6 +36,11 @@ type UploadingAttachment = {
   url: string;
 };
 
+type SelectedMention = {
+  jid: string;
+  label: string;
+};
+
 function sortWaConversations(rows: WaConversationItem[]) {
   return [...rows].sort((left, right) => {
     const leftTs = left.lastMessageAt ? Date.parse(left.lastMessageAt) : 0;
@@ -59,6 +64,7 @@ export function useWaWorkspace(session: Session | null) {
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [composerText, setComposerText] = useState("");
+  const [selectedMentions, setSelectedMentions] = useState<SelectedMention[]>([]);
   // Store the full quoted message item directly so clearing it is always
   // reliable — deriving it from detail.messages caused race conditions where a
   // loadDetail() triggered by socket events would re-surface a cleared quote.
@@ -287,7 +293,8 @@ export function useWaWorkspace(session: Session | null) {
         await sendWaTextMessage(session, selectedConversationId, {
           clientMessageId: crypto.randomUUID(),
           text: composerText.trim(),
-          quotedMessageId
+          quotedMessageId,
+          mentionJids: selectedMentions.map((item) => item.jid)
         });
       } else {
         const [attachment] = uploadingAttachments;
@@ -301,6 +308,7 @@ export function useWaWorkspace(session: Session | null) {
           type: mediaType,
           text: composerText.trim() || null,
           quotedMessageId,
+          mentionJids: selectedMentions.map((item) => item.jid),
           attachment: {
             url: attachment.url,
             mimeType: attachment.mimeType,
@@ -309,6 +317,7 @@ export function useWaWorkspace(session: Session | null) {
         });
       }
       setComposerText("");
+      setSelectedMentions([]);
       setUploadingAttachments([]);
       await loadConversations();
       await loadDetail();
@@ -318,9 +327,10 @@ export function useWaWorkspace(session: Session | null) {
       // Always clear the quoted message — either it was sent successfully, or the
       // send failed (user should re-select the quote if they want to retry).
       setQuotedMessage(null);
+      setSelectedMentions([]);
       setActionLoading(null);
     }
-  }, [composerText, loadConversations, loadDetail, quotedMessage, selectedConversationId, session, uploadingAttachments]);
+  }, [composerText, loadConversations, loadDetail, quotedMessage, selectedConversationId, selectedMentions, session, uploadingAttachments]);
 
   const uploadFiles = useCallback(async (files: FileList | null) => {
     if (!session || !files?.length) return;
@@ -384,6 +394,7 @@ export function useWaWorkspace(session: Session | null) {
     // attachments from the previous conversation don't appear.
     setQuotedMessage(null);
     setComposerText("");
+    setSelectedMentions([]);
     setUploadingAttachments([]);
   }, [conversations]);
 
@@ -437,6 +448,20 @@ export function useWaWorkspace(session: Session | null) {
     }
   }, [detail, loadDetail, session]);
 
+  const addMention = useCallback((mention: SelectedMention) => {
+    setSelectedMentions((current) =>
+      current.some((item) => item.jid === mention.jid) ? current : [...current, mention]
+    );
+    setComposerText((current) => {
+      const nextToken = `@${mention.label}`;
+      return current.includes(nextToken) ? current : `${current}${current.trim().length ? " " : ""}${nextToken} `;
+    });
+  }, []);
+
+  const removeMention = useCallback((jid: string) => {
+    setSelectedMentions((current) => current.filter((item) => item.jid !== jid));
+  }, []);
+
   return {
     accounts,
     accountId,
@@ -453,6 +478,9 @@ export function useWaWorkspace(session: Session | null) {
     detailLoading,
     composerText,
     setComposerText,
+    selectedMentions,
+    addMention,
+    removeMention,
     quotedMessage,
     setQuotedMessage,
     uploadingAttachments,

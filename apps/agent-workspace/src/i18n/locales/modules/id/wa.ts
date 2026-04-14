@@ -50,6 +50,8 @@ export default {
       emptyConversation: "Chat ini belum memiliki pesan",
       quoteReply: "Balas kutipan",
       clearQuote: "Hapus kutipan",
+      mention: "Sebut",
+      mentionMembers: "Sebut anggota",
       attachment: "Lampiran",
       composerPlaceholder: "Ketik pesan, atau tempel gambar",
       sendBlocked: "Percakapan ini sedang diambil alih anggota lain",

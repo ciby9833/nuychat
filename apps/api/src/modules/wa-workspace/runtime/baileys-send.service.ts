@@ -181,6 +181,7 @@ export async function sendBaileysMessage(input: {
   emoji?: string;
   reactionTargetId?: string;
   quotedMessageId?: string | null;
+  mentionJids?: string[] | null;
 }) {
   const ensureRuntime = async (forceRestart = false) => {
     if (forceRestart) {
@@ -209,6 +210,7 @@ export async function sendBaileysMessage(input: {
   const quoted = await buildQuotedMessage(input.tenantId, input.waAccountId, input.chatJid, input.quotedMessageId);
 
   let content: AnyMessageContent;
+  const mentions = Array.from(new Set((input.mentionJids ?? []).map((jid) => jid.trim()).filter(Boolean)));
   if (input.jobType === "send_media") {
     if (!input.mediaUrl || !input.mediaType) {
       throw new Error("mediaUrl and mediaType are required");
@@ -217,9 +219,19 @@ export async function sendBaileysMessage(input: {
     // can read the file. HTTP/HTTPS URLs are returned unchanged.
     const resolvedUrl = resolveMediaUrl(input.mediaUrl);
     if (input.mediaType === "image") {
-      content = { image: { url: resolvedUrl }, caption: input.text ?? undefined, mimetype: input.mimeType ?? undefined };
+      content = {
+        image: { url: resolvedUrl },
+        caption: input.text ?? undefined,
+        mimetype: input.mimeType ?? undefined,
+        ...(mentions.length > 0 ? { mentions } : {})
+      };
     } else if (input.mediaType === "video") {
-      content = { video: { url: resolvedUrl }, caption: input.text ?? undefined, mimetype: input.mimeType ?? undefined };
+      content = {
+        video: { url: resolvedUrl },
+        caption: input.text ?? undefined,
+        mimetype: input.mimeType ?? undefined,
+        ...(mentions.length > 0 ? { mentions } : {})
+      };
     } else if (input.mediaType === "audio") {
       content = { audio: { url: resolvedUrl }, mimetype: input.mimeType ?? undefined };
     } else {
@@ -227,7 +239,8 @@ export async function sendBaileysMessage(input: {
         document: { url: resolvedUrl },
         mimetype: input.mimeType ?? "application/octet-stream",
         fileName: input.fileName ?? "attachment",
-        caption: input.text ?? undefined
+        caption: input.text ?? undefined,
+        ...(mentions.length > 0 ? { mentions } : {})
       };
     }
   } else if (input.jobType === "send_reaction") {
@@ -246,7 +259,8 @@ export async function sendBaileysMessage(input: {
     };
   } else {
     content = {
-      text: input.text ?? ""
+      text: input.text ?? "",
+      ...(mentions.length > 0 ? { mentions } : {})
     };
   }
 

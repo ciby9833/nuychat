@@ -83,6 +83,7 @@ export interface WaProviderAdapter {
     text: string;
     delayMs?: number;
     quotedMessageId?: string | null;
+    mentionJids?: string[] | null;
   }): Promise<WaProviderSendTextResult>;
   sendMedia(input: {
     instanceKey: string;
@@ -96,6 +97,7 @@ export interface WaProviderAdapter {
     caption?: string | null;
     delayMs?: number;
     quotedMessageId?: string | null;
+    mentionJids?: string[] | null;
   }): Promise<WaProviderSendMediaResult>;
   sendReaction(input: {
     instanceKey: string;

@@ -64,6 +64,7 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
             mediaUrl: payload.mediaUrl ?? "",
             caption: payload.text ?? null,
             quotedMessageId: payload.quotedMessageId ?? null,
+            mentionJids: payload.mentionJids ?? null,
             delayMs: payload.delayMs ?? 0
           })
         : payload.jobType === "send_reaction"
@@ -82,6 +83,7 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
               to: String(conversation.chat_jid),
               text: payload.text ?? "",
               quotedMessageId: payload.quotedMessageId ?? null,
+              mentionJids: payload.mentionJids ?? null,
               delayMs: payload.delayMs ?? 0
             });
 

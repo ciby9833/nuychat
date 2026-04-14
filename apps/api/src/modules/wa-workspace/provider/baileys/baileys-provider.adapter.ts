@@ -84,6 +84,7 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
     text: string;
     delayMs?: number;
     quotedMessageId?: string | null;
+    mentionJids?: string[] | null;
   }): Promise<WaProviderSendTextResult> {
     if (!input.tenantId || !input.waAccountId) {
       throw new Error("tenantId and waAccountId are required for Baileys sendText");
@@ -95,7 +96,8 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
       chatJid: input.to,
       jobType: "send_text",
       text: input.text,
-      quotedMessageId: input.quotedMessageId ?? null
+      quotedMessageId: input.quotedMessageId ?? null,
+      mentionJids: input.mentionJids ?? null
     });
   }
 
@@ -111,6 +113,7 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
     caption?: string | null;
     delayMs?: number;
     quotedMessageId?: string | null;
+    mentionJids?: string[] | null;
   }): Promise<WaProviderSendMediaResult> {
     if (!input.tenantId || !input.waAccountId) {
       throw new Error("tenantId and waAccountId are required for Baileys sendMedia");
@@ -126,7 +129,8 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
       mimeType: input.mimeType,
       fileName: input.fileName,
       mediaUrl: input.mediaUrl,
-      quotedMessageId: input.quotedMessageId ?? null
+      quotedMessageId: input.quotedMessageId ?? null,
+      mentionJids: input.mentionJids ?? null
     });
   }
 
