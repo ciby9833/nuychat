@@ -5,6 +5,10 @@ export default {
     refresh: "Refresh",
     listTitle: "Conversation List",
     messageTitle: "Message Browser",
+    accountSelector: {
+      label: "WA Account",
+      placeholder: "Select a WA account"
+    },
     searchPlaceholder: "Search name, phone, JID, recent message",
     filter: {
       all: "All",

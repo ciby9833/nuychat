@@ -1,5 +1,6 @@
+// 功能菜单
 import { ReloadOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Empty, Input, List, Row, Segmented, Space, Tag, Typography, message } from "antd";
+import { Button, Card, Col, Empty, Input, List, Row, Segmented, Select, Space, Tag, Typography, message } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -249,6 +250,11 @@ export function WaConversationsTab() {
   );
 
   useEffect(() => {
+    setSelectedConversationId(null);
+    setDetail(null);
+  }, [selectedAccountId]);
+
+  useEffect(() => {
     const viewport = messageViewportRef.current;
     if (!viewport || !detail) return;
     if (keepScrollOffsetRef.current != null) {
@@ -283,6 +289,20 @@ export function WaConversationsTab() {
             ) : "-"}
           >
             <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              <div>
+                <Typography.Text type="secondary">{t("waConversations.accountSelector.label")}</Typography.Text>
+                <Select
+                  value={selectedAccountId ?? undefined}
+                  onChange={(value) => setSelectedAccountId(value)}
+                  options={(dashboard?.accounts ?? []).map((item) => ({
+                    label: `${item.displayName} (${item.phoneE164 ?? item.instanceKey})`,
+                    value: item.waAccountId
+                  }))}
+                  placeholder={t("waConversations.accountSelector.placeholder")}
+                  style={{ width: "100%", marginTop: 6 }}
+                />
+              </div>
+
               <Space wrap size={8} style={{ width: "100%", justifyContent: "space-between" }}>
                 <Input.Search
                   placeholder={t("waConversations.searchPlaceholder")}

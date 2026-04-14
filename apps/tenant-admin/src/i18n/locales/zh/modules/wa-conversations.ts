@@ -5,6 +5,10 @@ export default {
     refresh: "刷新",
     listTitle: "会话列表",
     messageTitle: "消息浏览",
+    accountSelector: {
+      label: "WA账号",
+      placeholder: "请选择要查看的WA账号"
+    },
     searchPlaceholder: "搜索名称、号码、JID、最近消息",
     filter: {
       all: "全部",

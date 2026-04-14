@@ -5,6 +5,10 @@ export default {
     refresh: "Muat ulang",
     listTitle: "Daftar Percakapan",
     messageTitle: "Browser Pesan",
+    accountSelector: {
+      label: "Akun WA",
+      placeholder: "Pilih akun WA"
+    },
     searchPlaceholder: "Cari nama, nomor, JID, pesan terbaru",
     filter: {
       all: "Semua",
