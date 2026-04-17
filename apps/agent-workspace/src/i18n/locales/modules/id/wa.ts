@@ -12,8 +12,7 @@ export default {
     conversationList: {
       tabs: {
         chats: "Chat",
-        groups: "Grup",
-        channels: "Channel"
+        groups: "Grup"
       },
       allAccounts: "Semua akun",
       syncTitle: "Sinkronkan grup dan kontak",
@@ -24,7 +23,6 @@ export default {
       unassigned: "Belum diambil",
       empty: {
         search: "Tidak ada percakapan yang cocok",
-        channels: "Tidak ada pesan channel",
         groups: "Tidak ada grup",
         chats: "Tidak ada percakapan"
       },
@@ -68,6 +66,9 @@ export default {
       openInMaps: "Buka di Maps",
       contactCard: "Kontak",
       contactCardLabel: "Kartu kontak",
+      callRecord: "Riwayat panggilan",
+      voiceCall: "Panggilan suara",
+      videoCall: "Panggilan video",
       unsupported: "Jenis pesan tidak didukung ({{type}})",
       revoked: "Pesan ini telah dihapus",
       reactionBy: "{{actor}} bereaksi",

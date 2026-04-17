@@ -2,7 +2,7 @@
  * 功能名称: WA 会话列表
  * 菜单路径: 工作台 / WA工作台 / 左侧会话栏
  * 文件职责: 展示账号切换、搜索、接管筛选与 WA 会话列表，布局对齐 WhatsApp Web 左侧导航栏。
- *          列表按 Chats / 群聊 / 频道 三个 tab 分类，默认展示 Chats。
+ *          列表仅按聊天 / 群聊两个 tab 分类，座席端不展示频道、限时动态等非私聊群聊内容。
  * 交互页面:
  * - ./WaWorkspace.tsx: 组合三栏 WA 工作台布局。
  */
@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next";
 
 import type { WaAccountItem, WaContactItem, WaConversationItem } from "../types";
 
-type ConversationTab = "chats" | "groups" | "channels";
+type ConversationTab = "chats" | "groups";
 
 type WaConversationListProps = {
   accounts: WaAccountItem[];
@@ -33,7 +33,6 @@ type WaConversationListProps = {
 
 /** Derives which tab a conversation belongs to from its chatJid suffix. */
 function getConversationTab(conversation: WaConversationItem): ConversationTab {
-  if (conversation.chatJid.endsWith("@newsletter")) return "channels";
   if (conversation.chatJid.endsWith("@g.us") || conversation.conversationType === "group") return "groups";
   return "chats";
 }
@@ -61,13 +60,12 @@ export function WaConversationList(props: WaConversationListProps) {
   const [activeTab, setActiveTab] = useState<ConversationTab>("chats");
   const TAB_CONFIG: { id: ConversationTab; label: string; icon: string }[] = [
     { id: "chats", label: t("wa.conversationList.tabs.chats"), icon: "💬" },
-    { id: "groups", label: t("wa.conversationList.tabs.groups"), icon: "👥" },
-    { id: "channels", label: t("wa.conversationList.tabs.channels"), icon: "📢" }
+    { id: "groups", label: t("wa.conversationList.tabs.groups"), icon: "👥" }
   ];
 
   // Count per tab (before keyword filter) for badge display
   const tabCounts = useMemo<Record<ConversationTab, number>>(() => {
-    const counts: Record<ConversationTab, number> = { chats: 0, groups: 0, channels: 0 };
+    const counts: Record<ConversationTab, number> = { chats: 0, groups: 0 };
     for (const conv of conversations) {
       counts[getConversationTab(conv)]++;
     }
@@ -76,7 +74,7 @@ export function WaConversationList(props: WaConversationListProps) {
 
   // Unread count per tab for notification dot
   const tabUnread = useMemo<Record<ConversationTab, number>>(() => {
-    const counts: Record<ConversationTab, number> = { chats: 0, groups: 0, channels: 0 };
+    const counts: Record<ConversationTab, number> = { chats: 0, groups: 0 };
     for (const conv of conversations) {
       if (conv.unreadCount > 0) {
         counts[getConversationTab(conv)] += conv.unreadCount;
@@ -202,16 +200,14 @@ export function WaConversationList(props: WaConversationListProps) {
               </option>
             ))}
           </select>
-          {activeTab !== "channels" && (
-            <label className="flex items-center gap-2 text-xs text-[#667781]">
-              <input
-                type="checkbox"
-                checked={assignedToMeOnly}
-                onChange={(event) => onAssignedToMeOnlyChange(event.target.checked)}
-              />
-              {t("wa.conversationList.assignedToMeOnly")}
-            </label>
-          )}
+          <label className="flex items-center gap-2 text-xs text-[#667781]">
+            <input
+              type="checkbox"
+              checked={assignedToMeOnly}
+              onChange={(event) => onAssignedToMeOnlyChange(event.target.checked)}
+            />
+            {t("wa.conversationList.assignedToMeOnly")}
+          </label>
         </div>
       </div>
 
@@ -251,21 +247,16 @@ export function WaConversationList(props: WaConversationListProps) {
             const active = conversation.waConversationId === selectedConversationId;
             const title = conversation.displayName || conversation.subject || conversation.contactJid || conversation.chatJid;
             const isGroup = conversation.chatJid.endsWith("@g.us") || conversation.conversationType === "group";
-            const isChannel = conversation.chatJid.endsWith("@newsletter");
             const secondary = isGroup
               ? conversation.chatJid
-              : isChannel
-                ? (conversation.chatJid)
-                : (conversation.contactPhoneE164 || conversation.contactJid || conversation.chatJid);
+              : (conversation.contactPhoneE164 || conversation.contactJid || conversation.chatJid);
             const subtitle = conversation.lastMessagePreview || secondary || t("wa.conversationList.noMessage");
 
             // Avatar letter / icon
-            const avatarLetter = isChannel ? "📢" : isGroup ? "👥" : (title || "?").slice(0, 1).toUpperCase();
-            const avatarBg = isChannel
-              ? "bg-[#e7f3ff] text-[#1f6feb]"
-              : isGroup
-                ? "bg-[#e9edef] text-[#54656f]"
-                : "bg-[#d9fdd3] text-[#005c4b]";
+            const avatarLetter = isGroup ? "👥" : (title || "?").slice(0, 1).toUpperCase();
+            const avatarBg = isGroup
+              ? "bg-[#e9edef] text-[#54656f]"
+              : "bg-[#d9fdd3] text-[#005c4b]";
 
             return (
               <button
@@ -307,17 +298,10 @@ export function WaConversationList(props: WaConversationListProps) {
                       </div>
                     </div>
                     <div className="mt-1 truncate text-[14px] text-[#667781]">{subtitle}</div>
-                    {!isChannel && (
-                      <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-[#667781]">
-                        <span>{conversation.currentReplierName || t("wa.conversationList.unassigned")}</span>
-                        <span>{conversation.accountDisplayName || t("wa.common.waShort")}</span>
-                      </div>
-                    )}
-                    {isChannel && (
-                      <div className="mt-2 text-[12px] text-[#667781]">
-                        <span>{conversation.accountDisplayName || t("wa.common.waShort")}</span>
-                      </div>
-                    )}
+                    <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-[#667781]">
+                      <span>{conversation.currentReplierName || t("wa.conversationList.unassigned")}</span>
+                      <span>{conversation.accountDisplayName || t("wa.common.waShort")}</span>
+                    </div>
                   </div>
                 </div>
               </button>
@@ -327,9 +311,7 @@ export function WaConversationList(props: WaConversationListProps) {
             <div className="px-6 py-14 text-center text-sm text-[#667781]">
               {keyword
                 ? t("wa.conversationList.empty.search")
-                : activeTab === "channels"
-                  ? t("wa.conversationList.empty.channels")
-                  : activeTab === "groups"
+                : activeTab === "groups"
                     ? t("wa.conversationList.empty.groups")
                     : t("wa.conversationList.empty.chats")}
             </div>

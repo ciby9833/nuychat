@@ -39,6 +39,11 @@ function isNonConversationJid(jid: string | null) {
   return jid === "status@broadcast";
 }
 
+function describeCallType(value: unknown) {
+  const raw = asString(value)?.toLowerCase() ?? "";
+  return raw.includes("video") ? "video" : "audio";
+}
+
 export function mapBaileysDeliveryStatus(status?: number | null) {
   if (status === WAMessageStatus.ERROR) return "failed";
   if (status === WAMessageStatus.PENDING) return "pending";
@@ -96,6 +101,20 @@ export function extractBaileysBodyText(message: WAMessage["message"] | null | un
     asString(deepGet(m, "orderMessage", "message"));
   if (interactive) return interactive;
 
+  const callLog = (message as Record<string, unknown>).callLogMesssage as Record<string, unknown> | undefined;
+  if (callLog) {
+    const callType = describeCallType(callLog.callType);
+    const outcome = asString(callLog.callOutcome)?.toLowerCase() ?? "";
+    if (outcome.includes("miss")) return callType === "video" ? "[未接视频通话]" : "[未接语音通话]";
+    if (outcome.includes("reject")) return callType === "video" ? "[已拒绝视频通话]" : "[已拒绝语音通话]";
+    if (outcome.includes("connect")) return callType === "video" ? "[视频通话]" : "[语音通话]";
+    return callType === "video" ? "[视频通话记录]" : "[语音通话记录]";
+  }
+  if ((message as Record<string, unknown>).call) {
+    const callType = describeCallType(deepGet(m, "call", "callType"));
+    return callType === "video" ? "[视频通话]" : "[语音通话]";
+  }
+
   // ── Wrapper / ephemeral types — recurse into inner content ───────────────
   const wrapperKeys = [
     "ephemeralMessage",
@@ -118,6 +137,7 @@ export function extractBaileysBodyText(message: WAMessage["message"] | null | un
 export function inferBaileysMessageType(message: WAMessage["message"] | null | undefined) {
   if (!message) return "text" as const;
   if (message.reactionMessage) return "reaction" as const;
+  if ((message as Record<string, unknown>).callLogMesssage || (message as Record<string, unknown>).call) return "call_log" as const;
   if (message.imageMessage) return "image" as const;
   if (message.videoMessage) return "video" as const;
   if (message.audioMessage) return "audio" as const;

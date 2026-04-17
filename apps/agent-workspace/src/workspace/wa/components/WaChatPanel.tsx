@@ -326,6 +326,23 @@ function ContactCardBody({ message }: { message: WaMessageItem }) {
   );
 }
 
+/** Call / phone event records from WhatsApp history. */
+function CallLogBody({ message }: { message: WaMessageItem }) {
+  const { t } = useTranslation();
+  const text = message.bodyText || t("wa.chat.callRecord");
+  const isVideo = /视频|video/i.test(text);
+  const icon = isVideo ? "📹" : "📞";
+  return (
+    <div className="flex items-center gap-3 rounded-[8px] bg-black/[0.04] px-3 py-3 max-w-[260px]">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#e9edef] text-lg">{icon}</div>
+      <div className="min-w-0">
+        <div className="truncate text-[13px] font-medium">{text}</div>
+        <div className="text-[11px] text-[#667781]">{isVideo ? t("wa.chat.videoCall") : t("wa.chat.voiceCall")}</div>
+      </div>
+    </div>
+  );
+}
+
 /** Unknown / unsupported message type fallback. */
 function UnsupportedBody({ messageType }: { messageType: string }) {
   const { t } = useTranslation();
@@ -528,6 +545,9 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
       case "contact_card":
         return <ContactCardBody message={message} />;
+
+      case "call_log":
+        return <CallLogBody message={message} />;
 
       case "text":
       default:

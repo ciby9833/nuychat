@@ -12,8 +12,7 @@ export default {
     conversationList: {
       tabs: {
         chats: "聊天",
-        groups: "群聊",
-        channels: "频道"
+        groups: "群聊"
       },
       allAccounts: "全部账号",
       syncTitle: "同步群组与通讯录",
@@ -24,7 +23,6 @@ export default {
       unassigned: "未接管",
       empty: {
         search: "没有匹配的会话",
-        channels: "暂无频道消息",
         groups: "暂无群聊",
         chats: "暂无会话"
       },
@@ -68,6 +66,9 @@ export default {
       openInMaps: "在地图中查看",
       contactCard: "联系人",
       contactCardLabel: "联系人名片",
+      callRecord: "通话记录",
+      voiceCall: "语音通话",
+      videoCall: "视频通话",
       unsupported: "此消息类型暂不支持（{{type}}）",
       revoked: "此消息已被撤回",
       reactionBy: "{{actor}} 回应了",

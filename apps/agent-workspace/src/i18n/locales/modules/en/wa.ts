@@ -12,8 +12,7 @@ export default {
     conversationList: {
       tabs: {
         chats: "Chats",
-        groups: "Groups",
-        channels: "Channels"
+        groups: "Groups"
       },
       allAccounts: "All accounts",
       syncTitle: "Sync groups and contacts",
@@ -24,7 +23,6 @@ export default {
       unassigned: "Unassigned",
       empty: {
         search: "No matching conversations",
-        channels: "No channel messages",
         groups: "No groups",
         chats: "No conversations"
       },
@@ -68,6 +66,9 @@ export default {
       openInMaps: "Open in Maps",
       contactCard: "Contact",
       contactCardLabel: "Contact card",
+      callRecord: "Call record",
+      voiceCall: "Voice call",
+      videoCall: "Video call",
       unsupported: "Unsupported message type ({{type}})",
       revoked: "This message was deleted",
       reactionBy: "{{actor}} reacted",

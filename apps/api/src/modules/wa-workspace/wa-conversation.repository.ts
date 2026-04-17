@@ -32,7 +32,7 @@ function derivePhoneE164FromJid(jid: string | null) {
 }
 
 function isNonConversationJid(jid: string | null) {
-  return jid === "status@broadcast";
+  return jid === "status@broadcast" || Boolean(jid?.endsWith("@newsletter"));
 }
 
 function deriveConversationDisplayName(row: Record<string, unknown>) {
@@ -194,6 +194,104 @@ function extractPayloadAltJid(payload: unknown) {
   return asString(key?.participantAlt) ?? asString(key?.remoteJidAlt);
 }
 
+function payloadMessageRecord(payload: unknown) {
+  const record = safeParseRecord(payload);
+  return safeParseRecord(record?.message);
+}
+
+function extractAttachmentFromPayload(payload: unknown) {
+  const message = payloadMessageRecord(payload);
+  if (!message) return null;
+
+  const wrappers = ["ephemeralMessage", "viewOnceMessage", "viewOnceMessageV2", "documentWithCaptionMessage"];
+  for (const key of wrappers) {
+    const wrapper = safeParseRecord(message[key]);
+    if (wrapper) {
+      const nested = extractAttachmentFromPayload({ message: safeParseRecord(wrapper.message) ?? wrapper });
+      if (nested) return nested;
+    }
+  }
+
+  const mediaUrl = (record: Record<string, unknown>) => asString(record.url) ?? asString(record.staticUrl);
+
+  const image = safeParseRecord(message.imageMessage);
+  if (image) {
+    return {
+      attachmentType: "image",
+      mimeType: asString(image.mimetype),
+      fileName: null,
+      fileSize: asNumber(image.fileLength),
+      width: asNumber(image.width),
+      height: asNumber(image.height),
+      durationMs: null,
+      storageUrl: mediaUrl(image),
+      previewUrl: null
+    };
+  }
+
+  const video = safeParseRecord(message.videoMessage);
+  if (video) {
+    return {
+      attachmentType: "video",
+      mimeType: asString(video.mimetype),
+      fileName: null,
+      fileSize: asNumber(video.fileLength),
+      width: asNumber(video.width),
+      height: asNumber(video.height),
+      durationMs: asNumber(video.seconds) ? Number(video.seconds) * 1000 : null,
+      storageUrl: mediaUrl(video),
+      previewUrl: null
+    };
+  }
+
+  const audio = safeParseRecord(message.audioMessage);
+  if (audio) {
+    return {
+      attachmentType: "audio",
+      mimeType: asString(audio.mimetype),
+      fileName: null,
+      fileSize: asNumber(audio.fileLength),
+      width: null,
+      height: null,
+      durationMs: asNumber(audio.seconds) ? Number(audio.seconds) * 1000 : null,
+      storageUrl: mediaUrl(audio),
+      previewUrl: null
+    };
+  }
+
+  const document = safeParseRecord(message.documentMessage);
+  if (document) {
+    return {
+      attachmentType: "document",
+      mimeType: asString(document.mimetype),
+      fileName: asString(document.fileName),
+      fileSize: asNumber(document.fileLength),
+      width: null,
+      height: null,
+      durationMs: null,
+      storageUrl: mediaUrl(document),
+      previewUrl: null
+    };
+  }
+
+  const sticker = safeParseRecord(message.stickerMessage);
+  if (sticker) {
+    return {
+      attachmentType: "sticker",
+      mimeType: asString(sticker.mimetype) ?? "image/webp",
+      fileName: null,
+      fileSize: asNumber(sticker.fileLength),
+      width: asNumber(sticker.width),
+      height: asNumber(sticker.height),
+      durationMs: null,
+      storageUrl: mediaUrl(sticker),
+      previewUrl: null
+    };
+  }
+
+  return null;
+}
+
 /**
  * Best-effort extraction of body text from a stored WAMessage provider_payload.
  * Used as a fallback when the body_text column is NULL (e.g. for messages stored
@@ -261,6 +359,7 @@ function buildConversationBaseQuery(trx: Knex.Transaction, tenantId: string) {
     })
     .where("c.tenant_id", tenantId)
     .whereNot("c.chat_jid", "status@broadcast")
+    .whereNotLike("c.chat_jid", "%@newsletter")
     .select("c.*", "tm.display_name as current_replier_name", "a.display_name as account_display_name");
 }
 
@@ -892,7 +991,26 @@ export async function getConversationMessages(
         durationMs: item.duration_ms ? Number(item.duration_ms) : null,
         storageUrl: item.storage_url ? String(item.storage_url) : null,
         previewUrl: item.preview_url ? String(item.preview_url) : null
-      })),
+      })).concat(
+        attachmentsByMessage.has(String(row.wa_message_id))
+          ? []
+          : (() => {
+              const fallbackAttachment = extractAttachmentFromPayload(row.provider_payload);
+              if (!fallbackAttachment) return [];
+              return [{
+                attachmentId: `payload:${String(row.wa_message_id)}`,
+                attachmentType: fallbackAttachment.attachmentType,
+                mimeType: fallbackAttachment.mimeType,
+                fileName: fallbackAttachment.fileName,
+                fileSize: fallbackAttachment.fileSize,
+                width: fallbackAttachment.width,
+                height: fallbackAttachment.height,
+                durationMs: fallbackAttachment.durationMs,
+                storageUrl: fallbackAttachment.storageUrl,
+                previewUrl: fallbackAttachment.previewUrl
+              }];
+            })()
+      ),
       reactions: (reactionsByMessage.get(String(row.wa_message_id)) ?? []).map((item) => ({
         reactionId: String(item.reaction_id),
         actorJid: item.actor_jid ? String(item.actor_jid) : null,

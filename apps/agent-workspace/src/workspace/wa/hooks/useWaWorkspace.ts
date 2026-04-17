@@ -41,6 +41,10 @@ type SelectedMention = {
   label: string;
 };
 
+function isSeatVisibleWaConversation(conversation: Pick<WaConversationItem, "chatJid">) {
+  return conversation.chatJid !== "status@broadcast" && !conversation.chatJid.endsWith("@newsletter");
+}
+
 function sortWaConversations(rows: WaConversationItem[]) {
   return [...rows].sort((left, right) => {
     const leftTs = left.lastMessageAt ? Date.parse(left.lastMessageAt) : 0;
@@ -100,12 +104,13 @@ export function useWaWorkspace(session: Session | null) {
         accountId,
         assignedToMe: assignedToMeOnly
       });
-      setConversations(rows);
+      const visibleRows = rows.filter(isSeatVisibleWaConversation);
+      setConversations(visibleRows);
       setSelectedConversationId((current) => {
-        if (!current) return rows[0]?.waConversationId ?? null;
-        return rows.some((item) => item.waConversationId === current)
+        if (!current) return visibleRows[0]?.waConversationId ?? null;
+        return visibleRows.some((item) => item.waConversationId === current)
           ? current
-          : (rows[0]?.waConversationId ?? null);
+          : (visibleRows[0]?.waConversationId ?? null);
       });
     } catch (nextError) {
       setError((nextError as Error).message);
@@ -165,6 +170,7 @@ export function useWaWorkspace(session: Session | null) {
     // Clear composer state so previous conversation drafts don't leak in.
     setQuotedMessage(null);
     setComposerText("");
+    setSelectedMentions([]);
     setUploadingAttachments([]);
     try {
       const next = await openWaWorkbenchContactConversation(session, { accountId, contactId });
@@ -225,6 +231,9 @@ export function useWaWorkspace(session: Session | null) {
       const currentAccountId = accountIdRef.current;
       setConversations((current) => {
         const target = event.conversation;
+        if (!isSeatVisibleWaConversation(target)) {
+          return current.filter((item) => item.waConversationId !== target.waConversationId);
+        }
         // If a specific account is selected and this event is for a different account, hide it.
         const scoped = currentAccountId && target.waAccountId !== currentAccountId
           ? current.filter((item) => item.waConversationId !== target.waConversationId)
