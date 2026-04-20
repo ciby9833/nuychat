@@ -26,7 +26,7 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
       .select("job_id", "payload", "send_status", "created_by_membership_id")
       .first<Record<string, unknown> | undefined>();
     if (!row) throw new Error("WA outbound job not found");
-    if (String(row.send_status) === "sent") return null;
+    if (["accepted", "sent"].includes(String(row.send_status))) return null;
 
     await trx("wa_outbound_jobs")
       .where({ job_id: payload.jobId })
@@ -91,7 +91,7 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
       await trx("wa_outbound_jobs")
         .where({ job_id: payload.jobId })
         .update({
-          send_status: "sent",
+          send_status: result.deliveryStatus === "pending" ? "accepted" : "sent",
           last_error: null,
           updated_at: trx.fn.now(),
           payload: JSON.stringify({

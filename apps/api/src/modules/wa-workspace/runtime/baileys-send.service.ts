@@ -6,7 +6,6 @@
  * - 依赖 runtime manager 获取账号对应的 socket。
  * - 对上返回 provider-neutral 的发送结果，供 wa-outbound.service 回写消息状态。
  */
-import crypto from "node:crypto";
 import path from "node:path";
 
 import type { AnyMessageContent, WAMessage } from "@whiskeysockets/baileys";
@@ -15,6 +14,8 @@ import { withTenantTransaction } from "../../../infra/db/client.js";
 import { getUploadsDir } from "../../../infra/storage/upload.service.js";
 import { mapBaileysDeliveryStatus } from "./baileys-message.mapper.js";
 import { ensureBaileysRuntime, getBaileysRuntime, restartBaileysRuntime } from "./baileys-runtime.manager.js";
+
+const SEND_READY_TIMEOUT_MS = 15_000;
 
 /**
  * Baileys receives a `url` field for media messages and resolves it internally.
@@ -34,6 +35,28 @@ function resolveMediaUrl(url: string): string {
 
 function isUuidLike(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRuntimeOpen(input: {
+  tenantId: string;
+  waAccountId: string;
+  timeoutMs?: number;
+}) {
+  const startedAt = Date.now();
+  let lastState = getBaileysRuntime(input.tenantId, input.waAccountId)?.connectionState ?? "missing";
+
+  while (Date.now() - startedAt < (input.timeoutMs ?? SEND_READY_TIMEOUT_MS)) {
+    const runtime = getBaileysRuntime(input.tenantId, input.waAccountId);
+    lastState = runtime?.connectionState ?? "missing";
+    if (runtime?.connectionState === "open") return runtime;
+    await delay(250);
+  }
+
+  throw new Error(`WhatsApp runtime is not ready for sending (state=${lastState})`);
 }
 
 /**
@@ -202,6 +225,12 @@ export async function sendBaileysMessage(input: {
         forceNew: forceRestart
       });
     }
+    if (runtime.connectionState !== "open") {
+      return waitForRuntimeOpen({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId
+      });
+    }
     return runtime;
   };
 
@@ -276,9 +305,18 @@ export async function sendBaileysMessage(input: {
     }
   }
 
+  const providerMessageId = response?.key?.id;
+  if (!providerMessageId) {
+    throw new Error("WhatsApp send did not return provider message id");
+  }
+  const deliveryStatus = mapBaileysDeliveryStatus(response?.status) ?? "pending";
+  if (deliveryStatus === "failed") {
+    throw new Error("WhatsApp send returned failed status");
+  }
+
   return {
-    providerMessageId: response?.key?.id ?? crypto.randomUUID(),
-    deliveryStatus: mapBaileysDeliveryStatus(response?.status) ?? "pending",
+    providerMessageId,
+    deliveryStatus,
     providerPayload: (response ?? {}) as Record<string, unknown>
   };
 }
