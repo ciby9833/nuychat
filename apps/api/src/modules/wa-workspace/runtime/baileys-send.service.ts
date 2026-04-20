@@ -16,6 +16,7 @@ import { mapBaileysDeliveryStatus } from "./baileys-message.mapper.js";
 import { ensureBaileysRuntime, getBaileysRuntime, restartBaileysRuntime } from "./baileys-runtime.manager.js";
 
 const SEND_READY_TIMEOUT_MS = 15_000;
+const SEND_MESSAGE_TIMEOUT_MS = 45_000;
 
 /**
  * Baileys receives a `url` field for media messages and resolves it internally.
@@ -39,6 +40,16 @@ function isUuidLike(value: string): boolean {
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 async function waitForRuntimeOpen(input: {
@@ -295,11 +306,19 @@ export async function sendBaileysMessage(input: {
 
   let response;
   try {
-    response = await runtime.socket.sendMessage(input.chatJid, content, quoted ? { quoted } : undefined);
+    response = await withTimeout(
+      runtime.socket.sendMessage(input.chatJid, content, quoted ? { quoted } : undefined),
+      SEND_MESSAGE_TIMEOUT_MS,
+      "WhatsApp send timed out before provider acknowledgement"
+    );
   } catch (error) {
     if (error instanceof Error && /Connection Closed/i.test(error.message)) {
       runtime = await ensureRuntime(true);
-      response = await runtime.socket.sendMessage(input.chatJid, content, quoted ? { quoted } : undefined);
+      response = await withTimeout(
+        runtime.socket.sendMessage(input.chatJid, content, quoted ? { quoted } : undefined),
+        SEND_MESSAGE_TIMEOUT_MS,
+        "WhatsApp send timed out before provider acknowledgement"
+      );
     } else {
       throw error;
     }

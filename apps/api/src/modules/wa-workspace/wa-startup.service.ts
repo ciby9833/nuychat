@@ -48,17 +48,18 @@ async function restoreWaRuntimes() {
 }
 
 /**
- * 把 DB 里 send_status='queued' 但不在 BullMQ Redis 队列中的任务重新入队。
- * 这类任务出现原因：DB 事务提交成功但 enqueueWaOutboundJob 调用因进程崩溃而丢失。
+ * 把 DB 里 queued/sending 但不在 BullMQ Redis 队列中的任务重新入队。
+ * 这类任务出现原因：
+ * - DB 事务提交成功但 enqueueWaOutboundJob 调用因进程崩溃而丢失。
+ * - worker 在 Baileys sendMessage 等待 provider ack 时异常卡住，重启后 DB 仍停在 sending。
  */
 async function reEnqueueStuckOutboundJobs() {
   const stuckJobs = await db("wa_outbound_jobs as j")
     .join("wa_accounts as a", "a.wa_account_id", "j.wa_account_id")
     .join("wa_conversations as c", "c.wa_conversation_id", "j.wa_conversation_id")
-    .where("j.send_status", "queued")
-    .where("j.attempt_count", 0)
+    .whereIn("j.send_status", ["queued", "sending"])
     // 只处理超过 30 秒还没被消费的任务（避免和刚入队的正常任务冲突）
-    .where("j.created_at", "<", db.raw("NOW() - INTERVAL '30 seconds'"))
+    .where("j.updated_at", "<", db.raw("NOW() - INTERVAL '30 seconds'"))
     .select(
       "j.job_id",
       "j.tenant_id",
@@ -79,6 +80,13 @@ async function reEnqueueStuckOutboundJobs() {
 
   for (const job of stuckJobs) {
     try {
+      await db("wa_outbound_jobs")
+        .where({ tenant_id: job.tenant_id, job_id: job.job_id })
+        .update({
+          send_status: "queued",
+          updated_at: db.fn.now()
+        });
+
       const rawPayload = typeof job.payload === "string"
         ? JSON.parse(String(job.payload))
         : (job.payload as Record<string, unknown>);
