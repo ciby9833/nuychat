@@ -25,3 +25,10 @@ export async function withTenantTransaction<T>(tenantId: string, handler: (trx: 
     return handler(trx);
   });
 }
+
+export async function withWaBackgroundTransaction<T>(handler: (trx: Knex.Transaction) => Promise<T>) {
+  return db.transaction(async (trx) => {
+    await trx.raw("SELECT set_config('app.wa_background_scope', 'enabled', true)");
+    return handler(trx);
+  });
+}

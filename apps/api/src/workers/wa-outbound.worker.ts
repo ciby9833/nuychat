@@ -19,13 +19,7 @@ export function createWaOutboundWorker() {
     waWorkspaceOutboundQueue.name,
     async (job) => processWaOutboundJob(job.data),
     {
-      connection: workerConnection,
-      // Retry up to 3 times with exponential backoff so transient "Connection Closed"
-      // errors (Baileys socket not yet ready) have a chance to recover automatically.
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: "exponential", delay: 3000 }
-      }
+      connection: workerConnection
     }
   );
 }

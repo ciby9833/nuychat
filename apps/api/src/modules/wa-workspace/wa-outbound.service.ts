@@ -6,14 +6,25 @@
  * - 被 wa-workbench.service 写入队列任务。
  * - 被 wa-outbound.worker 消费，调用当前唯一的 Baileys adapter 实际发送消息，并回写出站结果。
  */
-import { db, withTenantTransaction } from "../../infra/db/client.js";
+import { withTenantTransaction } from "../../infra/db/client.js";
 import { waWorkspaceOutboundQueue, type WaWorkspaceOutboundJobPayload } from "../../infra/queue/queues.js";
 import { waProviderAdapter } from "./provider/provider-registry.js";
 import { emitWaMessageUpdated } from "./wa-realtime.service.js";
 
 export async function enqueueWaOutboundJob(payload: WaWorkspaceOutboundJobPayload) {
+  const queueJobId = `wa-${payload.jobId}`;
+  const existingJob = await waWorkspaceOutboundQueue.getJob(queueJobId);
+  if (existingJob) {
+    const state = await existingJob.getState();
+    if (state === "failed" || state === "completed") {
+      await existingJob.remove();
+    }
+  }
+
   await waWorkspaceOutboundQueue.add("wa.outbound.send_text", payload, {
-    jobId: `wa-${payload.jobId}`,
+    jobId: queueJobId,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 3000 },
     removeOnComplete: 50,
     removeOnFail: 50
   });
@@ -40,17 +51,21 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
   });
   if (!existingJob) return { skipped: true };
 
-  const account = await db("wa_accounts")
-    .where({ tenant_id: payload.tenantId, wa_account_id: payload.waAccountId })
-    .first<Record<string, unknown> | undefined>();
-  if (!account) throw new Error("WA account not found");
-
-  const conversation = await db("wa_conversations")
-    .where({ tenant_id: payload.tenantId, wa_conversation_id: payload.waConversationId })
-    .first<Record<string, unknown> | undefined>();
-  if (!conversation) throw new Error("WA conversation not found");
-
   try {
+    const { account, conversation } = await withTenantTransaction(payload.tenantId, async (trx) => {
+      const accountRow = await trx("wa_accounts")
+        .where({ tenant_id: payload.tenantId, wa_account_id: payload.waAccountId })
+        .first<Record<string, unknown> | undefined>();
+      if (!accountRow) throw new Error("WA account not found");
+
+      const conversationRow = await trx("wa_conversations")
+        .where({ tenant_id: payload.tenantId, wa_conversation_id: payload.waConversationId })
+        .first<Record<string, unknown> | undefined>();
+      if (!conversationRow) throw new Error("WA conversation not found");
+
+      return { account: accountRow, conversation: conversationRow };
+    });
+
     const result =
       payload.jobType === "send_media"
         ? await waProviderAdapter.sendMedia({

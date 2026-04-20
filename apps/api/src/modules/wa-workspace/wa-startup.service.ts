@@ -7,7 +7,7 @@
  * - 调用 ensureBaileysRuntime 恢复各账号的 WebSocket 连接。
  * - 把 DB 里 queued 但不在 Redis 队列的出站任务重新入队。
  */
-import { db } from "../../infra/db/client.js";
+import { withTenantTransaction, withWaBackgroundTransaction } from "../../infra/db/client.js";
 import { ensureBaileysRuntime } from "./runtime/baileys-runtime.manager.js";
 import { enqueueWaOutboundJob } from "./wa-outbound.service.js";
 import { reconcileOpenGaps } from "./wa-reconcile.service.js";
@@ -19,10 +19,14 @@ import type { WaWorkspaceOutboundJobPayload } from "../../infra/queue/queues.js"
  */
 async function restoreWaRuntimes() {
   // 查找所有有 auth 快照的账号（说明曾经成功登录过，凭据可用）
-  const accounts = await db("wa_accounts as a")
-    .join("wa_baileys_auth_snapshots as s", "s.wa_account_id", "a.wa_account_id")
-    .select("a.tenant_id", "a.wa_account_id", "a.instance_key", "a.display_name")
-    .groupBy("a.tenant_id", "a.wa_account_id", "a.instance_key", "a.display_name");
+  const accounts = await withWaBackgroundTransaction((trx) =>
+    trx("wa_accounts as a")
+      .join("wa_baileys_auth_snapshots as s", function joinAuthSnapshots() {
+        this.on("s.tenant_id", "=", "a.tenant_id").andOn("s.wa_account_id", "=", "a.wa_account_id");
+      })
+      .select("a.tenant_id", "a.wa_account_id", "a.instance_key", "a.display_name")
+      .groupBy("a.tenant_id", "a.wa_account_id", "a.instance_key", "a.display_name")
+  );
 
   if (accounts.length === 0) {
     console.info("[wa-startup] No WA accounts with auth snapshots found, skipping runtime restore");
@@ -54,22 +58,28 @@ async function restoreWaRuntimes() {
  * - worker 在 Baileys sendMessage 等待 provider ack 时异常卡住，重启后 DB 仍停在 sending。
  */
 async function reEnqueueStuckOutboundJobs() {
-  const stuckJobs = await db("wa_outbound_jobs as j")
-    .join("wa_accounts as a", "a.wa_account_id", "j.wa_account_id")
-    .join("wa_conversations as c", "c.wa_conversation_id", "j.wa_conversation_id")
-    .whereIn("j.send_status", ["queued", "sending"])
-    // 只处理超过 30 秒还没被消费的任务（避免和刚入队的正常任务冲突）
-    .where("j.updated_at", "<", db.raw("NOW() - INTERVAL '30 seconds'"))
-    .select(
-      "j.job_id",
-      "j.tenant_id",
-      "j.wa_account_id",
-      "j.wa_conversation_id",
-      "j.job_type",
-      "j.payload",
-      "a.instance_key",
-      "c.chat_jid"
-    );
+  const stuckJobs = await withWaBackgroundTransaction((trx) =>
+    trx("wa_outbound_jobs as j")
+      .join("wa_accounts as a", function joinAccounts() {
+        this.on("a.tenant_id", "=", "j.tenant_id").andOn("a.wa_account_id", "=", "j.wa_account_id");
+      })
+      .join("wa_conversations as c", function joinConversations() {
+        this.on("c.tenant_id", "=", "j.tenant_id").andOn("c.wa_conversation_id", "=", "j.wa_conversation_id");
+      })
+      .whereIn("j.send_status", ["queued", "sending"])
+      // 只处理超过 30 秒还没被消费的任务（避免和刚入队的正常任务冲突）
+      .where("j.updated_at", "<", trx.raw("NOW() - INTERVAL '30 seconds'"))
+      .select(
+        "j.job_id",
+        "j.tenant_id",
+        "j.wa_account_id",
+        "j.wa_conversation_id",
+        "j.job_type",
+        "j.payload",
+        "a.instance_key",
+        "c.chat_jid"
+      )
+  );
 
   if (stuckJobs.length === 0) {
     console.info("[wa-startup] No stuck outbound jobs found");
@@ -80,12 +90,14 @@ async function reEnqueueStuckOutboundJobs() {
 
   for (const job of stuckJobs) {
     try {
-      await db("wa_outbound_jobs")
-        .where({ tenant_id: job.tenant_id, job_id: job.job_id })
-        .update({
-          send_status: "queued",
-          updated_at: db.fn.now()
-        });
+      await withTenantTransaction(String(job.tenant_id), async (trx) => {
+        await trx("wa_outbound_jobs")
+          .where({ tenant_id: job.tenant_id, job_id: job.job_id })
+          .update({
+            send_status: "queued",
+            updated_at: trx.fn.now()
+          });
+      });
 
       const rawPayload = typeof job.payload === "string"
         ? JSON.parse(String(job.payload))
@@ -126,9 +138,11 @@ let gapReconcileTimer: ReturnType<typeof setInterval> | null = null;
  */
 async function runPeriodicGapReconciliation() {
   try {
-    const accounts = await db("wa_accounts")
-      .where("account_status", "online")
-      .select("tenant_id", "wa_account_id");
+    const accounts = await withWaBackgroundTransaction((trx) =>
+      trx("wa_accounts")
+        .where("account_status", "online")
+        .select("tenant_id", "wa_account_id")
+    );
     for (const account of accounts) {
       try {
         await reconcileOpenGaps({
