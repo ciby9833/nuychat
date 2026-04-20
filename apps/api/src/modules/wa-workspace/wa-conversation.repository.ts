@@ -359,7 +359,7 @@ function buildConversationBaseQuery(trx: Knex.Transaction, tenantId: string) {
     })
     .where("c.tenant_id", tenantId)
     .whereNot("c.chat_jid", "status@broadcast")
-    .whereNotLike("c.chat_jid", "%@newsletter")
+    .whereRaw("c.chat_jid not like ?", ["%@newsletter"])
     .select("c.*", "tm.display_name as current_replier_name", "a.display_name as account_display_name");
 }
 

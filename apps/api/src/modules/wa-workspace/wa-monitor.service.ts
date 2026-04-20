@@ -67,6 +67,8 @@ async function listLatestHumanReplyGaps(
     })
     .where("m.tenant_id", tenantId)
     .where("m.direction", "inbound")
+    .whereNot("c.chat_jid", "status@broadcast")
+    .whereRaw("c.chat_jid not like ?", ["%@newsletter"])
     .modify((qb) => {
       if (input?.waAccountIds?.length) qb.whereIn("m.wa_account_id", input.waAccountIds);
     })
@@ -117,6 +119,8 @@ export async function getAdminWaMonitorDashboard(trx: Knex.Transaction, tenantId
     listWaAccounts(trx, tenantId),
     trx("wa_conversations")
       .where({ tenant_id: tenantId })
+      .whereNot("chat_jid", "status@broadcast")
+      .whereRaw("chat_jid not like ?", ["%@newsletter"])
       .select("wa_account_id")
       .count<{ wa_account_id: string; conversation_count: string }[]>("wa_conversation_id as conversation_count")
       .sum<{ unread_count: string | null }>("unread_count as unread_count")

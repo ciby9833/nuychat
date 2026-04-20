@@ -348,7 +348,7 @@ export async function getAccessibleWaAccountUnreadSummary(
     .where({ tenant_id: input.tenantId })
     .whereIn("wa_account_id", waAccountIds)
     .whereNot("chat_jid", "status@broadcast")
-    .whereNotLike("chat_jid", "%@newsletter")
+    .whereRaw("chat_jid not like ?", ["%@newsletter"])
     .sum<{ total_unread_messages?: string | number | null }>("unread_count as total_unread_messages")
     .first();
 
