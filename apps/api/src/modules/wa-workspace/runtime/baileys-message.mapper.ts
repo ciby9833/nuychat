@@ -34,6 +34,29 @@ function derivePhoneE164FromJid(jid: string | null) {
   return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
 }
 
+function isLidJid(jid: string | null) {
+  return Boolean(jid?.endsWith("@lid"));
+}
+
+function isPnJid(jid: string | null) {
+  return Boolean(jid?.endsWith("@s.whatsapp.net"));
+}
+
+function resolveDirectIdentity(remoteJid: string, remoteJidAlt: string | null) {
+  const canonicalJid =
+    isLidJid(remoteJid) ? remoteJid :
+    isLidJid(remoteJidAlt) ? remoteJidAlt :
+    remoteJid;
+  const phoneJid =
+    isPnJid(remoteJid) ? remoteJid :
+    isPnJid(remoteJidAlt) ? remoteJidAlt :
+    null;
+  return {
+    canonicalJid,
+    phoneE164: derivePhoneE164FromJid(phoneJid)
+  };
+}
+
 function isNonConversationJid(jid: string | null) {
   if (!jid) return true;
   return jid === "status@broadcast";
@@ -261,9 +284,14 @@ export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMess
   if (!remoteJid || !providerMessageId || isNonConversationJid(remoteJid)) return null;
 
   const conversationType = remoteJid.endsWith("@g.us") ? "group" : "direct";
+  const remoteJidAlt = asString(message.key?.remoteJidAlt);
+  const directIdentity = conversationType === "direct"
+    ? resolveDirectIdentity(remoteJid, remoteJidAlt)
+    : null;
+  const chatJid = directIdentity?.canonicalJid ?? remoteJid;
   const participantJid = asString(message.key?.participant);
   const fromMe = Boolean(message.key?.fromMe);
-  const senderJid = fromMe ? remoteJid : (participantJid ?? remoteJid);
+  const senderJid = fromMe ? chatJid : (participantJid ?? chatJid);
   const messageType = inferBaileysMessageType(message.message);
   const reaction = message.message?.reactionMessage;
   const direction = fromMe ? "outbound" : "inbound";
@@ -276,7 +304,7 @@ export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMess
 
   return {
     providerMessageId,
-    chatJid: remoteJid,
+    chatJid,
     senderJid,
     participantJid: participantJid ?? null,
     messageType,
@@ -289,8 +317,8 @@ export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMess
     // For groups, pushName is the sender's name (not the group name — that comes from groups.update).
     subject: conversationType === "direct" && !fromMe ? asString(message.pushName) : null,
     contactName: conversationType === "direct" && !fromMe ? asString(message.pushName) : null,
-    contactPhoneE164: conversationType === "direct" ? derivePhoneE164FromJid(remoteJid) : null,
-    contactJid: conversationType === "direct" ? remoteJid : null,
+    contactPhoneE164: conversationType === "direct" ? directIdentity?.phoneE164 ?? derivePhoneE164FromJid(chatJid) : null,
+    contactJid: conversationType === "direct" ? chatJid : null,
     quotedMessageId: asString(message.message?.extendedTextMessage?.contextInfo?.stanzaId),
     reactionEmoji: asString(reaction?.text),
     reactionTargetId: asString(reaction?.key?.id),

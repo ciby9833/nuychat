@@ -26,6 +26,7 @@ export type WaStatus = {
 
 export type WaSessionSnapshot = {
   connectionState: string;
+  loginMode?: string | null;
   loginPhase: string | null;
   disconnectReason: string | null;
   qrCodeAvailable: boolean;
@@ -37,6 +38,16 @@ export type WaSessionSnapshot = {
 };
 
 const STALE_PENDING_SESSION_MS = 2 * 60 * 1000;
+const BACKGROUND_LOGIN_MODES = new Set(["auto_restore", "worker_send", "worker_send_retry", "mark_read"]);
+const INTERACTIVE_LOGIN_MODES = new Set(["employee_scan", "admin_scan"]);
+
+function isBackgroundLoginMode(loginMode: string | null | undefined) {
+  return Boolean(loginMode && BACKGROUND_LOGIN_MODES.has(loginMode));
+}
+
+function isInteractiveLoginMode(loginMode: string | null | undefined) {
+  return Boolean(loginMode && INTERACTIVE_LOGIN_MODES.has(loginMode));
+}
 
 function isStalePendingSession(session: WaSessionSnapshot | null) {
   if (!session) return false;
@@ -100,6 +111,19 @@ export function deriveWaStatus(input: {
       code: "offline",
       label: "离线",
       detail: "上一次登录未完成，需重新扫码登录。",
+      tone: "default"
+    };
+  }
+
+  if (
+    session.loginPhase === "connecting" &&
+    isBackgroundLoginMode(session.loginMode) &&
+    session.connectionState !== "open"
+  ) {
+    return {
+      code: "offline",
+      label: "离线",
+      detail: "后台连接未完成，可重连或重新扫码。",
       tone: "default"
     };
   }
@@ -172,7 +196,8 @@ export function deriveWaActions(input: {
   session: WaSessionSnapshot | null;
 }) {
   const session = normalizeWaSessionSnapshot(input.session);
-  const loginInProgress = ["qr_required", "qr_scanned", "connecting"].includes(input.status.code);
+  const interactiveConnecting = input.status.code === "connecting" && isInteractiveLoginMode(session?.loginMode);
+  const loginInProgress = input.status.code === "qr_scanned" || interactiveConnecting;
   const connected = input.status.code === "connected";
   const sessionExpired = input.status.code === "session_expired";
   const wasManuallyLoggedOut = session?.disconnectReason === "manual_logout";

@@ -124,6 +124,11 @@ export type WaMessageItem = {
     attachmentFileName: string | null;
   } | null;
   bodyText: string | null;
+  mentions: Array<{
+    jid: string;
+    label: string;
+    phoneE164: string | null;
+  }>;
   logicalSeq: number;
   deliveryStatus: string;
   providerTs: string | null;

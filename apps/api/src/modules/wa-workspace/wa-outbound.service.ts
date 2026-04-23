@@ -120,7 +120,10 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
         .update({
           provider_message_id: result.providerMessageId,
           delivery_status: result.deliveryStatus,
-          provider_payload: JSON.stringify(result.providerPayload),
+          provider_payload: JSON.stringify({
+            ...result.providerPayload,
+            mentionJids: payload.mentionJids ?? null
+          }),
           sender_member_id: payload.createdByMembershipId ?? existingJob.created_by_membership_id ?? null,
           updated_at: trx.fn.now()
         });

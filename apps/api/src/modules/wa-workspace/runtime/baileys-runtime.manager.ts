@@ -198,6 +198,7 @@ async function persistSessionState(
   const occurredAt = new Date().toISOString();
   const sessionSnapshot = {
     connectionState: input.connectionState,
+    loginMode: input.loginMode,
     loginPhase: input.loginPhase,
     disconnectReason: input.disconnectReason ?? null,
     qrCodeAvailable: Boolean(input.qrCode),
@@ -633,12 +634,38 @@ async function buildSocket(input: {
       bucket.push(mapped);
       entry.recentHistory.set(mapped.chatJid, bucket.slice(-500));
     }
-    void ingestBaileysHistorySet({
+    void (async () => {
+      await ingestBaileysContactsUpsert({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        contacts: event.contacts ?? []
+      });
+      await ingestBaileysChatsUpdate({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        chats: event.chats ?? []
+      });
+      await ingestBaileysHistorySet({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        messages: event.messages
+      });
+    })().catch((error) => {
+      console.error("[wa-baileys] messaging-history.set ingest failed", {
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        error
+      });
+    });
+  });
+
+  socket.ev.on("groups.upsert", (groups) => {
+    void ingestBaileysGroupsUpdate({
       tenantId: input.tenantId,
       waAccountId: input.waAccountId,
-      messages: event.messages
+      groups
     }).catch((error) => {
-      console.error("[wa-baileys] messaging-history.set ingest failed", {
+      console.error("[wa-baileys] groups.upsert ingest failed", {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
         error

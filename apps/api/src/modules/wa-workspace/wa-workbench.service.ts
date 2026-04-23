@@ -134,6 +134,7 @@ export async function createWorkbenchLoginTask(
     ...(function buildStatus() {
       const session = {
         connectionState: ticket.connectionState,
+        loginMode: "employee_scan",
         loginPhase: ticket.loginPhase,
         disconnectReason: null,
         qrCodeAvailable: Boolean(ticket.qrCode),
@@ -354,7 +355,8 @@ export async function enqueueWorkbenchTextMessage(
     messageType: "text",
     messageScene: "external_chat",
     quotedMessageId: input.quotedMessageId ?? null,
-    deliveryStatus: "pending"
+    deliveryStatus: "pending",
+    providerPayload: { mentionJids: input.mentionJids ?? [] }
   });
 
   const [job] = await trx("wa_outbound_jobs")
@@ -431,7 +433,8 @@ export async function enqueueWorkbenchMediaMessage(
     messageType: input.mediaType,
     messageScene: "external_chat",
     quotedMessageId: input.quotedMessageId ?? null,
-    deliveryStatus: "pending"
+    deliveryStatus: "pending",
+    providerPayload: { mentionJids: input.mentionJids ?? [] }
   });
 
   await insertWaMessageAttachment(trx, {

@@ -182,6 +182,7 @@ async function updateSessionSyncMeta(
     : (sessionRow.session_meta as Record<string, unknown> | null);
   const sessionSummary = {
     connectionState: String(sessionRow.connection_state ?? "idle"),
+    loginMode: sessionRow.login_mode ? String(sessionRow.login_mode) : null,
     loginPhase: typeof meta?.loginPhase === "string" ? meta.loginPhase : null,
     disconnectReason: sessionRow.disconnect_reason ? String(sessionRow.disconnect_reason) : null,
     qrCodeAvailable: typeof meta?.qrCode === "string" && meta.qrCode.length > 0,

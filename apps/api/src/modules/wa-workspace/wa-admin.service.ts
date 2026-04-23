@@ -104,6 +104,7 @@ export async function createAdminLoginTask(
     ...(function buildStatus() {
       const session = {
         connectionState: ticket.connectionState,
+        loginMode: input.loginMode,
         loginPhase: ticket.loginPhase,
         disconnectReason: null,
         qrCodeAvailable: Boolean(ticket.qrCode),
@@ -155,6 +156,7 @@ export async function getAdminWaAccountHealth(trx: Knex.Transaction, tenantId: s
   const rawSessionSummary = session
     ? {
         connectionState: String(session.connection_state),
+        loginMode: session.login_mode ? String(session.login_mode) : null,
         loginPhase: typeof meta?.loginPhase === "string" ? meta.loginPhase : null,
         disconnectReason: session.disconnect_reason ? String(session.disconnect_reason) : null,
         qrCodeAvailable: typeof meta?.qrCode === "string" && meta.qrCode.length > 0,

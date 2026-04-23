@@ -6,7 +6,7 @@
  *              contact_card / 已撤回 / 未知类型降级兜底
  */
 
-import { type ChangeEvent, type ClipboardEvent, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { type ChangeEvent, type ClipboardEvent, type ReactNode, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 import { API_BASE_URL } from "../../api";
@@ -100,10 +100,73 @@ function docIcon(mimeType: string | null, fileName: string | null): string {
   return "📎";
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function mentionTextLabel(mention: WaMessageItem["mentions"][number]) {
+  const label = mention.label.trim();
+  if (!label) return `@${mention.jid.split("@")[0]}`;
+  return label.startsWith("@") ? label : `@${label}`;
+}
+
+function mentionAliases(mention: WaMessageItem["mentions"][number]) {
+  const localPart = mention.jid.split("@")[0] ?? "";
+  const normalizedLocal = localPart.split(":")[0] ?? localPart;
+  const phoneDigits = mention.phoneE164?.replace(/[^\d]/g, "") ?? "";
+  return Array.from(new Set([
+    mention.jid ? `@${mention.jid}` : null,
+    localPart ? `@${localPart}` : null,
+    normalizedLocal ? `@${normalizedLocal}` : null,
+    phoneDigits ? `@${phoneDigits}` : null,
+    mention.phoneE164 ? `@${mention.phoneE164}` : null
+  ].filter((value): value is string => Boolean(value))));
+}
+
+function TextWithMentions({ text, mentions }: { text: string; mentions: WaMessageItem["mentions"] }) {
+  if (!mentions.length) {
+    return <>{text}</>;
+  }
+
+  const aliasToMention = new Map<string, WaMessageItem["mentions"][number]>();
+  for (const mention of mentions) {
+    for (const alias of mentionAliases(mention)) {
+      aliasToMention.set(alias, mention);
+    }
+  }
+  const aliases = Array.from(aliasToMention.keys()).sort((a, b) => b.length - a.length);
+  if (!aliases.length) return <>{text}</>;
+
+  const matcher = new RegExp(`(${aliases.map(escapeRegExp).join("|")})`, "g");
+  const parts = text.split(matcher);
+  return (
+    <>
+      {parts.map((part, index) => {
+        const mention = aliasToMention.get(part);
+        return mention ? (
+          <span key={`${part}-${index}`} className="font-semibold text-[#008069]">
+            {mentionTextLabel(mention)}
+          </span>
+        ) : (
+          <span key={`${part}-${index}`}>{part}</span>
+        );
+      })}
+    </>
+  );
+}
+
+function MessageText({ text, mentions }: { text: string; mentions: WaMessageItem["mentions"] }) {
+  return (
+    <div className="whitespace-pre-wrap text-[14px] leading-6">
+      <TextWithMentions text={text} mentions={mentions} />
+    </div>
+  );
+}
+
 // ─── Per-type message body renderers ─────────────────────────────────────────
 
 /** Image message — shows inline preview with error fallback. */
-function ImageBody({ att, caption, mine, token }: { att: WaAttachment; caption: string | null; mine: boolean; token: string }) {
+function ImageBody({ att, caption, captionNode, mine, token }: { att: WaAttachment; caption: string | null; captionNode: ReactNode; mine: boolean; token: string }) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   const url = mediaProxyUrl(att, token);
@@ -132,13 +195,13 @@ function ImageBody({ att, caption, mine, token }: { att: WaAttachment; caption: 
           </div>
         </div>
       )}
-      {caption ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{caption}</div> : null}
+      {captionNode ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{captionNode}</div> : null}
     </div>
   );
 }
 
 /** Video message — native video element with poster fallback. */
-function VideoBody({ att, caption, token }: { att: WaAttachment; caption: string | null; token: string }) {
+function VideoBody({ att, captionNode, token }: { att: WaAttachment; captionNode: ReactNode; token: string }) {
   const url = mediaProxyUrl(att, token);
   const duration = fmtDuration(att.durationMs);
 
@@ -163,7 +226,7 @@ function VideoBody({ att, caption, token }: { att: WaAttachment; caption: string
         {duration !== "0:00" && <span>🎬 {duration}</span>}
         {att.fileSize ? <span>{fmtSize(att.fileSize)}</span> : null}
       </div>
-      {caption ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{caption}</div> : null}
+      {captionNode ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{captionNode}</div> : null}
     </div>
   );
 }
@@ -204,7 +267,7 @@ function AudioBody({ att, token }: { att: WaAttachment; token: string }) {
 }
 
 /** Document / file message — file card with icon, name, size and download. */
-function DocumentBody({ att, caption, token }: { att: WaAttachment; caption: string | null; token: string }) {
+function DocumentBody({ att, captionNode, token }: { att: WaAttachment; captionNode: ReactNode; token: string }) {
   const { t } = useTranslation();
   const url = mediaProxyUrl(att, token);
   const icon = docIcon(att.mimeType, att.fileName);
@@ -232,7 +295,7 @@ function DocumentBody({ att, caption, token }: { att: WaAttachment; caption: str
           </a>
         ) : null}
       </div>
-      {caption ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{caption}</div> : null}
+      {captionNode ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{captionNode}</div> : null}
     </div>
   );
 }
@@ -515,17 +578,18 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
     const { messageType, bodyText, attachments } = message;
     const att = attachments[0] ?? null;
+    const captionNode = bodyText ? <TextWithMentions text={bodyText} mentions={message.mentions ?? []} /> : null;
 
     switch (messageType) {
       case "image":
         return att
-          ? <ImageBody att={att} caption={bodyText} mine={mine} token={token} />
-          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentImage")} />;
+          ? <ImageBody att={att} caption={bodyText} captionNode={captionNode} mine={mine} token={token} />
+          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentImage")} />;
 
       case "video":
         return att
-          ? <VideoBody att={att} caption={bodyText} token={token} />
-          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentVideo")} />;
+          ? <VideoBody att={att} captionNode={captionNode} token={token} />
+          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentVideo")} />;
 
       case "audio":
         return att
@@ -534,8 +598,8 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
       case "document":
         return att
-          ? <DocumentBody att={att} caption={bodyText} token={token} />
-          : bodyText ? <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentDocument")} />;
+          ? <DocumentBody att={att} captionNode={captionNode} token={token} />
+          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentDocument")} />;
 
       case "sticker":
         return att ? <StickerBody att={att} token={token} /> : <div className="text-3xl">🎭</div>;
@@ -551,8 +615,8 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
       case "text":
       default:
-        if (bodyText) return <div className="whitespace-pre-wrap text-[14px] leading-6">{bodyText}</div>;
-        if (att) return <DocumentBody att={att} caption={null} token={token} />; // fallback
+        if (bodyText) return <MessageText text={bodyText} mentions={message.mentions ?? []} />;
+        if (att) return <DocumentBody att={att} captionNode={null} token={token} />; // fallback
         // messageType === "text" with no body and no attachment: could be an interactive
         // message type whose text wasn't extracted, or genuinely empty.
         if (messageType === "text") {

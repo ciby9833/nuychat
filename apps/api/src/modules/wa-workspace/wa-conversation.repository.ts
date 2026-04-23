@@ -36,6 +36,11 @@ function derivePhoneE164FromJid(jid: string | null) {
   return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
 }
 
+function jidFromPhoneE164(phoneE164: string | null) {
+  const digits = phoneE164?.replace(/[^\d]/g, "") ?? "";
+  return digits ? `${digits}@s.whatsapp.net` : null;
+}
+
 function isNonConversationJid(jid: string | null) {
   return jid === "status@broadcast" || Boolean(jid?.endsWith("@newsletter"));
 }
@@ -202,6 +207,100 @@ function extractPayloadAltJid(payload: unknown) {
 function payloadMessageRecord(payload: unknown) {
   const record = safeParseRecord(payload);
   return safeParseRecord(record?.message);
+}
+
+function extractPayloadMentionJids(payload: unknown) {
+  const message = payloadMessageRecord(payload);
+  const record = safeParseRecord(payload);
+  const directMentionJids = [
+    ...(Array.isArray(record?.mentionJids) ? record.mentionJids : []),
+    ...(Array.isArray(record?.mentions) ? record.mentions : [])
+  ];
+  if (!message) {
+    return Array.from(new Set(directMentionJids.map((jid) => asString(jid)).filter(Boolean) as string[]));
+  }
+
+  const mentions = new Set<string>(directMentionJids.map((jid) => asString(jid)).filter(Boolean) as string[]);
+  const seen = new Set<Record<string, unknown>>();
+
+  function collect(record: Record<string, unknown>) {
+    if (seen.has(record)) return;
+    seen.add(record);
+
+    const contextInfo = safeParseRecord(record.contextInfo);
+    const mentionedJid = Array.isArray(contextInfo?.mentionedJid)
+      ? contextInfo.mentionedJid
+      : [];
+    for (const jid of mentionedJid) {
+      const normalized = asString(jid);
+      if (normalized) mentions.add(normalized);
+    }
+
+    const wrappers = ["ephemeralMessage", "viewOnceMessage", "viewOnceMessageV2", "documentWithCaptionMessage"];
+    for (const wrapperKey of wrappers) {
+      const wrapper = safeParseRecord(record[wrapperKey]);
+      const nested = safeParseRecord(wrapper?.message);
+      if (nested) collect(nested);
+    }
+
+    for (const [key, value] of Object.entries(record)) {
+      if (key === "quotedMessage") continue;
+      const nested = safeParseRecord(value);
+      if (nested) collect(nested);
+    }
+  }
+
+  collect(message);
+  return Array.from(mentions);
+}
+
+function extractBodyMentionTokens(text: string | null) {
+  if (!text) return [];
+  return Array.from(
+    new Set(
+      Array.from(text.matchAll(/@([^\s@,.;:，。]+)/g))
+        .map((match) => asString(match[1]))
+        .filter(Boolean) as string[]
+    )
+  );
+}
+
+function memberMentionAliases(participantJid: string) {
+  const local = participantJid.split("@")[0] ?? participantJid;
+  const normalizedLocal = local.split(":")[0] ?? local;
+  const phone = derivePhoneE164FromJid(participantJid);
+  const phoneDigits = phone?.replace(/[^\d]/g, "") ?? "";
+  return new Set([participantJid, local, normalizedLocal, phoneDigits].filter(Boolean));
+}
+
+function mentionFallbackLabel(jid: string, phoneE164: string | null) {
+  if (phoneE164) return phoneE164;
+  const local = jid.split("@")[0] ?? jid;
+  return local || jid;
+}
+
+function resolveMentionView(input: {
+  jid: string;
+  waAccountId: string;
+  memberNameByParticipant: Map<string, string>;
+  contactProfiles: Map<string, ResolvedContactProfile>;
+}) {
+  const phoneE164 = normalizePhoneE164(derivePhoneE164FromJid(input.jid));
+  const profile = resolveContactProfile(input.contactProfiles, input.waAccountId, [
+    input.jid,
+    phoneE164
+  ]);
+  const label =
+    input.memberNameByParticipant.get(input.jid) ??
+    profile?.displayName ??
+    profile?.phoneE164 ??
+    phoneE164 ??
+    mentionFallbackLabel(input.jid, phoneE164);
+  return {
+    jid: input.jid,
+    label,
+    phoneE164: profile?.phoneE164 ?? phoneE164
+  };
 }
 
 function extractAttachmentFromPayload(payload: unknown) {
@@ -755,15 +854,57 @@ export async function getConversationMessages(
     )
   );
   const participantJids = Array.from(new Set(rows.map((row) => (row.participant_jid ? String(row.participant_jid) : null)).filter(Boolean))) as string[];
+  const payloadMentionJids = Array.from(new Set(rows.flatMap((row) => extractPayloadMentionJids(row.provider_payload))));
+  const isGroupConversation = String(conversationRow?.conversation_type ?? "") === "group";
+  const memberLookupJids = Array.from(new Set([...participantJids, ...payloadMentionJids]));
+  const memberRows = isGroupConversation
+    ? await trx("wa_conversation_members")
+        .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
+        .select("participant_jid", "display_name")
+    : memberLookupJids.length === 0
+      ? []
+      : await trx("wa_conversation_members")
+          .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
+          .whereIn("participant_jid", memberLookupJids)
+          .select("participant_jid", "display_name");
+  const memberNameByParticipant = new Map<string, string>();
+  const memberPhoneByParticipant = new Map<string, string>();
+  const memberJidByMentionToken = new Map<string, string>();
+  for (const row of memberRows) {
+    const participantJid = asString(row.participant_jid);
+    if (!participantJid) continue;
+    const name = asString(row.display_name);
+    if (name) {
+      memberNameByParticipant.set(participantJid, name);
+    }
+    for (const alias of memberMentionAliases(participantJid)) {
+      if (!memberJidByMentionToken.has(alias)) {
+        memberJidByMentionToken.set(alias, participantJid);
+      }
+    }
+  }
+  const bodyMentionJids = rows.flatMap((row) =>
+    extractBodyMentionTokens(asString(row.body_text) ?? extractBodyTextFromPayload(row.provider_payload))
+      .map((token) => memberJidByMentionToken.get(token))
+      .filter(Boolean) as string[]
+  );
+  const mentionJids = Array.from(new Set([...payloadMentionJids, ...bodyMentionJids]));
+  const mentionPhones = mentionJids
+    .map((jid) => normalizePhoneE164(derivePhoneE164FromJid(jid)))
+    .filter(Boolean) as string[];
   const contactProfiles = await loadWaContactProfiles(trx, {
     tenantId,
     waAccountIds: conversationRow?.wa_account_id ? [String(conversationRow.wa_account_id)] : [],
     identifiers: Array.from(new Set([
       ...participantJids,
+      ...mentionJids,
       ...rows.map((row) => (row.sender_jid ? String(row.sender_jid) : null)),
       ...rows.map((row) => extractPayloadAltJid(row.provider_payload))
     ].filter(Boolean) as string[])),
-    phones: Array.from(new Set(rows.map((row) => normalizePhoneE164(derivePhoneE164FromJid(extractPayloadAltJid(row.provider_payload)))).filter(Boolean) as string[]))
+    phones: Array.from(new Set([
+      ...mentionPhones,
+      ...rows.map((row) => normalizePhoneE164(derivePhoneE164FromJid(extractPayloadAltJid(row.provider_payload))))
+    ].filter(Boolean) as string[]))
   });
   const [attachmentRows, reactionRows, receiptRows] = await Promise.all([
     waMessageIds.length === 0
@@ -807,20 +948,6 @@ export async function getConversationMessages(
         .where({ tenant_id: tenantId })
         .whereIn("wa_message_id", quotedRows.map((row) => String(row.wa_message_id)))
         .select("wa_message_id", "file_name");
-  const memberRows = participantJids.length === 0
-    ? []
-    : await trx("wa_conversation_members")
-        .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
-        .whereIn("participant_jid", participantJids)
-        .select("participant_jid", "display_name");
-  const memberNameByParticipant = new Map<string, string>();
-  const memberPhoneByParticipant = new Map<string, string>();
-  for (const row of memberRows) {
-    const name = asString(row.display_name);
-    if (name) {
-      memberNameByParticipant.set(String(row.participant_jid), name);
-    }
-  }
 
   const attachmentsByMessage = new Map<string, Array<Record<string, unknown>>>();
   for (const row of attachmentRows) {
@@ -912,6 +1039,15 @@ export async function getConversationMessages(
     const participantJid = row.participant_jid ? String(row.participant_jid) : null;
     const senderPhone = normalizePhoneE164(derivePhoneE164FromJid(row.sender_jid ? String(row.sender_jid) : null));
     const waAccountId = conversationRow?.wa_account_id ? String(conversationRow.wa_account_id) : "";
+    const rowBodyText = row.body_text
+      ? String(row.body_text)
+      : extractBodyTextFromPayload(row.provider_payload);
+    const rowMentionJids = Array.from(new Set([
+      ...extractPayloadMentionJids(row.provider_payload),
+      ...extractBodyMentionTokens(rowBodyText)
+        .map((token) => memberJidByMentionToken.get(token))
+        .filter(Boolean) as string[]
+    ]));
     const senderProfile = resolveContactProfile(contactProfiles, waAccountId, [
       participantJid,
       extractPayloadAltJid(row.provider_payload),
@@ -970,9 +1106,13 @@ export async function getConversationMessages(
       quotedMessagePreview: row.quoted_message_id
         ? (quotedPreviewById.get(String(row.quoted_message_id)) ?? null)
         : null,
-      bodyText: row.body_text
-        ? String(row.body_text)
-        : extractBodyTextFromPayload(row.provider_payload),
+      bodyText: rowBodyText,
+      mentions: rowMentionJids.map((jid) => resolveMentionView({
+        jid,
+        waAccountId,
+        memberNameByParticipant,
+        contactProfiles
+      })),
       logicalSeq: Number(row.logical_seq ?? 0),
       deliveryStatus: String(row.delivery_status),
       providerTs: row.provider_ts ? new Date(Number(row.provider_ts)).toISOString() : null,
@@ -1313,6 +1453,75 @@ export async function upsertWaConversation(
   if (isNonConversationJid(input.chatJid)) {
     throw new Error("status@broadcast is not a valid conversation chat");
   }
+  async function mergeDuplicateDirectConversations(canonical: Record<string, unknown>) {
+    if (input.conversationType !== "direct") return;
+    const canonicalId = String(canonical.wa_conversation_id);
+    const phoneE164 = input.contactPhoneE164 ?? derivePhoneE164FromJid(input.contactJid ?? input.chatJid) ?? asString(canonical.contact_phone_e164);
+    const aliasJids = Array.from(new Set([
+      input.chatJid,
+      input.contactJid ?? null,
+      asString(canonical.chat_jid),
+      asString(canonical.contact_jid),
+      jidFromPhoneE164(phoneE164)
+    ].filter(Boolean) as string[]));
+    if (aliasJids.length === 0 && !phoneE164) return;
+
+    const duplicates = await trx("wa_conversations")
+      .where({
+        tenant_id: input.tenantId,
+        wa_account_id: input.waAccountId,
+        conversation_type: "direct"
+      })
+      .whereNot("wa_conversation_id", canonicalId)
+      .andWhere((builder) => {
+        if (aliasJids.length > 0) {
+          builder.whereIn("chat_jid", aliasJids).orWhereIn("contact_jid", aliasJids);
+        }
+        if (phoneE164) {
+          if (aliasJids.length > 0) builder.orWhere("contact_phone_e164", phoneE164);
+          else builder.where("contact_phone_e164", phoneE164);
+        }
+      })
+      .select("wa_conversation_id", "unread_count", "contact_name", "contact_phone_e164");
+    if (duplicates.length === 0) return;
+
+    const duplicateIds = duplicates.map((row) => String(row.wa_conversation_id));
+    await trx("wa_messages").whereIn("wa_conversation_id", duplicateIds).update({ wa_conversation_id: canonicalId });
+    await trx("wa_message_gaps").whereIn("wa_conversation_id", duplicateIds).update({ wa_conversation_id: canonicalId });
+    await trx("wa_outbound_jobs").whereIn("wa_conversation_id", duplicateIds).update({ wa_conversation_id: canonicalId });
+    await trx("wa_assignment_history").whereIn("wa_conversation_id", duplicateIds).update({ wa_conversation_id: canonicalId });
+    await trx("wa_assignment_locks").whereIn("wa_conversation_id", duplicateIds).delete();
+    await trx("wa_conversation_members").whereIn("wa_conversation_id", duplicateIds).delete();
+
+    const unreadTotal = duplicates.reduce((sum, row) => sum + Number(row.unread_count ?? 0), 0);
+    const duplicateName = duplicates.map((row) => asString(row.contact_name)).find(Boolean) ?? null;
+    const duplicatePhone = duplicates.map((row) => asString(row.contact_phone_e164)).find(Boolean) ?? null;
+    const latestMessage = await trx("wa_messages")
+      .where({ tenant_id: input.tenantId, wa_conversation_id: canonicalId })
+      .select("wa_message_id", "provider_ts", "created_at", "logical_seq")
+      .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint, logical_seq) desc")
+      .orderBy("logical_seq", "desc")
+      .first<Record<string, unknown> | undefined>();
+
+    await trx("wa_conversations")
+      .where({ wa_conversation_id: canonicalId })
+      .update({
+        contact_name: input.contactName ?? asString(canonical.contact_name) ?? duplicateName,
+        contact_phone_e164: phoneE164 ?? asString(canonical.contact_phone_e164) ?? duplicatePhone,
+        unread_count: trx.raw("coalesce(unread_count, 0) + ?", [unreadTotal]),
+        ...(latestMessage
+          ? {
+              last_message_id: latestMessage.wa_message_id,
+              last_message_at: latestMessage.provider_ts
+                ? trx.raw("to_timestamp(? / 1000.0)", [Number(latestMessage.provider_ts)])
+                : latestMessage.created_at
+            }
+          : {}),
+        updated_at: trx.fn.now()
+      });
+    await trx("wa_conversations").whereIn("wa_conversation_id", duplicateIds).delete();
+  }
+
   const existing = await trx("wa_conversations")
     .where({
       tenant_id: input.tenantId,
@@ -1321,23 +1530,56 @@ export async function upsertWaConversation(
     })
     .first<Record<string, unknown> | undefined>();
 
-  if (existing) {
+  const aliasExisting = existing ?? (
+    input.conversationType === "direct"
+      ? await (async () => {
+          const phoneE164 = input.contactPhoneE164 ?? derivePhoneE164FromJid(input.contactJid ?? input.chatJid);
+          const aliasJids = Array.from(new Set([
+            input.chatJid,
+            input.contactJid ?? null,
+            jidFromPhoneE164(phoneE164)
+          ].filter(Boolean) as string[]));
+          const query = trx("wa_conversations")
+            .where({
+              tenant_id: input.tenantId,
+              wa_account_id: input.waAccountId,
+              conversation_type: "direct"
+            })
+            .andWhere((builder) => {
+              if (aliasJids.length > 0) {
+                builder.whereIn("chat_jid", aliasJids).orWhereIn("contact_jid", aliasJids);
+              }
+              if (phoneE164) {
+                if (aliasJids.length > 0) builder.orWhere("contact_phone_e164", phoneE164);
+                else builder.where("contact_phone_e164", phoneE164);
+              }
+            })
+            .orderByRaw("case when chat_jid = ? then 0 else 1 end", [input.chatJid])
+            .orderBy("updated_at", "desc");
+          return query.first<Record<string, unknown> | undefined>();
+        })()
+      : undefined
+  );
+
+  if (aliasExisting) {
+    await mergeDuplicateDirectConversations(aliasExisting);
     // Never downgrade a confirmed group conversation to direct.
     // A group JID (@g.us) is authoritative; once it's "group" it stays "group".
     const resolvedType =
-      String(existing.conversation_type) === "group" ? "group" : input.conversationType;
+      String(aliasExisting.conversation_type) === "group" ? "group" : input.conversationType;
     const [row] = await trx("wa_conversations")
-      .where({ wa_conversation_id: existing.wa_conversation_id })
+      .where({ wa_conversation_id: aliasExisting.wa_conversation_id })
       .update({
-        subject: input.subject ?? existing.subject ?? null,
-        contact_jid: resolvedType === "group" ? null : (input.contactJid ?? existing.contact_jid ?? null),
-        contact_name: resolvedType === "group" ? null : (input.contactName ?? existing.contact_name ?? null),
+        chat_jid: resolvedType === "group" ? aliasExisting.chat_jid : input.chatJid,
+        subject: input.subject ?? aliasExisting.subject ?? null,
+        contact_jid: resolvedType === "group" ? null : (input.contactJid ?? input.chatJid ?? aliasExisting.contact_jid ?? null),
+        contact_name: resolvedType === "group" ? null : (input.contactName ?? aliasExisting.contact_name ?? null),
         contact_phone_e164:
           resolvedType === "group"
             ? null
             : (input.contactPhoneE164 ??
-               (typeof existing.contact_phone_e164 === "string" ? existing.contact_phone_e164 : derivePhoneE164FromJid(input.contactJid ?? input.chatJid))),
-        unread_count: typeof input.unreadCount === "number" ? Math.max(0, input.unreadCount) : Number(existing.unread_count ?? 0),
+               (typeof aliasExisting.contact_phone_e164 === "string" ? aliasExisting.contact_phone_e164 : derivePhoneE164FromJid(input.contactJid ?? input.chatJid))),
+        unread_count: typeof input.unreadCount === "number" ? Math.max(0, input.unreadCount) : Number(aliasExisting.unread_count ?? 0),
         conversation_type: resolvedType,
         updated_at: trx.fn.now()
       })
