@@ -42,6 +42,7 @@ type WaChatPanelProps = {
   onRelease: () => void;
   onReplyToMessage: (message: WaMessageItem) => void;
   onSendReaction: (message: WaMessageItem, emoji: string) => void;
+  onMentionClick: (mention: WaMessageItem["mentions"][number]) => void;
   onSend: () => void;
   actionLoading: string | null;
 };
@@ -123,9 +124,58 @@ function mentionAliases(mention: WaMessageItem["mentions"][number]) {
   ].filter((value): value is string => Boolean(value))));
 }
 
-function TextWithMentions({ text, mentions }: { text: string; mentions: WaMessageItem["mentions"] }) {
+function hrefForMessageUrl(value: string) {
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}
+
+function splitTrailingUrlPunctuation(value: string) {
+  const match = value.match(/^(.+?)([),.!?;:]+)?$/);
+  return {
+    url: match?.[1] ?? value,
+    suffix: match?.[2] ?? ""
+  };
+}
+
+function TextWithLinks({ text, keyPrefix }: { text: string; keyPrefix: string }) {
+  const matcher = /((?:https?:\/\/|www\.)[^\s<>"']+|(?<![@\w])(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?)/gi;
+  const parts = text.split(matcher);
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (!part) return null;
+        const isUrl = /^(?:https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,})/i.test(part);
+        if (!isUrl) return <span key={`${keyPrefix}-text-${index}`}>{part}</span>;
+
+        const { url, suffix } = splitTrailingUrlPunctuation(part);
+        return (
+          <span key={`${keyPrefix}-url-${index}`}>
+            <a
+              href={hrefForMessageUrl(url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-[#027eb5] underline underline-offset-2 hover:text-[#005c4b]"
+            >
+              {url}
+            </a>
+            {suffix}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+function TextWithMentions({
+  text,
+  mentions,
+  onMentionClick
+}: {
+  text: string;
+  mentions: WaMessageItem["mentions"];
+  onMentionClick?: (mention: WaMessageItem["mentions"][number]) => void;
+}) {
   if (!mentions.length) {
-    return <>{text}</>;
+    return <TextWithLinks text={text} keyPrefix="plain" />;
   }
 
   const aliasToMention = new Map<string, WaMessageItem["mentions"][number]>();
@@ -135,7 +185,7 @@ function TextWithMentions({ text, mentions }: { text: string; mentions: WaMessag
     }
   }
   const aliases = Array.from(aliasToMention.keys()).sort((a, b) => b.length - a.length);
-  if (!aliases.length) return <>{text}</>;
+  if (!aliases.length) return <TextWithLinks text={text} keyPrefix="plain" />;
 
   const matcher = new RegExp(`(${aliases.map(escapeRegExp).join("|")})`, "g");
   const parts = text.split(matcher);
@@ -144,21 +194,35 @@ function TextWithMentions({ text, mentions }: { text: string; mentions: WaMessag
       {parts.map((part, index) => {
         const mention = aliasToMention.get(part);
         return mention ? (
-          <span key={`${part}-${index}`} className="font-semibold text-[#008069]">
+          <button
+            key={`${part}-${index}`}
+            type="button"
+            onClick={() => onMentionClick?.(mention)}
+            className="inline rounded px-0.5 align-baseline font-semibold text-[#007b68] underline-offset-2 hover:bg-[#d9fdd3] hover:underline"
+            title={mention.jid}
+          >
             {mentionTextLabel(mention)}
-          </span>
+          </button>
         ) : (
-          <span key={`${part}-${index}`}>{part}</span>
+          <TextWithLinks key={`${part}-${index}`} text={part} keyPrefix={`part-${index}`} />
         );
       })}
     </>
   );
 }
 
-function MessageText({ text, mentions }: { text: string; mentions: WaMessageItem["mentions"] }) {
+function MessageText({
+  text,
+  mentions,
+  onMentionClick
+}: {
+  text: string;
+  mentions: WaMessageItem["mentions"];
+  onMentionClick?: (mention: WaMessageItem["mentions"][number]) => void;
+}) {
   return (
     <div className="whitespace-pre-wrap text-[14px] leading-6">
-      <TextWithMentions text={text} mentions={mentions} />
+      <TextWithMentions text={text} mentions={mentions} onMentionClick={onMentionClick} />
     </div>
   );
 }
@@ -467,6 +531,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
     onRelease,
     onReplyToMessage,
     onSendReaction,
+    onMentionClick,
     onSend,
     actionLoading
   } = props;
@@ -578,18 +643,20 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
     const { messageType, bodyText, attachments } = message;
     const att = attachments[0] ?? null;
-    const captionNode = bodyText ? <TextWithMentions text={bodyText} mentions={message.mentions ?? []} /> : null;
+    const captionNode = bodyText
+      ? <TextWithMentions text={bodyText} mentions={message.mentions ?? []} onMentionClick={onMentionClick} />
+      : null;
 
     switch (messageType) {
       case "image":
         return att
           ? <ImageBody att={att} caption={bodyText} captionNode={captionNode} mine={mine} token={token} />
-          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentImage")} />;
+          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} onMentionClick={onMentionClick} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentImage")} />;
 
       case "video":
         return att
           ? <VideoBody att={att} captionNode={captionNode} token={token} />
-          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentVideo")} />;
+          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} onMentionClick={onMentionClick} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentVideo")} />;
 
       case "audio":
         return att
@@ -599,7 +666,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
       case "document":
         return att
           ? <DocumentBody att={att} captionNode={captionNode} token={token} />
-          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentDocument")} />;
+          : bodyText ? <MessageText text={bodyText} mentions={message.mentions ?? []} onMentionClick={onMentionClick} /> : <UnsupportedBody messageType={t("wa.chat.failedNoAttachmentDocument")} />;
 
       case "sticker":
         return att ? <StickerBody att={att} token={token} /> : <div className="text-3xl">🎭</div>;
@@ -615,7 +682,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
       case "text":
       default:
-        if (bodyText) return <MessageText text={bodyText} mentions={message.mentions ?? []} />;
+        if (bodyText) return <MessageText text={bodyText} mentions={message.mentions ?? []} onMentionClick={onMentionClick} />;
         if (att) return <DocumentBody att={att} captionNode={null} token={token} />; // fallback
         // messageType === "text" with no body and no attachment: could be an interactive
         // message type whose text wasn't extracted, or genuinely empty.

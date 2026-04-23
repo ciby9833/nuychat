@@ -41,6 +41,13 @@ type SelectedMention = {
   label: string;
 };
 
+type ComposerDraft = {
+  composerText: string;
+  selectedMentions: SelectedMention[];
+  quotedMessage: WaMessageItem | null;
+  uploadingAttachments: UploadingAttachment[];
+};
+
 function isSeatVisibleWaConversation(conversation: Pick<WaConversationItem, "chatJid">) {
   return conversation.chatJid !== "status@broadcast" && !conversation.chatJid.endsWith("@newsletter");
 }
@@ -86,6 +93,44 @@ export function useWaWorkspace(session: Session | null) {
   const loadDetailRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const accountIdRef = useRef<string | null>(null);
   const accountsRef = useRef<WaAccountItem[]>([]);
+  const draftKeyRef = useRef<string | null>(null);
+  const composerTextRef = useRef("");
+  const selectedMentionsRef = useRef<SelectedMention[]>([]);
+  const quotedMessageRef = useRef<WaMessageItem | null>(null);
+  const uploadingAttachmentsRef = useRef<UploadingAttachment[]>([]);
+  const composerDraftsRef = useRef<Record<string, ComposerDraft>>({});
+
+  const activeDraftKey = accountId && selectedConversationId
+    ? `${accountId}:${selectedConversationId}`
+    : null;
+
+  const persistDraft = useCallback((key: string | null) => {
+    if (!key) return;
+    const draft: ComposerDraft = {
+      composerText: composerTextRef.current,
+      selectedMentions: selectedMentionsRef.current,
+      quotedMessage: quotedMessageRef.current,
+      uploadingAttachments: uploadingAttachmentsRef.current
+    };
+    const hasDraft =
+      draft.composerText.length > 0 ||
+      draft.selectedMentions.length > 0 ||
+      Boolean(draft.quotedMessage) ||
+      draft.uploadingAttachments.length > 0;
+    if (hasDraft) {
+      composerDraftsRef.current[key] = draft;
+    } else {
+      delete composerDraftsRef.current[key];
+    }
+  }, []);
+
+  const restoreDraft = useCallback((key: string | null) => {
+    const draft = key ? composerDraftsRef.current[key] : null;
+    setComposerText(draft?.composerText ?? "");
+    setSelectedMentions(draft?.selectedMentions ?? []);
+    setQuotedMessage(draft?.quotedMessage ?? null);
+    setUploadingAttachments(draft?.uploadingAttachments ?? []);
+  }, []);
 
   const loadAccounts = useCallback(async () => {
     if (!session?.waSeatEnabled) return;
@@ -167,11 +212,6 @@ export function useWaWorkspace(session: Session | null) {
     if (!session || !accountId) return;
     setActionLoading("open-contact");
     setError("");
-    // Clear composer state so previous conversation drafts don't leak in.
-    setQuotedMessage(null);
-    setComposerText("");
-    setSelectedMentions([]);
-    setUploadingAttachments([]);
     try {
       const next = await openWaWorkbenchContactConversation(session, { accountId, contactId });
       setDetail(next);
@@ -189,6 +229,10 @@ export function useWaWorkspace(session: Session | null) {
   loadDetailRef.current = loadDetail;
   accountIdRef.current = accountId;
   accountsRef.current = accounts;
+  composerTextRef.current = composerText;
+  selectedMentionsRef.current = selectedMentions;
+  quotedMessageRef.current = quotedMessage;
+  uploadingAttachmentsRef.current = uploadingAttachments;
 
   useEffect(() => {
     void loadAccounts();
@@ -205,6 +249,14 @@ export function useWaWorkspace(session: Session | null) {
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  useEffect(() => {
+    const previousKey = draftKeyRef.current;
+    if (previousKey === activeDraftKey) return;
+    persistDraft(previousKey);
+    draftKeyRef.current = activeDraftKey;
+    restoreDraft(activeDraftKey);
+  }, [activeDraftKey, persistDraft, restoreDraft]);
 
   useEffect(() => {
     if (!session?.accessToken || !session.waSeatEnabled) return;
@@ -328,6 +380,8 @@ export function useWaWorkspace(session: Session | null) {
       setComposerText("");
       setSelectedMentions([]);
       setUploadingAttachments([]);
+      const draftKey = draftKeyRef.current;
+      if (draftKey) delete composerDraftsRef.current[draftKey];
       await loadConversations();
       await loadDetail();
     } catch (nextError) {
@@ -389,8 +443,8 @@ export function useWaWorkspace(session: Session | null) {
 
   // Wraps setSelectedConversationId so we can capture the conversation's
   // current unread count before detail loading resets it on the server.
-  // Also resets composer state so drafts / quotes from a previous conversation
-  // don't leak into the newly selected conversation.
+  // Composer drafts are stored per account + conversation, so switching away and
+  // back behaves like WhatsApp Web: unfinished text stays with that chat.
   const selectConversation = useCallback((id: string | null) => {
     if (id) {
       const conv = conversations.find((item) => item.waConversationId === id);
@@ -399,12 +453,6 @@ export function useWaWorkspace(session: Session | null) {
       setUnreadCountBeforeOpen(0);
     }
     setSelectedConversationId(id);
-    // Clear composer state on conversation switch so stale quote bars /
-    // attachments from the previous conversation don't appear.
-    setQuotedMessage(null);
-    setComposerText("");
-    setSelectedMentions([]);
-    setUploadingAttachments([]);
   }, [conversations]);
 
   const loadMoreMessages = useCallback(async () => {

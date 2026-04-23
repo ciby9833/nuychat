@@ -87,8 +87,58 @@ function deepGet(obj: unknown, ...keys: string[]): unknown {
   return cur;
 }
 
-export function extractBaileysBodyText(message: WAMessage["message"] | null | undefined): string | null {
+function unwrapBaileysContentMessage(message: WAMessage["message"] | null | undefined): WAMessage["message"] | null {
   if (!message) return null;
+  let current: WAMessage["message"] = message;
+  const wrapperKeys = [
+    "ephemeralMessage",
+    "viewOnceMessage",
+    "viewOnceMessageV2",
+    "viewOnceMessageV2Extension",
+    "documentWithCaptionMessage"
+  ];
+
+  for (let depth = 0; depth < 8; depth += 1) {
+    const record = current as Record<string, unknown>;
+    const wrapperKey = wrapperKeys.find((key) => {
+      const candidate = record[key];
+      return Boolean(candidate && typeof candidate === "object");
+    });
+    if (!wrapperKey) return current;
+
+    const wrapper = record[wrapperKey] as Record<string, unknown>;
+    const innerMessage = wrapper.message;
+    if (!innerMessage || typeof innerMessage !== "object") return current;
+    current = innerMessage as WAMessage["message"];
+  }
+
+  return current;
+}
+
+function extractBaileysQuotedMessageId(message: WAMessage["message"] | null | undefined) {
+  if (!message) return null;
+  const knownContentKeys = [
+    "extendedTextMessage",
+    "imageMessage",
+    "videoMessage",
+    "documentMessage",
+    "audioMessage",
+    "stickerMessage",
+    "locationMessage",
+    "contactMessage",
+    "contactsArrayMessage"
+  ];
+  for (const key of knownContentKeys) {
+    const quotedId = asString(deepGet(message, key, "contextInfo", "stanzaId"));
+    if (quotedId) return quotedId;
+  }
+  return null;
+}
+
+export function extractBaileysBodyText(message: WAMessage["message"] | null | undefined): string | null {
+  const content = unwrapBaileysContentMessage(message);
+  if (!content) return null;
+  message = content;
   const m: unknown = message;
 
   // ── Most common types ────────────────────────────────────────────────────
@@ -158,7 +208,9 @@ export function extractBaileysBodyText(message: WAMessage["message"] | null | un
 }
 
 export function inferBaileysMessageType(message: WAMessage["message"] | null | undefined) {
-  if (!message) return "text" as const;
+  const content = unwrapBaileysContentMessage(message);
+  if (!content) return "text" as const;
+  message = content;
   if (message.reactionMessage) return "reaction" as const;
   if ((message as Record<string, unknown>).callLogMesssage || (message as Record<string, unknown>).call) return "call_log" as const;
   if (message.imageMessage) return "image" as const;
@@ -172,7 +224,9 @@ export function inferBaileysMessageType(message: WAMessage["message"] | null | u
 }
 
 export function extractBaileysAttachment(message: WAMessage["message"] | null | undefined) {
-  if (!message) return null;
+  const content = unwrapBaileysContentMessage(message);
+  if (!content) return null;
+  message = content;
   // Helper: WhatsApp Channels/Newsletters use `staticUrl` (a public, non-encrypted URL)
   // instead of `url` (encrypted CDN URL). Fall back to staticUrl when url is absent.
   function mediaUrl(msg: Record<string, unknown>): string | null {
@@ -282,6 +336,19 @@ export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMess
   const remoteJid = asString(message.key?.remoteJid);
   const providerMessageId = asString(message.key?.id);
   if (!remoteJid || !providerMessageId || isNonConversationJid(remoteJid)) return null;
+  const contentMessage = unwrapBaileysContentMessage(message.message);
+  const bodyText = extractBaileysBodyText(contentMessage);
+  const attachment = extractBaileysAttachment(contentMessage);
+  const messageType = inferBaileysMessageType(contentMessage);
+  const reaction = contentMessage?.reactionMessage;
+  const hasVisibleContent =
+    Boolean(bodyText) ||
+    Boolean(attachment) ||
+    messageType === "reaction" ||
+    messageType === "call_log" ||
+    messageType === "contact_card" ||
+    messageType === "location";
+  if (!hasVisibleContent) return null;
 
   const conversationType = remoteJid.endsWith("@g.us") ? "group" : "direct";
   const remoteJidAlt = asString(message.key?.remoteJidAlt);
@@ -292,8 +359,6 @@ export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMess
   const participantJid = asString(message.key?.participant);
   const fromMe = Boolean(message.key?.fromMe);
   const senderJid = fromMe ? chatJid : (participantJid ?? chatJid);
-  const messageType = inferBaileysMessageType(message.message);
-  const reaction = message.message?.reactionMessage;
   const direction = fromMe ? "outbound" : "inbound";
   const senderRole =
     fromMe
@@ -308,7 +373,7 @@ export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMess
     senderJid,
     participantJid: participantJid ?? null,
     messageType,
-    bodyText: extractBaileysBodyText(message.message),
+    bodyText,
     providerTs: asNumber(message.messageTimestamp) ? Number(message.messageTimestamp) * 1000 : Date.now(),
     direction,
     senderRole,
@@ -319,10 +384,10 @@ export function mapBaileysMessageToInbound(message: WAMessage): WaNormalizedMess
     contactName: conversationType === "direct" && !fromMe ? asString(message.pushName) : null,
     contactPhoneE164: conversationType === "direct" ? directIdentity?.phoneE164 ?? derivePhoneE164FromJid(chatJid) : null,
     contactJid: conversationType === "direct" ? chatJid : null,
-    quotedMessageId: asString(message.message?.extendedTextMessage?.contextInfo?.stanzaId),
+    quotedMessageId: extractBaileysQuotedMessageId(contentMessage),
     reactionEmoji: asString(reaction?.text),
     reactionTargetId: asString(reaction?.key?.id),
-    attachment: extractBaileysAttachment(message.message)
+    attachment
   };
 }
 

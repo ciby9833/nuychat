@@ -7,6 +7,7 @@
  */
 
 import type { Session } from "../../types";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useWaWorkspace } from "../hooks/useWaWorkspace";
 import { WaChatPanel } from "./WaChatPanel";
@@ -20,6 +21,7 @@ type WaWorkspaceProps = {
 export function WaWorkspace({ session }: WaWorkspaceProps) {
   const { t } = useTranslation();
   const vm = useWaWorkspace(session);
+  const [focusedParticipantJid, setFocusedParticipantJid] = useState<string | null>(null);
 
   const selectedAccount = vm.accounts.find((a) => a.waAccountId === vm.accountId) ?? null;
   const accountConnected = selectedAccount?.status.code === "connected";
@@ -85,6 +87,7 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               onRelease={() => { void vm.releaseCurrentConversation(); }}
               onReplyToMessage={(message) => vm.setQuotedMessage(message)}
               onSendReaction={(message, emoji) => { void vm.reactToMessage(message, emoji); }}
+              onMentionClick={(mention) => setFocusedParticipantJid(mention.jid)}
               onSend={() => { void vm.sendCurrentMessage(); }}
               actionLoading={vm.actionLoading}
             />
@@ -95,6 +98,7 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               session={session}
               onForceAssign={vm.forceAssignWaConversation}
               actionLoading={vm.actionLoading}
+              focusedParticipantJid={focusedParticipantJid}
             />
           </div>
         </div>

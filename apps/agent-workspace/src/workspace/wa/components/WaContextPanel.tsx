@@ -7,6 +7,7 @@
  */
 
 import type { Session } from "../../types";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { WaConversationDetail } from "../types";
 
@@ -15,11 +16,17 @@ type WaContextPanelProps = {
   session: Session;
   onForceAssign: (memberId: string) => Promise<void>;
   actionLoading: string | null;
+  focusedParticipantJid: string | null;
 };
 
 export function WaContextPanel(props: WaContextPanelProps) {
   const { t } = useTranslation();
-  const { detail, session, onForceAssign, actionLoading } = props;
+  const { detail, session, onForceAssign, actionLoading, focusedParticipantJid } = props;
+  const memberRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  useEffect(() => {
+    if (!focusedParticipantJid) return;
+    memberRefs.current[focusedParticipantJid]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusedParticipantJid]);
   const title =
     detail?.conversation.displayName ||
     detail?.conversation.subject ||
@@ -79,8 +86,19 @@ export function WaContextPanel(props: WaContextPanelProps) {
           <div className="text-xs font-medium uppercase tracking-[0.08em] text-[#667781]">{t("wa.context.members")}</div>
           <div className="mt-3 space-y-2">
             {detail?.members.map((member) => (
-              <div key={member.memberRowId} className="rounded-[10px] border border-[#d1d7db] bg-white px-3 py-2 text-xs text-[#667781]">
+              <div
+                key={member.memberRowId}
+                ref={(node) => {
+                  memberRefs.current[member.participantJid] = node;
+                }}
+                className={`rounded-[10px] border px-3 py-2 text-xs text-[#667781] transition-colors ${
+                  focusedParticipantJid === member.participantJid
+                    ? "border-[#00a884] bg-[#e7fce3] shadow-[0_0_0_2px_rgba(0,168,132,0.12)]"
+                    : "border-[#d1d7db] bg-white"
+                }`}
+              >
                 <div className="font-medium text-[#111b21]">{member.displayName || member.participantJid}</div>
+                <div className="mt-1 truncate text-[#667781]">{member.participantJid}</div>
                 <div className="mt-1 text-[#667781]">{member.isAdmin ? t("wa.context.admin") : t("wa.context.member")}</div>
               </div>
             ))}

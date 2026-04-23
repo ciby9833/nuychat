@@ -396,6 +396,16 @@ function extractAttachmentFromPayload(payload: unknown) {
   return null;
 }
 
+function isDisplayableStoredWaMessage(row: Record<string, unknown>) {
+  const messageType = asString(row.message_type) ?? "text";
+  const deliveryStatus = asString(row.delivery_status);
+  if (deliveryStatus === "revoked") return true;
+  if (asString(row.body_text) ?? extractBodyTextFromPayload(row.provider_payload)) return true;
+  if (extractAttachmentFromPayload(row.provider_payload)) return true;
+  if (messageType === "reaction") return true;
+  return ["call_log", "contact_card", "location"].includes(messageType);
+}
+
 /**
  * Best-effort extraction of body text from a stored WAMessage provider_payload.
  * Used as a fallback when the body_text column is NULL (e.g. for messages stored
@@ -550,7 +560,7 @@ export async function listWaConversations(
     : await trx("wa_messages")
         .where("tenant_id", input.tenantId)
         .whereIn("wa_conversation_id", conversationIds)
-        .select("wa_conversation_id", "body_text", "logical_seq", "direction", "provider_payload")
+        .select("wa_conversation_id", "body_text", "logical_seq", "direction", "provider_payload", "message_type", "delivery_status")
         .orderBy("wa_conversation_id", "asc")
         .orderBy("logical_seq", "desc");
 
@@ -560,6 +570,7 @@ export async function listWaConversations(
   for (const row of messageRows) {
     const waConversationId = String(row.wa_conversation_id);
     if (previewByConversation.has(waConversationId)) continue;
+    if (!isDisplayableStoredWaMessage(row as Record<string, unknown>)) continue;
     const preview = row.body_text
       ? String(row.body_text)
       : (extractBodyTextFromPayload(row.provider_payload) ?? "");
@@ -632,9 +643,10 @@ export async function getWaConversationListItem(
       tenant_id: input.tenantId,
       wa_conversation_id: input.waConversationId
     })
-    .select("body_text", "direction", "provider_payload")
+    .select("body_text", "direction", "provider_payload", "message_type", "delivery_status")
     .orderBy("logical_seq", "desc")
-    .first<Record<string, unknown> | undefined>();
+    .limit(20)
+    .then((rows) => rows.find((item) => isDisplayableStoredWaMessage(item as Record<string, unknown>)) as Record<string, unknown> | undefined);
 
   const inboundRow = await trx("wa_messages")
     .where({
@@ -1165,6 +1177,16 @@ export async function getConversationMessages(
       })),
       createdAt: new Date(String(row.created_at)).toISOString()
     };
+  }).filter((message) => {
+    // Do not expose Baileys protocol/sync placeholders as chat bubbles.
+    // Older production rows can contain text messages with no body, attachment,
+    // call/contact/location content or reaction data; WhatsApp Web does not show
+    // those as standalone messages.
+    if (message.deliveryStatus === "revoked") return true;
+    if (message.bodyText) return true;
+    if (message.attachments.length > 0) return true;
+    if (message.messageType === "reaction") return true;
+    return ["call_log", "contact_card", "location"].includes(message.messageType);
   });
 }
 

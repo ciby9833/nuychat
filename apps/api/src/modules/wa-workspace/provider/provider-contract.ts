@@ -20,7 +20,7 @@ export type WaNormalizedMessage = {
   chatJid: string;
   senderJid: string | null;
   participantJid?: string | null;
-  messageType: "text" | "image" | "video" | "audio" | "document" | "reaction" | "sticker" | "location" | "contact_card";
+  messageType: "text" | "image" | "video" | "audio" | "document" | "reaction" | "sticker" | "location" | "contact_card" | "call_log";
   bodyText: string | null;
   providerTs: number;
   direction: "inbound" | "outbound";
