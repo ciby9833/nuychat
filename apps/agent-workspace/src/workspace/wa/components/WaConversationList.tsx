@@ -20,12 +20,15 @@ type WaConversationListProps = {
   onAccountChange: (value: string | null) => void;
   assignedToMeOnly: boolean;
   onAssignedToMeOnlyChange: (value: boolean) => void;
+  archivedOnly: boolean;
+  onArchivedOnlyChange: (value: boolean) => void;
   conversations: WaConversationItem[];
   contacts: WaContactItem[];
   selectedConversationId: string | null;
   loading: boolean;
   onSelectConversation: (waConversationId: string) => void;
   onOpenContact: (contactId: string) => void;
+  onArchiveConversation: (waConversationId: string, archive: boolean) => void;
   onSync?: () => void;
   syncing?: boolean;
   syncEnabled?: boolean;
@@ -45,12 +48,15 @@ export function WaConversationList(props: WaConversationListProps) {
     onAccountChange,
     assignedToMeOnly,
     onAssignedToMeOnlyChange,
+    archivedOnly,
+    onArchivedOnlyChange,
     conversations,
     contacts,
     selectedConversationId,
     loading,
     onSelectConversation,
     onOpenContact,
+    onArchiveConversation,
     onSync,
     syncing = false,
     syncEnabled = false
@@ -208,6 +214,18 @@ export function WaConversationList(props: WaConversationListProps) {
             />
             {t("wa.conversationList.assignedToMeOnly")}
           </label>
+          <button
+            type="button"
+            onClick={() => onArchivedOnlyChange(!archivedOnly)}
+            className={`flex w-full items-center justify-between rounded-[10px] border px-3 py-2 text-sm transition-colors ${
+              archivedOnly
+                ? "border-[#00a884] bg-[#e7fce3] text-[#005c4b]"
+                : "border-[#d1d7db] bg-white text-[#54656f] hover:bg-[#f5f6f6]"
+            }`}
+          >
+            <span>{archivedOnly ? t("wa.conversationList.archived") : t("wa.conversationList.showArchived")}</span>
+            <span>▾</span>
+          </button>
         </div>
       </div>
 
@@ -289,7 +307,20 @@ export function WaConversationList(props: WaConversationListProps) {
                         <div className="mt-0.5 truncate text-[13px] text-[#667781]">{secondary}</div>
                       </div>
                       <div className="shrink-0 text-right">
-                        <div className="text-[11px] text-[#667781]">{formatListTime(conversation.lastMessageAt)}</div>
+                        <div className="flex items-center justify-end gap-1">
+                          <span className="text-[11px] text-[#667781]">{formatListTime(conversation.lastMessageAt)}</span>
+                          <button
+                            type="button"
+                            className="rounded-full px-1.5 py-0.5 text-[13px] text-[#667781] hover:bg-[#e9edef]"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onArchiveConversation(conversation.waConversationId, !archivedOnly);
+                            }}
+                            title={archivedOnly ? t("wa.conversationList.unarchive") : t("wa.conversationList.archive")}
+                          >
+                            ⋮
+                          </button>
+                        </div>
                         {conversation.unreadCount > 0 ? (
                           <div className="mt-2 inline-flex min-w-5 items-center justify-center rounded-full bg-[#25d366] px-1.5 py-0.5 text-[11px] font-semibold text-white">
                             {conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}

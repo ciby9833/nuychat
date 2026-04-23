@@ -163,6 +163,7 @@ function mapConversation(row: Record<string, unknown>) {
     lastMessageAt: row.last_message_at ? new Date(String(row.last_message_at)).toISOString() : null,
     lastMessagePreview: row.last_message_preview ? String(row.last_message_preview) : null,
     unreadCount: Number(row.unread_count ?? 0),
+    archivedAt: row.archived_at ? new Date(String(row.archived_at)).toISOString() : null,
     avatarUrl: row.avatar_url ? String(row.avatar_url) : null
   };
 }
@@ -527,7 +528,7 @@ export async function getWaConversationById(trx: Knex.Transaction, tenantId: str
 
 export async function listWaConversations(
   trx: Knex.Transaction,
-  input: { tenantId: string; waAccountIds: string[]; assignedToMembershipId?: string | null; type?: string | null }
+  input: { tenantId: string; waAccountIds: string[]; assignedToMembershipId?: string | null; type?: string | null; archived?: boolean }
 ) {
   if (input.waAccountIds.length === 0) return [];
   const query = buildConversationBaseQuery(trx, input.tenantId)
@@ -541,6 +542,11 @@ export async function listWaConversations(
   }
   if (input.type) {
     query.andWhere("c.conversation_type", input.type);
+  }
+  if (input.archived) {
+    query.whereNotNull("c.archived_at");
+  } else {
+    query.whereNull("c.archived_at");
   }
 
   const rows = await query
@@ -841,7 +847,8 @@ export async function getConversationMessages(
     .select("conversation_type", "contact_name", "contact_phone_e164", "chat_jid", "contact_jid", "wa_account_id")
     .first<Record<string, unknown> | undefined>();
   const baseQuery = trx("wa_messages")
-    .where({ tenant_id: tenantId, wa_conversation_id: waConversationId });
+    .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
+    .whereNull("deleted_for_me_at");
   if (beforeLogicalSeq != null) {
     baseQuery.where("logical_seq", "<", beforeLogicalSeq);
   }
@@ -1127,6 +1134,9 @@ export async function getConversationMessages(
       })),
       logicalSeq: Number(row.logical_seq ?? 0),
       deliveryStatus: String(row.delivery_status),
+      editedAt: row.edited_at ? new Date(String(row.edited_at)).toISOString() : null,
+      deletedForMeAt: row.deleted_for_me_at ? new Date(String(row.deleted_for_me_at)).toISOString() : null,
+      revokedAt: row.revoked_at ? new Date(String(row.revoked_at)).toISOString() : null,
       providerTs: row.provider_ts ? new Date(Number(row.provider_ts)).toISOString() : null,
       receiptSummary: receiptItems.length > 0
         ? {

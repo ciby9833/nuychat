@@ -60,6 +60,7 @@ export type WaConversationItem = {
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
+  archivedAt: string | null;
   avatarUrl: string | null;
 };
 
@@ -131,6 +132,9 @@ export type WaMessageItem = {
   }>;
   logicalSeq: number;
   deliveryStatus: string;
+  editedAt: string | null;
+  deletedForMeAt: string | null;
+  revokedAt: string | null;
   providerTs: string | null;
   receiptSummary: {
     totalReceipts: number;

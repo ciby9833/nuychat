@@ -8,7 +8,7 @@
  */
 import path from "node:path";
 
-import type { AnyMessageContent, WAMessage } from "@whiskeysockets/baileys";
+import type { AnyMessageContent, WAMessage, WAMessageKey } from "@whiskeysockets/baileys";
 
 import { withTenantTransaction } from "../../../infra/db/client.js";
 import { getUploadsDir } from "../../../infra/storage/upload.service.js";
@@ -199,6 +199,157 @@ async function buildQuotedMessage(
     },
     message
   };
+}
+
+function buildMessageKey(input: {
+  chatJid: string;
+  providerMessageId: string;
+  fromMe: boolean;
+  participantJid?: string | null;
+}): WAMessageKey {
+  return {
+    remoteJid: input.chatJid,
+    id: input.providerMessageId,
+    fromMe: input.fromMe,
+    ...(input.chatJid.endsWith("@g.us") && input.participantJid ? { participant: input.participantJid } : {})
+  };
+}
+
+async function ensureOpenRuntimeForAction(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+}) {
+  let runtime = getBaileysRuntime(input.tenantId, input.waAccountId);
+  if (!runtime || runtime.connectionState === "close") {
+    runtime = await ensureBaileysRuntime({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      instanceKey: input.instanceKey,
+      loginMode: "worker_action"
+    });
+  }
+  if (runtime.connectionState !== "open") {
+    return waitForRuntimeOpen({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId
+    });
+  }
+  return runtime;
+}
+
+export async function archiveBaileysConversation(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+  chatJid: string;
+  archive: boolean;
+  lastMessage?: {
+    providerMessageId: string;
+    fromMe: boolean;
+    participantJid?: string | null;
+  } | null;
+}) {
+  const runtime = await ensureOpenRuntimeForAction(input);
+  const lastMessages = input.lastMessage
+    ? [buildMessageKey({
+        chatJid: input.chatJid,
+        providerMessageId: input.lastMessage.providerMessageId,
+        fromMe: input.lastMessage.fromMe,
+        participantJid: input.lastMessage.participantJid
+      })]
+    : [];
+
+  await withTimeout(
+    runtime.socket.chatModify({ archive: input.archive, lastMessages }, input.chatJid),
+    SEND_MESSAGE_TIMEOUT_MS,
+    "WhatsApp archive action timed out"
+  );
+  return { ok: true };
+}
+
+export async function deleteBaileysMessageForEveryone(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+  chatJid: string;
+  providerMessageId: string;
+  participantJid?: string | null;
+}) {
+  const runtime = await ensureOpenRuntimeForAction(input);
+  const key = buildMessageKey({
+    chatJid: input.chatJid,
+    providerMessageId: input.providerMessageId,
+    fromMe: true,
+    participantJid: input.participantJid
+  });
+  await withTimeout(
+    runtime.socket.sendMessage(input.chatJid, { delete: key }),
+    SEND_MESSAGE_TIMEOUT_MS,
+    "WhatsApp delete-for-everyone action timed out"
+  );
+  return { ok: true };
+}
+
+export async function deleteBaileysMessageForMe(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+  chatJid: string;
+  providerMessageId: string;
+  fromMe: boolean;
+  participantJid?: string | null;
+  timestampMs?: number | null;
+}) {
+  const runtime = await ensureOpenRuntimeForAction(input);
+  const key = buildMessageKey({
+    chatJid: input.chatJid,
+    providerMessageId: input.providerMessageId,
+    fromMe: input.fromMe,
+    participantJid: input.participantJid
+  });
+  await withTimeout(
+    runtime.socket.chatModify({
+      deleteForMe: {
+        deleteMedia: false,
+        key,
+        timestamp: Math.floor((input.timestampMs ?? Date.now()) / 1000)
+      }
+    }, input.chatJid),
+    SEND_MESSAGE_TIMEOUT_MS,
+    "WhatsApp delete-for-me action timed out"
+  );
+  return { ok: true };
+}
+
+export async function editBaileysTextMessage(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+  chatJid: string;
+  providerMessageId: string;
+  text: string;
+  participantJid?: string | null;
+  mentionJids?: string[] | null;
+}) {
+  const runtime = await ensureOpenRuntimeForAction(input);
+  const key = buildMessageKey({
+    chatJid: input.chatJid,
+    providerMessageId: input.providerMessageId,
+    fromMe: true,
+    participantJid: input.participantJid
+  });
+  const mentions = Array.from(new Set((input.mentionJids ?? []).map((jid) => jid.trim()).filter(Boolean)));
+  await withTimeout(
+    runtime.socket.sendMessage(input.chatJid, {
+      text: input.text,
+      edit: key,
+      ...(mentions.length > 0 ? { mentions } : {})
+    }),
+    SEND_MESSAGE_TIMEOUT_MS,
+    "WhatsApp edit action timed out"
+  );
+  return { ok: true };
 }
 
 export async function sendBaileysMessage(input: {

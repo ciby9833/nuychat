@@ -53,12 +53,15 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               onAccountChange={vm.setAccountId}
               assignedToMeOnly={vm.assignedToMeOnly}
               onAssignedToMeOnlyChange={vm.setAssignedToMeOnly}
+              archivedOnly={vm.archivedOnly}
+              onArchivedOnlyChange={vm.setArchivedOnly}
               conversations={vm.conversations}
               contacts={vm.contacts}
               selectedConversationId={vm.selectedConversationId}
               loading={vm.loading}
               onSelectConversation={vm.selectConversation}
               onOpenContact={vm.openContactConversation}
+              onArchiveConversation={(conversationId, archive) => { void vm.archiveConversation(conversationId, archive); }}
               onSync={() => { void vm.triggerSync(); }}
               syncing={vm.syncing}
               syncEnabled={accountConnected}
@@ -87,6 +90,8 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               onRelease={() => { void vm.releaseCurrentConversation(); }}
               onReplyToMessage={(message) => vm.setQuotedMessage(message)}
               onSendReaction={(message, emoji) => { void vm.reactToMessage(message, emoji); }}
+              onEditMessage={(message, text) => { void vm.editMessage(message, text); }}
+              onDeleteMessage={(message, scope) => { void vm.deleteMessage(message, scope); }}
               onMentionClick={(mention) => setFocusedParticipantJid(mention.jid)}
               onSend={() => { void vm.sendCurrentMessage(); }}
               actionLoading={vm.actionLoading}

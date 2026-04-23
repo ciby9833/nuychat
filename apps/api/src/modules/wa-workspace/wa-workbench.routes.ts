@@ -16,6 +16,9 @@ import {
   enqueueWorkbenchMediaMessage,
   enqueueWorkbenchReaction,
   createWorkbenchLoginTask,
+  archiveWorkbenchConversation,
+  deleteWorkbenchMessage,
+  editWorkbenchMessage,
   enqueueWorkbenchTextMessage,
   forceAssignWorkbenchConversation,
   getWorkbenchConversationDetail,
@@ -81,13 +84,14 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
 
   app.get("/api/wa/workbench/conversations", async (req) => {
     const auth = requireWaSeatAccess(app, req);
-    const query = req.query as { accountId?: string; assignedToMe?: string; type?: string };
+    const query = req.query as { accountId?: string; assignedToMe?: string; type?: string; archived?: string };
     return withTenantTransaction(auth.tenantId, async (trx) =>
       listWorkbenchConversations(trx, {
         ...auth,
         accountId: query.accountId ?? null,
         assignedToMe: query.assignedToMe === "true",
-        type: query.type ?? null
+        type: query.type ?? null,
+        archived: query.archived === "true"
       })
     );
   });
@@ -146,6 +150,21 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
         role: auth.role,
         waConversationId,
         reason: body.reason ?? null
+      })
+    );
+  });
+
+  app.post("/api/wa/workbench/conversations/:waConversationId/archive", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { waConversationId } = req.params as { waConversationId: string };
+    const body = req.body as { archive?: boolean };
+    return withTenantTransaction(auth.tenantId, async (trx) =>
+      archiveWorkbenchConversation(trx, {
+        tenantId: auth.tenantId,
+        membershipId: auth.membershipId,
+        role: auth.role,
+        waConversationId,
+        archive: body.archive !== false
       })
     );
   });
@@ -258,6 +277,44 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     );
     await enqueueWaOutboundJob(result.queuePayload);
     return { jobId: result.jobId };
+  });
+
+  app.patch("/api/wa/workbench/messages/:waMessageId", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { waMessageId } = req.params as { waMessageId: string };
+    const body = req.body as { text?: string; mentionJids?: unknown };
+    if (typeof body.text !== "string" || !body.text.trim()) {
+      throw app.httpErrors.badRequest("text is required");
+    }
+    const mentionJids = Array.isArray(body.mentionJids)
+      ? Array.from(new Set(body.mentionJids.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)))
+      : [];
+    return withTenantTransaction(auth.tenantId, async (trx) =>
+      editWorkbenchMessage(trx, {
+        tenantId: auth.tenantId,
+        membershipId: auth.membershipId,
+        role: auth.role,
+        waMessageId,
+        text: body.text!.trim(),
+        mentionJids
+      })
+    );
+  });
+
+  app.delete("/api/wa/workbench/messages/:waMessageId", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { waMessageId } = req.params as { waMessageId: string };
+    const query = req.query as { scope?: string };
+    const scope = query.scope === "everyone" ? "everyone" : "me";
+    return withTenantTransaction(auth.tenantId, async (trx) =>
+      deleteWorkbenchMessage(trx, {
+        tenantId: auth.tenantId,
+        membershipId: auth.membershipId,
+        role: auth.role,
+        waMessageId,
+        scope
+      })
+    );
   });
 
   app.post("/api/wa/workbench/uploads", async (req, reply) => {

@@ -12,6 +12,9 @@ import { io } from "socket.io-client";
 import type { Session } from "../../types";
 import { API_BASE_URL } from "../../api";
 import {
+  archiveWaConversation,
+  deleteWaMessage,
+  editWaMessage,
   forceAssignWaConversation,
   getWaWorkbenchConversationDetail,
   listWaWorkbenchAccounts,
@@ -84,6 +87,7 @@ export function useWaWorkspace(session: Session | null) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
   const [assignedToMeOnly, setAssignedToMeOnly] = useState(false);
+  const [archivedOnly, setArchivedOnly] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -147,7 +151,8 @@ export function useWaWorkspace(session: Session | null) {
     try {
       const rows = await listWaWorkbenchConversations(session, {
         accountId,
-        assignedToMe: assignedToMeOnly
+        assignedToMe: assignedToMeOnly,
+        archived: archivedOnly
       });
       const visibleRows = rows.filter(isSeatVisibleWaConversation);
       setConversations(visibleRows);
@@ -162,7 +167,7 @@ export function useWaWorkspace(session: Session | null) {
     } finally {
       setLoading(false);
     }
-  }, [accountId, assignedToMeOnly, session]);
+  }, [accountId, archivedOnly, assignedToMeOnly, session]);
 
   const loadContacts = useCallback(async () => {
     if (!session?.waSeatEnabled || !accountId) {
@@ -441,6 +446,50 @@ export function useWaWorkspace(session: Session | null) {
     }
   }, [loadConversations, loadDetail, selectedConversationId, session]);
 
+  const archiveConversation = useCallback(async (waConversationId: string, archive: boolean) => {
+    if (!session) return;
+    setActionLoading(`archive:${waConversationId}`);
+    try {
+      await archiveWaConversation(session, waConversationId, archive);
+      await loadConversations();
+      if (selectedConversationId === waConversationId && archive && !archivedOnly) {
+        setSelectedConversationId(null);
+        setDetail(null);
+      } else if (selectedConversationId === waConversationId) {
+        await loadDetail();
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }, [archivedOnly, loadConversations, loadDetail, selectedConversationId, session]);
+
+  const editMessage = useCallback(async (message: WaMessageItem, text: string) => {
+    if (!session || !text.trim()) return;
+    setActionLoading(`edit:${message.waMessageId}`);
+    try {
+      await editWaMessage(session, message.waMessageId, {
+        text: text.trim(),
+        mentionJids: message.mentions?.map((item) => item.jid) ?? null
+      });
+      await loadConversations();
+      await loadDetail();
+    } finally {
+      setActionLoading(null);
+    }
+  }, [loadConversations, loadDetail, session]);
+
+  const deleteMessage = useCallback(async (message: WaMessageItem, scope: "me" | "everyone") => {
+    if (!session) return;
+    setActionLoading(`delete:${message.waMessageId}`);
+    try {
+      await deleteWaMessage(session, message.waMessageId, scope);
+      await loadConversations();
+      await loadDetail();
+    } finally {
+      setActionLoading(null);
+    }
+  }, [loadConversations, loadDetail, session]);
+
   // Wraps setSelectedConversationId so we can capture the conversation's
   // current unread count before detail loading resets it on the server.
   // Composer drafts are stored per account + conversation, so switching away and
@@ -546,6 +595,8 @@ export function useWaWorkspace(session: Session | null) {
     error,
     assignedToMeOnly,
     setAssignedToMeOnly,
+    archivedOnly,
+    setArchivedOnly,
     loadAccounts,
     loadConversations,
     loadDetail,
@@ -554,6 +605,9 @@ export function useWaWorkspace(session: Session | null) {
     uploadFiles,
     takeoverCurrentConversation,
     releaseCurrentConversation,
+    archiveConversation,
+    editMessage,
+    deleteMessage,
     hasMoreMessages,
     loadingMoreMessages,
     loadMoreMessages,

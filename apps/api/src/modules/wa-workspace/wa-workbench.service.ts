@@ -30,6 +30,12 @@ import {
   listWaContacts
 } from "./wa-conversation.repository.js";
 import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
+import {
+  archiveBaileysConversation,
+  deleteBaileysMessageForEveryone,
+  deleteBaileysMessageForMe,
+  editBaileysTextMessage
+} from "./runtime/baileys-send.service.js";
 
 async function assertConversationAccessible(
   trx: Knex.Transaction,
@@ -170,6 +176,7 @@ export async function listWorkbenchConversations(
     accountId?: string | null;
     assignedToMe?: boolean;
     type?: string | null;
+    archived?: boolean;
   }
 ) {
   const accounts = await listWorkbenchAccounts(trx, input);
@@ -178,8 +185,76 @@ export async function listWorkbenchConversations(
     tenantId: input.tenantId,
     waAccountIds,
     assignedToMembershipId: input.assignedToMe ? input.membershipId : null,
-    type: input.type ?? null
+    type: input.type ?? null,
+    archived: input.archived ?? false
   });
+}
+
+async function getWaAccountInstanceKey(
+  trx: Knex.Transaction,
+  input: { tenantId: string; waAccountId: string }
+) {
+  const account = await trx("wa_accounts")
+    .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+    .select("instance_key")
+    .first<Record<string, unknown> | undefined>();
+  const instanceKey = account?.instance_key ? String(account.instance_key) : null;
+  if (!instanceKey) throw new Error("WA account instance key not found");
+  return instanceKey;
+}
+
+async function getLatestProviderMessageForConversation(
+  trx: Knex.Transaction,
+  input: { tenantId: string; waConversationId: string }
+) {
+  const row = await trx("wa_messages")
+    .where({ tenant_id: input.tenantId, wa_conversation_id: input.waConversationId })
+    .whereNotNull("provider_message_id")
+    .select("provider_message_id", "direction", "participant_jid")
+    .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint) desc")
+    .first<Record<string, unknown> | undefined>();
+  if (!row?.provider_message_id) return null;
+  return {
+    providerMessageId: String(row.provider_message_id),
+    fromMe: String(row.direction) === "outbound",
+    participantJid: row.participant_jid ? String(row.participant_jid) : null
+  };
+}
+
+export async function archiveWorkbenchConversation(
+  trx: Knex.Transaction,
+  input: { tenantId: string; membershipId: string; role: string; waConversationId: string; archive: boolean }
+) {
+  await assertConversationAccessible(trx, input);
+  const conversation = await getConversationRow(trx, input);
+  const instanceKey = await getWaAccountInstanceKey(trx, {
+    tenantId: input.tenantId,
+    waAccountId: String(conversation.wa_account_id)
+  });
+  const lastMessage = await getLatestProviderMessageForConversation(trx, input);
+
+  await archiveBaileysConversation({
+    tenantId: input.tenantId,
+    waAccountId: String(conversation.wa_account_id),
+    instanceKey,
+    chatJid: String(conversation.chat_jid),
+    archive: input.archive,
+    lastMessage
+  });
+
+  await trx("wa_conversations")
+    .where({ tenant_id: input.tenantId, wa_conversation_id: input.waConversationId })
+    .update({
+      archived_at: input.archive ? trx.fn.now() : null,
+      archived_by_membership_id: input.archive ? input.membershipId : null,
+      updated_at: trx.fn.now()
+    });
+  await refreshWaConversationProjection(trx, {
+    tenantId: input.tenantId,
+    waAccountId: String(conversation.wa_account_id),
+    waConversationId: input.waConversationId
+  });
+  return { archived: input.archive };
 }
 
 export async function getWorkbenchConversationDetail(
@@ -553,6 +628,168 @@ export async function enqueueWorkbenchReaction(
       remoteJid: String(conversation.chat_jid)
     }
   };
+}
+
+export async function editWorkbenchMessage(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    membershipId: string;
+    role: string;
+    waMessageId: string;
+    text: string;
+    mentionJids?: string[] | null;
+  }
+) {
+  const message = await trx("wa_messages as m")
+    .join("wa_conversations as c", function joinConversation() {
+      this.on("c.wa_conversation_id", "=", "m.wa_conversation_id").andOn("c.tenant_id", "=", "m.tenant_id");
+    })
+    .where({ "m.tenant_id": input.tenantId, "m.wa_message_id": input.waMessageId })
+    .select(
+      "m.*",
+      "c.chat_jid",
+      "c.wa_conversation_id",
+      "c.wa_account_id"
+    )
+    .first<Record<string, unknown> | undefined>();
+  if (!message) throw new Error("Message not found");
+  await assertConversationAccessible(trx, {
+    tenantId: input.tenantId,
+    membershipId: input.membershipId,
+    role: input.role,
+    waConversationId: String(message.wa_conversation_id)
+  });
+  await assertCanReplyToWaConversation(trx, {
+    tenantId: input.tenantId,
+    waConversationId: String(message.wa_conversation_id),
+    membershipId: input.membershipId
+  });
+  if (String(message.direction) !== "outbound" || String(message.message_type) !== "text") {
+    throw new Error("Only outbound text messages can be edited");
+  }
+  const providerMessageId = message.provider_message_id ? String(message.provider_message_id) : null;
+  if (!providerMessageId) throw new Error("Message has not been sent to WhatsApp yet");
+  const instanceKey = await getWaAccountInstanceKey(trx, {
+    tenantId: input.tenantId,
+    waAccountId: String(message.wa_account_id)
+  });
+
+  await editBaileysTextMessage({
+    tenantId: input.tenantId,
+    waAccountId: String(message.wa_account_id),
+    instanceKey,
+    chatJid: String(message.chat_jid),
+    providerMessageId,
+    text: input.text,
+    participantJid: message.participant_jid ? String(message.participant_jid) : null,
+    mentionJids: input.mentionJids ?? null
+  });
+
+  await trx("wa_messages")
+    .where({ tenant_id: input.tenantId, wa_message_id: input.waMessageId })
+    .update({
+      body_text: input.text,
+      edited_at: trx.fn.now(),
+      edited_by_membership_id: input.membershipId,
+      provider_payload: JSON.stringify({
+        ...(typeof message.provider_payload === "string" ? JSON.parse(message.provider_payload) : (message.provider_payload as Record<string, unknown> | null) ?? {}),
+        editedByNuyChat: true,
+        mentionJids: input.mentionJids ?? []
+      }),
+      updated_at: trx.fn.now()
+    });
+  await refreshWaConversationProjection(trx, {
+    tenantId: input.tenantId,
+    waAccountId: String(message.wa_account_id),
+    waConversationId: String(message.wa_conversation_id)
+  });
+  return { edited: true };
+}
+
+export async function deleteWorkbenchMessage(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    membershipId: string;
+    role: string;
+    waMessageId: string;
+    scope: "me" | "everyone";
+  }
+) {
+  const message = await trx("wa_messages as m")
+    .join("wa_conversations as c", function joinConversation() {
+      this.on("c.wa_conversation_id", "=", "m.wa_conversation_id").andOn("c.tenant_id", "=", "m.tenant_id");
+    })
+    .where({ "m.tenant_id": input.tenantId, "m.wa_message_id": input.waMessageId })
+    .select("m.*", "c.chat_jid", "c.wa_conversation_id", "c.wa_account_id")
+    .first<Record<string, unknown> | undefined>();
+  if (!message) throw new Error("Message not found");
+  await assertConversationAccessible(trx, {
+    tenantId: input.tenantId,
+    membershipId: input.membershipId,
+    role: input.role,
+    waConversationId: String(message.wa_conversation_id)
+  });
+  await assertCanReplyToWaConversation(trx, {
+    tenantId: input.tenantId,
+    waConversationId: String(message.wa_conversation_id),
+    membershipId: input.membershipId
+  });
+  const providerMessageId = message.provider_message_id ? String(message.provider_message_id) : null;
+  if (!providerMessageId) throw new Error("Message has not been sent to WhatsApp yet");
+  const instanceKey = await getWaAccountInstanceKey(trx, {
+    tenantId: input.tenantId,
+    waAccountId: String(message.wa_account_id)
+  });
+
+  if (input.scope === "everyone") {
+    if (String(message.direction) !== "outbound") {
+      throw new Error("Only outbound messages can be deleted for everyone");
+    }
+    await deleteBaileysMessageForEveryone({
+      tenantId: input.tenantId,
+      waAccountId: String(message.wa_account_id),
+      instanceKey,
+      chatJid: String(message.chat_jid),
+      providerMessageId,
+      participantJid: message.participant_jid ? String(message.participant_jid) : null
+    });
+    await trx("wa_messages")
+      .where({ tenant_id: input.tenantId, wa_message_id: input.waMessageId })
+      .update({
+        delivery_status: "revoked",
+        body_text: null,
+        revoked_at: trx.fn.now(),
+        revoked_by_membership_id: input.membershipId,
+        updated_at: trx.fn.now()
+      });
+  } else {
+    await deleteBaileysMessageForMe({
+      tenantId: input.tenantId,
+      waAccountId: String(message.wa_account_id),
+      instanceKey,
+      chatJid: String(message.chat_jid),
+      providerMessageId,
+      fromMe: String(message.direction) === "outbound",
+      participantJid: message.participant_jid ? String(message.participant_jid) : null,
+      timestampMs: message.provider_ts ? Number(message.provider_ts) : null
+    });
+    await trx("wa_messages")
+      .where({ tenant_id: input.tenantId, wa_message_id: input.waMessageId })
+      .update({
+        deleted_for_me_at: trx.fn.now(),
+        deleted_for_me_by_membership_id: input.membershipId,
+        updated_at: trx.fn.now()
+      });
+  }
+
+  await refreshWaConversationProjection(trx, {
+    tenantId: input.tenantId,
+    waAccountId: String(message.wa_account_id),
+    waConversationId: String(message.wa_conversation_id)
+  });
+  return { deleted: true, scope: input.scope };
 }
 
 export async function loadMoreWorkbenchMessages(

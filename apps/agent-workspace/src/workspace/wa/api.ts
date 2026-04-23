@@ -16,12 +16,13 @@ export function listWaWorkbenchAccounts(session: Session) {
 
 export function listWaWorkbenchConversations(
   session: Session,
-  input?: { accountId?: string | null; assignedToMe?: boolean; type?: string | null }
+  input?: { accountId?: string | null; assignedToMe?: boolean; type?: string | null; archived?: boolean }
 ) {
   const params = new URLSearchParams();
   if (input?.accountId) params.set("accountId", input.accountId);
   if (input?.assignedToMe) params.set("assignedToMe", "true");
   if (input?.type) params.set("type", input.type);
+  if (input?.archived) params.set("archived", "true");
   return apiFetch<WaConversationItem[]>(`/api/wa/workbench/conversations${params.toString() ? `?${params}` : ""}`, session);
 }
 
@@ -41,6 +42,14 @@ export function releaseWaConversation(session: Session, waConversationId: string
   return apiPostJson<{ lockStatus: string }>(
     `/api/wa/workbench/conversations/${waConversationId}/release`,
     { reason: reason ?? null },
+    session
+  );
+}
+
+export function archiveWaConversation(session: Session, waConversationId: string, archive: boolean) {
+  return apiPostJson<{ archived: boolean }>(
+    `/api/wa/workbench/conversations/${waConversationId}/archive`,
+    { archive },
     session
   );
 }
@@ -105,6 +114,34 @@ export function sendWaReaction(
     input,
     session
   );
+}
+
+export function editWaMessage(
+  session: Session,
+  waMessageId: string,
+  input: { text: string; mentionJids?: string[] | null }
+) {
+  return fetch(`${API_BASE_URL}/api/wa/workbench/messages/${waMessageId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${session.accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text: input.text,
+      mentionJids: input.mentionJids ?? null
+    })
+  }).then((response) => {
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.json() as Promise<{ edited: boolean }>;
+  });
+}
+
+export function deleteWaMessage(session: Session, waMessageId: string, scope: "me" | "everyone") {
+  return fetch(`${API_BASE_URL}/api/wa/workbench/messages/${waMessageId}?scope=${encodeURIComponent(scope)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${session.accessToken}` }
+  }).then((response) => {
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.json() as Promise<{ deleted: boolean; scope: string }>;
+  });
 }
 
 export function loadMoreWaMessages(

@@ -42,6 +42,8 @@ type WaChatPanelProps = {
   onRelease: () => void;
   onReplyToMessage: (message: WaMessageItem) => void;
   onSendReaction: (message: WaMessageItem, emoji: string) => void;
+  onEditMessage: (message: WaMessageItem, text: string) => void;
+  onDeleteMessage: (message: WaMessageItem, scope: "me" | "everyone") => void;
   onMentionClick: (mention: WaMessageItem["mentions"][number]) => void;
   onSend: () => void;
   actionLoading: string | null;
@@ -531,6 +533,8 @@ export function WaChatPanel(props: WaChatPanelProps) {
     onRelease,
     onReplyToMessage,
     onSendReaction,
+    onEditMessage,
+    onDeleteMessage,
     onMentionClick,
     onSend,
     actionLoading
@@ -889,10 +893,39 @@ export function WaChatPanel(props: WaChatPanelProps) {
                             >
                               👍
                             </button>
+                            {mine && message.messageType === "text" && message.providerMessageId && message.deliveryStatus !== "revoked" ? (
+                              <button
+                                type="button"
+                                className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
+                                onClick={() => {
+                                  const nextText = window.prompt(t("wa.chat.editPrompt"), message.bodyText ?? "");
+                                  if (nextText != null && nextText.trim() && nextText.trim() !== (message.bodyText ?? "").trim()) {
+                                    onEditMessage(message, nextText.trim());
+                                  }
+                                }}
+                              >
+                                {t("wa.chat.edit")}
+                              </button>
+                            ) : null}
+                            {message.providerMessageId && message.deliveryStatus !== "revoked" ? (
+                              <button
+                                type="button"
+                                className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
+                                onClick={() => {
+                                  const scope = mine && window.confirm(t("wa.chat.deleteForEveryoneConfirm"))
+                                    ? "everyone"
+                                    : "me";
+                                  onDeleteMessage(message, scope);
+                                }}
+                              >
+                                {t("wa.chat.delete")}
+                              </button>
+                            ) : null}
                           </div>
                           {/* Timestamp + tick */}
                           <div className="ml-auto flex items-center gap-1.5 text-[11px] text-[#667781]">
                             <span>{bubbleTimestamp(message)}</span>
+                            {message.editedAt ? <span>{t("wa.chat.edited")}</span> : null}
                             {renderDeliveryStatus(message)}
                           </div>
                         </div>
