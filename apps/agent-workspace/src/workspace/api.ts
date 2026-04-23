@@ -97,15 +97,22 @@ function goToLogin(): void {
 
 // ─── Public fetch helpers ─────────────────────────────────────────────────────
 
-export async function apiFetch<T>(path: string, session: Session): Promise<T> {
-  let res = await fetch(`${API_BASE_URL}${path}`, {
-    headers: apiHeaders(session)
-  });
+export async function apiFetch<T>(path: string, session: Session, init?: RequestInit): Promise<T> {
+  const makeRequest = (s: Session) =>
+    fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        ...apiHeaders(s),
+        ...(init?.headers ?? {})
+      }
+    });
+
+  let res = await makeRequest(session);
 
   if (res.status === 401) {
     const next = await tryRefreshSession(session);
     if (next) {
-      res = await fetch(`${API_BASE_URL}${path}`, { headers: apiHeaders(next) });
+      res = await makeRequest(next);
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return res.json() as Promise<T>;
     }

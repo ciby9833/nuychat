@@ -64,6 +64,10 @@ function sortWaConversations(rows: WaConversationItem[]) {
   });
 }
 
+function buildNotificationBody(conversation: WaConversationItem) {
+  return conversation.lastMessagePreview || conversation.contactPhoneE164 || conversation.chatJid;
+}
+
 export function useWaWorkspace(session: Session | null) {
   const [accounts, setAccounts] = useState<WaAccountItem[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -97,6 +101,8 @@ export function useWaWorkspace(session: Session | null) {
   const loadDetailRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const accountIdRef = useRef<string | null>(null);
   const accountsRef = useRef<WaAccountItem[]>([]);
+  const archivedOnlyRef = useRef(false);
+  const notifiedConversationAtRef = useRef<Record<string, string>>({});
   const draftKeyRef = useRef<string | null>(null);
   const composerTextRef = useRef("");
   const selectedMentionsRef = useRef<SelectedMention[]>([]);
@@ -234,6 +240,7 @@ export function useWaWorkspace(session: Session | null) {
   loadDetailRef.current = loadDetail;
   accountIdRef.current = accountId;
   accountsRef.current = accounts;
+  archivedOnlyRef.current = archivedOnly;
   composerTextRef.current = composerText;
   selectedMentionsRef.current = selectedMentions;
   quotedMessageRef.current = quotedMessage;
@@ -254,6 +261,14 @@ export function useWaWorkspace(session: Session | null) {
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  useEffect(() => {
+    if (!session?.waSeatEnabled) return;
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      void Notification.requestPermission().catch(() => undefined);
+    }
+  }, [session?.waSeatEnabled]);
 
   useEffect(() => {
     const previousKey = draftKeyRef.current;
@@ -286,9 +301,15 @@ export function useWaWorkspace(session: Session | null) {
 
     socket.on("wa.conversation.updated", (event: { waAccountId: string; conversation: WaConversationItem }) => {
       const currentAccountId = accountIdRef.current;
+      const currentSelectedId = selectedConversationIdRef.current;
+      const isArchivedList = archivedOnlyRef.current;
       setConversations((current) => {
         const target = event.conversation;
         if (!isSeatVisibleWaConversation(target)) {
+          return current.filter((item) => item.waConversationId !== target.waConversationId);
+        }
+        const targetArchived = Boolean(target.archivedAt);
+        if (targetArchived !== isArchivedList) {
           return current.filter((item) => item.waConversationId !== target.waConversationId);
         }
         // If a specific account is selected and this event is for a different account, hide it.
@@ -307,8 +328,28 @@ export function useWaWorkspace(session: Session | null) {
         return sortWaConversations(scoped);
       });
 
+      const notifyKey = event.conversation.lastMessageAt ?? "";
+      const shouldNotify =
+        Notification.permission === "granted" &&
+        event.conversation.unreadCount > 0 &&
+        event.conversation.waConversationId !== currentSelectedId &&
+        notifiedConversationAtRef.current[event.conversation.waConversationId] !== notifyKey;
+      if (shouldNotify) {
+        notifiedConversationAtRef.current[event.conversation.waConversationId] = notifyKey;
+        const notification = new Notification(event.conversation.displayName || event.conversation.subject || event.conversation.contactName || event.conversation.chatJid, {
+          body: buildNotificationBody(event.conversation),
+          icon: "/favicon.ico",
+          tag: `wa:${event.conversation.waConversationId}`
+        });
+        notification.onclick = () => {
+          window.focus();
+          setSelectedConversationId(event.conversation.waConversationId);
+          notification.close();
+        };
+      }
+
       // Reload messages if this conversation is currently open (new message arrived).
-      if (event.conversation.waConversationId === selectedConversationIdRef.current) {
+      if (event.conversation.waConversationId === currentSelectedId) {
         void loadDetailRef.current();
       }
     });

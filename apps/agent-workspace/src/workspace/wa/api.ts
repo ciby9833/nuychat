@@ -121,27 +121,22 @@ export function editWaMessage(
   waMessageId: string,
   input: { text: string; mentionJids?: string[] | null }
 ) {
-  return fetch(`${API_BASE_URL}/api/wa/workbench/messages/${waMessageId}`, {
+  return apiFetch<{ edited: boolean }>(`/api/wa/workbench/messages/${waMessageId}`, session, {
     method: "PATCH",
-    headers: { Authorization: `Bearer ${session.accessToken}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       text: input.text,
       mentionJids: input.mentionJids ?? null
     })
-  }).then((response) => {
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return response.json() as Promise<{ edited: boolean }>;
   });
 }
 
 export function deleteWaMessage(session: Session, waMessageId: string, scope: "me" | "everyone") {
-  return fetch(`${API_BASE_URL}/api/wa/workbench/messages/${waMessageId}?scope=${encodeURIComponent(scope)}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${session.accessToken}` }
-  }).then((response) => {
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return response.json() as Promise<{ deleted: boolean; scope: string }>;
-  });
+  return apiFetch<{ deleted: boolean; scope: string }>(
+    `/api/wa/workbench/messages/${waMessageId}?scope=${encodeURIComponent(scope)}`,
+    session,
+    { method: "DELETE" }
+  );
 }
 
 export function loadMoreWaMessages(
