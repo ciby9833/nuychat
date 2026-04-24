@@ -101,6 +101,7 @@ export function useWaWorkspace(session: Session | null) {
   const loadDetailRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const accountIdRef = useRef<string | null>(null);
   const accountsRef = useRef<WaAccountItem[]>([]);
+  const conversationsRef = useRef<WaConversationItem[]>([]);
   const archivedOnlyRef = useRef(false);
   const notifiedConversationAtRef = useRef<Record<string, string>>({});
   const draftKeyRef = useRef<string | null>(null);
@@ -200,16 +201,6 @@ export function useWaWorkspace(session: Session | null) {
       setDetail(next);
       // Assume there may be more if exactly 100 messages are returned (the default limit).
       setHasMoreMessages(next.messages.length >= 100);
-      // Immediately zero out the unread badge in the conversation list so it doesn't
-      // wait for the server-side wa.conversation.updated socket event (which might
-      // arrive during a brief socket reconnect window and be missed).
-      setConversations((current) =>
-        current.map((item) =>
-          item.waConversationId === selectedConversationId
-            ? { ...item, unreadCount: 0 }
-            : item
-        )
-      );
     } catch (nextError) {
       setError((nextError as Error).message);
       setDetail(null);
@@ -240,6 +231,7 @@ export function useWaWorkspace(session: Session | null) {
   loadDetailRef.current = loadDetail;
   accountIdRef.current = accountId;
   accountsRef.current = accounts;
+  conversationsRef.current = conversations;
   archivedOnlyRef.current = archivedOnly;
   composerTextRef.current = composerText;
   selectedMentionsRef.current = selectedMentions;
@@ -303,6 +295,8 @@ export function useWaWorkspace(session: Session | null) {
       const currentAccountId = accountIdRef.current;
       const currentSelectedId = selectedConversationIdRef.current;
       const isArchivedList = archivedOnlyRef.current;
+      const previousConversation =
+        conversationsRef.current.find((item) => item.waConversationId === event.conversation.waConversationId) ?? null;
       setConversations((current) => {
         const target = event.conversation;
         if (!isSeatVisibleWaConversation(target)) {
@@ -317,20 +311,24 @@ export function useWaWorkspace(session: Session | null) {
           ? current.filter((item) => item.waConversationId !== target.waConversationId)
           : (() => {
               const next = current.filter((item) => item.waConversationId !== target.waConversationId);
-              // Preserve the local unreadCount=0 if we already read this conversation.
-              const currentSelected = selectedConversationIdRef.current;
-              const incomingConv = currentSelected === target.waConversationId
-                ? { ...target, unreadCount: 0 }  // don't let server re-badge a currently-open conversation
-                : target;
-              next.unshift(incomingConv);
+              next.unshift(target);
               return next;
             })();
         return sortWaConversations(scoped);
       });
 
       const notifyKey = event.conversation.lastMessageAt ?? "";
+      const previousLastMessageAt = previousConversation?.lastMessageAt ?? null;
+      const previousUnreadCount = previousConversation?.unreadCount ?? 0;
+      const hasLaterMessage =
+        Boolean(notifyKey) &&
+        (!previousLastMessageAt || Date.parse(notifyKey) > Date.parse(previousLastMessageAt));
+      const unreadIncreased = event.conversation.unreadCount > previousUnreadCount;
       const shouldNotify =
         Notification.permission === "granted" &&
+        (document.visibilityState === "hidden" || !document.hasFocus()) &&
+        hasLaterMessage &&
+        unreadIncreased &&
         event.conversation.unreadCount > 0 &&
         event.conversation.waConversationId !== currentSelectedId &&
         notifiedConversationAtRef.current[event.conversation.waConversationId] !== notifyKey;

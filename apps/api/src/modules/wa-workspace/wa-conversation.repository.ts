@@ -1377,42 +1377,6 @@ export async function patchWaConversationChatState(
   return row ? mapConversation(row as Record<string, unknown>) : null;
 }
 
-export async function incrementWaConversationUnread(
-  trx: Knex.Transaction,
-  input: { tenantId: string; waAccountId: string; chatJid: string }
-) {
-  const [row] = await trx("wa_conversations")
-    .where({
-      tenant_id: input.tenantId,
-      wa_account_id: input.waAccountId,
-      chat_jid: input.chatJid
-    })
-    .update({
-      unread_count: trx.raw("coalesce(unread_count, 0) + 1"),
-      updated_at: trx.fn.now()
-    })
-    .returning("*");
-  return row ? mapConversation(row as Record<string, unknown>) : null;
-}
-
-export async function resetWaConversationUnread(
-  trx: Knex.Transaction,
-  input: { tenantId: string; waAccountId: string; chatJid: string }
-) {
-  const [row] = await trx("wa_conversations")
-    .where({
-      tenant_id: input.tenantId,
-      wa_account_id: input.waAccountId,
-      chat_jid: input.chatJid
-    })
-    .update({
-      unread_count: 0,
-      updated_at: trx.fn.now()
-    })
-    .returning("*");
-  return row ? mapConversation(row as Record<string, unknown>) : null;
-}
-
 export async function patchWaConversationContactProfile(
   trx: Knex.Transaction,
   input: {

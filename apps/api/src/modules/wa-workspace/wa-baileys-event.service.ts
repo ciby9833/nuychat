@@ -17,7 +17,6 @@ import {
 } from "./runtime/baileys-message.mapper.js";
 import {
   findWaMessageByProviderId,
-  incrementWaConversationUnread,
   insertRawEvent,
   insertWaMessage,
   insertWaMessageAttachment,
@@ -130,14 +129,6 @@ async function ingestSingleMessage(
     providerPayload: input.message as unknown as Record<string, unknown>,
     deliveryStatus: mapBaileysDeliveryStatus(input.message.status) ?? "received"
   });
-
-  if (mapped.direction === "inbound") {
-    await incrementWaConversationUnread(trx, {
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      chatJid: remoteJid
-    });
-  }
 
   await resolveGapsForArrivedMessage(trx, {
     tenantId: input.tenantId,

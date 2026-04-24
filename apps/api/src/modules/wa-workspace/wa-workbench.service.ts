@@ -25,7 +25,6 @@ import {
   insertWaMessage,
   insertWaMessageAttachment,
   insertWaMessageReaction,
-  resetWaConversationUnread,
   listWaConversations,
   listWaContacts
 } from "./wa-conversation.repository.js";
@@ -328,16 +327,9 @@ export async function getWorkbenchConversationDetail(
       }
     }
 
-    await resetWaConversationUnread(trx, {
-      tenantId: input.tenantId,
-      waAccountId: conversation.waAccountId,
-      chatJid: conversation.chatJid
-    });
-    await refreshWaConversationProjection(trx, {
-      tenantId: input.tenantId,
-      waAccountId: conversation.waAccountId,
-      waConversationId: input.waConversationId
-    });
+    // Do not mutate unread_count locally here.
+    // The source of truth is WhatsApp/Baileys chat unreadCount, which will
+    // arrive through chats.update/upsert after markConversationRead().
     conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId);
   }
 
