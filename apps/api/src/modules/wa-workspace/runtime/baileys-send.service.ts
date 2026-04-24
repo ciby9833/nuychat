@@ -215,6 +215,47 @@ function buildMessageKey(input: {
   };
 }
 
+function normalizeStoredMessageKey(
+  storedKey: Record<string, unknown> | null | undefined,
+  fallback: {
+    chatJid: string;
+    providerMessageId: string;
+    fromMe: boolean;
+    participantJid?: string | null;
+  }
+): WAMessageKey {
+  if (storedKey && typeof storedKey === "object") {
+    const remoteJid = typeof storedKey.remoteJid === "string" && storedKey.remoteJid.trim()
+      ? storedKey.remoteJid.trim()
+      : fallback.chatJid;
+    const id = typeof storedKey.id === "string" && storedKey.id.trim()
+      ? storedKey.id.trim()
+      : fallback.providerMessageId;
+    const fromMe = typeof storedKey.fromMe === "boolean" ? storedKey.fromMe : fallback.fromMe;
+    const participant = typeof storedKey.participant === "string" && storedKey.participant.trim()
+      ? storedKey.participant.trim()
+      : (fallback.participantJid ?? undefined);
+
+    return {
+      remoteJid,
+      id,
+      fromMe,
+      ...(participant ? { participant } : {}),
+      ...(typeof storedKey.remoteJidAlt === "string" && storedKey.remoteJidAlt.trim()
+        ? { remoteJidAlt: storedKey.remoteJidAlt.trim() }
+        : {}),
+      ...(typeof storedKey.participantAlt === "string" && storedKey.participantAlt.trim()
+        ? { participantAlt: storedKey.participantAlt.trim() }
+        : {}),
+      ...(typeof storedKey.addressingMode === "string" && storedKey.addressingMode.trim()
+        ? { addressingMode: storedKey.addressingMode.trim() }
+        : {})
+    } as WAMessageKey;
+  }
+
+  return buildMessageKey(fallback);
+}
+
 async function ensureOpenRuntimeForAction(input: {
   tenantId: string;
   waAccountId: string;
@@ -275,9 +316,10 @@ export async function deleteBaileysMessageForEveryone(input: {
   chatJid: string;
   providerMessageId: string;
   participantJid?: string | null;
+  storedKey?: Record<string, unknown> | null;
 }) {
   const runtime = await ensureOpenRuntimeForAction(input);
-  const key = buildMessageKey({
+  const key = normalizeStoredMessageKey(input.storedKey, {
     chatJid: input.chatJid,
     providerMessageId: input.providerMessageId,
     fromMe: true,
@@ -300,9 +342,10 @@ export async function deleteBaileysMessageForMe(input: {
   fromMe: boolean;
   participantJid?: string | null;
   timestampMs?: number | null;
+  storedKey?: Record<string, unknown> | null;
 }) {
   const runtime = await ensureOpenRuntimeForAction(input);
-  const key = buildMessageKey({
+  const key = normalizeStoredMessageKey(input.storedKey, {
     chatJid: input.chatJid,
     providerMessageId: input.providerMessageId,
     fromMe: input.fromMe,
@@ -331,9 +374,10 @@ export async function editBaileysTextMessage(input: {
   text: string;
   participantJid?: string | null;
   mentionJids?: string[] | null;
+  storedKey?: Record<string, unknown> | null;
 }) {
   const runtime = await ensureOpenRuntimeForAction(input);
-  const key = buildMessageKey({
+  const key = normalizeStoredMessageKey(input.storedKey, {
     chatJid: input.chatJid,
     providerMessageId: input.providerMessageId,
     fromMe: true,

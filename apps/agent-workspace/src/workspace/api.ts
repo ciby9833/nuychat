@@ -98,14 +98,24 @@ function goToLogin(): void {
 // ─── Public fetch helpers ─────────────────────────────────────────────────────
 
 export async function apiFetch<T>(path: string, session: Session, init?: RequestInit): Promise<T> {
-  const makeRequest = (s: Session) =>
-    fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        ...apiHeaders(s),
-        ...(init?.headers ?? {})
-      }
+  const makeRequest = (s: Session) => {
+    const mergedHeaders = new Headers({
+      ...apiHeaders(s),
+      ...(init?.headers ?? {})
     });
+
+    // Some gateways/frameworks reject DELETE/GET requests that declare
+    // `application/json` but do not actually carry a body.
+    if (!init?.body && !mergedHeaders.has("X-Force-Content-Type")) {
+      mergedHeaders.delete("Content-Type");
+    }
+    mergedHeaders.delete("X-Force-Content-Type");
+
+    return fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: mergedHeaders
+    });
+  };
 
   let res = await makeRequest(session);
 

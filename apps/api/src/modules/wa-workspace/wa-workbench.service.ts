@@ -68,6 +68,19 @@ async function getConversationRow(
   return conversation;
 }
 
+function extractStoredMessageKey(providerPayload: unknown): Record<string, unknown> | null {
+  try {
+    const payload = typeof providerPayload === "string"
+      ? JSON.parse(providerPayload)
+      : (providerPayload as Record<string, unknown> | null);
+    return payload?.key && typeof payload.key === "object"
+      ? (payload.key as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function listWorkbenchAccounts(
   trx: Knex.Transaction,
   input: { tenantId: string; membershipId: string; role: string }
@@ -683,7 +696,8 @@ export async function editWorkbenchMessage(
     providerMessageId,
     text: input.text,
     participantJid: message.participant_jid ? String(message.participant_jid) : null,
-    mentionJids: input.mentionJids ?? null
+    mentionJids: input.mentionJids ?? null,
+    storedKey: extractStoredMessageKey(message.provider_payload)
   });
 
   await trx("wa_messages")
@@ -753,7 +767,8 @@ export async function deleteWorkbenchMessage(
       instanceKey,
       chatJid: String(message.chat_jid),
       providerMessageId,
-      participantJid: message.participant_jid ? String(message.participant_jid) : null
+      participantJid: message.participant_jid ? String(message.participant_jid) : null,
+      storedKey: extractStoredMessageKey(message.provider_payload)
     });
     await trx("wa_messages")
       .where({ tenant_id: input.tenantId, wa_message_id: input.waMessageId })
@@ -773,7 +788,8 @@ export async function deleteWorkbenchMessage(
       providerMessageId,
       fromMe: String(message.direction) === "outbound",
       participantJid: message.participant_jid ? String(message.participant_jid) : null,
-      timestampMs: message.provider_ts ? Number(message.provider_ts) : null
+      timestampMs: message.provider_ts ? Number(message.provider_ts) : null,
+      storedKey: extractStoredMessageKey(message.provider_payload)
     });
     await trx("wa_messages")
       .where({ tenant_id: input.tenantId, wa_message_id: input.waMessageId })
