@@ -568,10 +568,7 @@ export async function listWaConversations(
 ) {
   if (input.waAccountIds.length === 0) return [];
   const query = buildConversationBaseQuery(trx, input.tenantId)
-    .whereIn("c.wa_account_id", input.waAccountIds)
-    .andWhere((builder) => {
-      builder.whereNotNull("c.last_message_at").orWhere("c.message_cursor", ">", 0);
-    });
+    .whereIn("c.wa_account_id", input.waAccountIds);
 
   if (input.assignedToMembershipId) {
     query.andWhere("c.current_replier_membership_id", input.assignedToMembershipId);
@@ -1070,7 +1067,11 @@ export async function getConversationMessages(
     const senderDisplayName =
       String(conversationRow?.conversation_type ?? "") === "group"
         ? (
-            (participantJid ? memberNameByParticipant.get(participantJid) : null) ??
+            (participantJid
+              ? Array.from(memberMentionAliases(participantJid))
+                  .map((alias) => memberNameByAlias.get(alias))
+                  .find(Boolean) ?? null
+              : null) ??
             senderProfile?.displayName ??
             payloadPushName ??
             payloadAltPhone ??
@@ -1329,8 +1330,8 @@ export async function getConversationMembers(
         displayName:
           (row.display_name ? String(row.display_name) : null) ??
           profile?.displayName ??
-          profile?.phoneE164 ??
           fallbackByParticipant.get(participantJid)?.displayName ??
+          profile?.phoneE164 ??
           fallbackByParticipant.get(participantJid)?.phone ??
           null,
         isAdmin: Boolean(row.is_admin),

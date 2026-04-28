@@ -73,6 +73,9 @@ export interface WaProviderAdapter {
       id: string;
       participant?: string | null;
       fromMe?: boolean;
+      remoteJidAlt?: string | null;
+      participantAlt?: string | null;
+      addressingMode?: string | null;
     }>;
   }): Promise<{ ok: true }>;
   sendText(input: {

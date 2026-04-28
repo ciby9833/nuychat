@@ -26,7 +26,8 @@ import {
   insertWaMessageAttachment,
   insertWaMessageReaction,
   listWaConversations,
-  listWaContacts
+  listWaContacts,
+  patchWaConversationChatState
 } from "./wa-conversation.repository.js";
 import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
 import {
@@ -89,7 +90,10 @@ function buildStoredReadKey(providerPayload: unknown) {
     remoteJid,
     id,
     participant: typeof key?.participant === "string" ? key.participant : null,
-    fromMe: Boolean(key?.fromMe)
+    fromMe: Boolean(key?.fromMe),
+    remoteJidAlt: typeof key?.remoteJidAlt === "string" ? key.remoteJidAlt : null,
+    participantAlt: typeof key?.participantAlt === "string" ? key.participantAlt : null,
+    addressingMode: typeof key?.addressingMode === "string" ? key.addressingMode : null
   };
 }
 
@@ -312,7 +316,15 @@ export async function getWorkbenchConversationDetail(
     if (account?.instance_key && unreadInboundRows.length > 0) {
       const keys = unreadInboundRows
         .map((row) => buildStoredReadKey(row.provider_payload))
-        .filter((item): item is { remoteJid: string; id: string; participant: string | null; fromMe: boolean } => Boolean(item));
+        .filter((item): item is {
+          remoteJid: string;
+          id: string;
+          participant: string | null;
+          fromMe: boolean;
+          remoteJidAlt: string | null;
+          participantAlt: string | null;
+          addressingMode: string | null;
+        } => Boolean(item));
       if (keys.length > 0) {
         try {
           await waProviderAdapter.markConversationRead({
@@ -320,6 +332,18 @@ export async function getWorkbenchConversationDetail(
             waAccountId: conversation.waAccountId,
             instanceKey: String(account.instance_key),
             keys
+          });
+          await patchWaConversationChatState(trx, {
+            tenantId: input.tenantId,
+            waAccountId: conversation.waAccountId,
+            chatJid: conversation.chatJid,
+            conversationType: conversation.conversationType,
+            unreadCount: 0
+          });
+          await refreshWaConversationProjection(trx, {
+            tenantId: input.tenantId,
+            waAccountId: conversation.waAccountId,
+            waConversationId: input.waConversationId
           });
         } catch (error) {
           console.warn("[wa-workbench] mark read failed", {

@@ -32,9 +32,7 @@ type WaChatPanelProps = {
   onLoadMoreMessages: () => void;
   composerText: string;
   onComposerTextChange: (value: string) => void;
-  selectedMentions: ComposerMention[];
   onAddMention: (mention: ComposerMention) => void;
-  onRemoveMention: (jid: string) => void;
   quotedMessage: WaMessageItem | null;
   onClearQuoted: () => void;
   uploadingAttachments: Array<{ localId: string; fileName: string; mimeType: string; url: string }>;

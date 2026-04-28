@@ -63,6 +63,9 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
       id: string;
       participant?: string | null;
       fromMe?: boolean;
+      remoteJidAlt?: string | null;
+      participantAlt?: string | null;
+      addressingMode?: string | null;
     }>;
   }): Promise<{ ok: true }> {
     if (!input.tenantId || !input.waAccountId) {

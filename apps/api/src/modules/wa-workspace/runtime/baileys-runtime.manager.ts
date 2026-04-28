@@ -979,6 +979,9 @@ export async function markBaileysConversationRead(input: {
     id: string;
     participant?: string | null;
     fromMe?: boolean;
+    remoteJidAlt?: string | null;
+    participantAlt?: string | null;
+    addressingMode?: string | null;
   }>;
 }): Promise<{ ok: true }> {
   const keys = input.keys
@@ -987,7 +990,10 @@ export async function markBaileysConversationRead(input: {
       remoteJid: item.remoteJid,
       id: item.id,
       participant: item.participant ?? undefined,
-      fromMe: item.fromMe ?? false
+      fromMe: item.fromMe ?? false,
+      ...(item.remoteJidAlt ? { remoteJidAlt: item.remoteJidAlt } : {}),
+      ...(item.participantAlt ? { participantAlt: item.participantAlt } : {}),
+      ...(item.addressingMode ? { addressingMode: item.addressingMode } : {})
     }));
   if (keys.length === 0) {
     return { ok: true };
