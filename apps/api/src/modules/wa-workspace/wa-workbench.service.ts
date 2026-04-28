@@ -28,6 +28,7 @@ import {
   insertWaMessageReaction,
   listWaConversations,
   listWaContacts,
+  reconcileWaConversationWithSibling,
   patchWaConversationChatState
 } from "./wa-conversation.repository.js";
 import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
@@ -446,6 +447,18 @@ export async function getWorkbenchConversationDetail(
     getConversationMembers(trx, input.tenantId, input.waConversationId)
   ]);
   let hydratedMessages = messages;
+  let hydratedMembers = members;
+  if (hydratedMessages.length === 0) {
+    const reconciled = await reconcileWaConversationWithSibling(trx, {
+      tenantId: input.tenantId,
+      waConversationId: input.waConversationId
+    });
+    if (reconciled) {
+      hydratedMessages = await getConversationMessages(trx, input.tenantId, input.waConversationId);
+      hydratedMembers = await getConversationMembers(trx, input.tenantId, input.waConversationId);
+      conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId) ?? conversation;
+    }
+  }
   if (hydratedMessages.length === 0) {
     const inserted = await backfillConversationMessagesFromProviderHistory(trx, {
       tenantId: input.tenantId,
@@ -461,7 +474,7 @@ export async function getWorkbenchConversationDetail(
   return {
     conversation,
     messages: hydratedMessages,
-    members,
+    members: hydratedMembers,
     permissions: {
       canReply:
         !conversation.currentReplierMembershipId ||

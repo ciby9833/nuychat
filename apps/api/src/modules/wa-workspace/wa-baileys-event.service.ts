@@ -245,30 +245,37 @@ export async function ingestBaileysMessagesUpsert(input: {
   messages: WAMessage[];
   type: string;
 }) {
-  const touchedResults = await withTenantTransaction(input.tenantId, async (trx) => {
-    const touched: Array<{
-      waConversationId: string;
-      waMessageId: string;
-      direction: string;
-      messageType: string;
-      bodyText: string | null;
-      senderDisplayName: string | null;
-      participantJid: string | null;
-      providerMessageId: string;
-    }> = [];
-    for (const message of input.messages) {
-      const result = await ingestSingleMessage(trx, {
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        message,
-        eventType: `MESSAGES_UPSERT:${input.type}`
+  // Process each message in its own transaction so a single bad JID
+  // (e.g. @newsletter) cannot roll back the entire batch.
+  const touchedResults: Array<{
+    waConversationId: string;
+    waMessageId: string;
+    direction: string;
+    messageType: string;
+    bodyText: string | null;
+    senderDisplayName: string | null;
+    participantJid: string | null;
+    providerMessageId: string;
+  }> = [];
+  for (const message of input.messages) {
+    try {
+      const result = await withTenantTransaction(input.tenantId, async (trx) => {
+        return ingestSingleMessage(trx, {
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          message,
+          eventType: `MESSAGES_UPSERT:${input.type}`
+        });
       });
       if (result) {
-        touched.push(result);
+        touchedResults.push(result);
       }
+    } catch (err) {
+      // Log and skip individual message failures so the rest of the batch succeeds.
+      const jid = (message.key?.remoteJid ?? "unknown");
+      console.warn(`[ingestBaileysMessagesUpsert] skipping message from jid=${jid}:`, err);
     }
-    return touched;
-  });
+  }
   const conversationIds = Array.from(new Set(touchedResults.map((item) => item.waConversationId)));
   const conversations = new Map<string, Awaited<ReturnType<typeof emitWaConversationProjection>>>();
   for (const waConversationId of conversationIds) {

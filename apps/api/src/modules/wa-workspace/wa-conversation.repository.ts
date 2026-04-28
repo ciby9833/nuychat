@@ -41,12 +41,27 @@ function jidFromPhoneE164(phoneE164: string | null) {
   return digits ? `${digits}@s.whatsapp.net` : null;
 }
 
+function isGroupChatJid(jid: string | null) {
+  return Boolean(jid?.endsWith("@g.us"));
+}
+
 function isNonConversationJid(jid: string | null) {
   return jid === "status@broadcast" || Boolean(jid?.endsWith("@newsletter"));
 }
 
+function normalizeConversationTypeValue(input: {
+  chatJid?: string | null;
+  conversationType?: string | null;
+}) {
+  if (isGroupChatJid(asString(input.chatJid ?? null))) return "group";
+  return asString(input.conversationType ?? null) ?? "direct";
+}
+
 function deriveConversationDisplayName(row: Record<string, unknown>) {
-  const conversationType = asString(row.conversation_type);
+  const conversationType = normalizeConversationTypeValue({
+    chatJid: asString(row.chat_jid),
+    conversationType: asString(row.conversation_type)
+  });
   if (conversationType === "group") {
     return (
       asString(row.subject) ??
@@ -64,16 +79,39 @@ function deriveConversationDisplayName(row: Record<string, unknown>) {
 }
 
 function deriveConversationListCategory(conversationType: string | null) {
-  return conversationType === "group" ? "groups" : "chats";
+  return normalizeConversationTypeValue({ conversationType }) === "group" ? "groups" : "chats";
 }
 
 function deriveConversationSecondaryLabel(input: {
   conversationType: string | null;
+  chatJid?: string | null;
   contactPhoneE164: string | null;
   contactJid: string | null;
 }) {
-  if (input.conversationType === "group") return null;
+  if (normalizeConversationTypeValue({
+    chatJid: input.chatJid,
+    conversationType: input.conversationType
+  }) === "group") return null;
   return input.contactPhoneE164 ?? input.contactJid ?? null;
+}
+
+function buildDirectConversationAliasJids(input: {
+  chatJid?: string | null;
+  contactJid?: string | null;
+  contactPhoneE164?: string | null;
+}) {
+  const phoneE164 =
+    normalizePhoneE164(input.contactPhoneE164 ?? null) ??
+    derivePhoneE164FromJid(asString(input.contactJid ?? null)) ??
+    derivePhoneE164FromJid(asString(input.chatJid ?? null));
+  return {
+    phoneE164,
+    aliasJids: Array.from(new Set([
+      asString(input.chatJid ?? null),
+      asString(input.contactJid ?? null),
+      jidFromPhoneE164(phoneE164)
+    ].filter(Boolean) as string[]))
+  };
 }
 
 type ResolvedContactProfile = {
@@ -159,14 +197,17 @@ function resolveContactProfile(
 }
 
 function mapConversation(row: Record<string, unknown>) {
-  const conversationType = asString(row.conversation_type);
+  const conversationType = normalizeConversationTypeValue({
+    chatJid: asString(row.chat_jid),
+    conversationType: asString(row.conversation_type)
+  });
   const contactJid = row.contact_jid ? String(row.contact_jid) : null;
   const contactPhoneE164 = row.contact_phone_e164 ? String(row.contact_phone_e164) : null;
   return {
     waConversationId: String(row.wa_conversation_id),
     waAccountId: String(row.wa_account_id),
     chatJid: String(row.chat_jid),
-    conversationType: String(row.conversation_type),
+    conversationType,
     listCategory: deriveConversationListCategory(conversationType),
     subject: row.subject ? String(row.subject) : null,
     displayName: deriveConversationDisplayName(row),
@@ -175,6 +216,7 @@ function mapConversation(row: Record<string, unknown>) {
     contactPhoneE164,
     secondaryLabel: deriveConversationSecondaryLabel({
       conversationType,
+      chatJid: asString(row.chat_jid),
       contactPhoneE164,
       contactJid
     }),
@@ -542,7 +584,11 @@ export async function getWaConversationById(trx: Knex.Transaction, tenantId: str
     fallbackPhone
   ]);
 
-  const isDirect = String(row.conversation_type) === "direct";
+  const normalizedConversationType = normalizeConversationTypeValue({
+    chatJid: asString(row.chat_jid),
+    conversationType: String(row.conversation_type)
+  });
+  const isDirect = normalizedConversationType === "direct";
   const contactName = asString(row.contact_name) ?? contactProfile?.displayName ?? (isDirect ? fallbackPushName : null);
   const contactPhoneE164 = asString(row.contact_phone_e164) ?? contactProfile?.phoneE164 ?? (isDirect ? fallbackPhone : null);
   const displayName =
@@ -555,7 +601,8 @@ export async function getWaConversationById(trx: Knex.Transaction, tenantId: str
     contactPhoneE164,
     displayName,
     secondaryLabel: deriveConversationSecondaryLabel({
-      conversationType: String(row.conversation_type),
+      conversationType: normalizedConversationType,
+      chatJid: asString(row.chat_jid),
       contactPhoneE164,
       contactJid: asString(row.contact_jid)
     })
@@ -660,7 +707,11 @@ export async function listWaConversations(
     ...(function mapConversationRow() {
       const record = row as Record<string, unknown>;
       const waAccountId = String(record.wa_account_id);
-      const isDirect = String(record.conversation_type) === "direct";
+      const normalizedConversationType = normalizeConversationTypeValue({
+        chatJid: asString(record.chat_jid),
+        conversationType: String(record.conversation_type)
+      });
+      const isDirect = normalizedConversationType === "direct";
       const profile = resolveContactProfile(contactProfiles, waAccountId, [
         asString(record.contact_jid),
         asString(record.chat_jid),
@@ -686,7 +737,8 @@ export async function listWaConversations(
         contactPhoneE164,
         displayName,
         secondaryLabel: deriveConversationSecondaryLabel({
-          conversationType: String(record.conversation_type),
+          conversationType: normalizedConversationType,
+          chatJid: asString(record.chat_jid),
           contactPhoneE164,
           contactJid: asString(record.contact_jid)
         }),
@@ -742,7 +794,11 @@ export async function getWaConversationListItem(
     fallbackPhone
   ]);
 
-  const isDirect = String(row.conversation_type) === "direct";
+  const normalizedConversationType = normalizeConversationTypeValue({
+    chatJid: asString(row.chat_jid),
+    conversationType: String(row.conversation_type)
+  });
+  const isDirect = normalizedConversationType === "direct";
   const contactName = asString(row.contact_name) ?? contactProfile?.displayName ?? (isDirect ? fallbackPushName : null);
   const contactPhoneE164 = asString(row.contact_phone_e164) ?? contactProfile?.phoneE164 ?? (isDirect ? fallbackPhone : null);
   const displayName =
@@ -755,7 +811,8 @@ export async function getWaConversationListItem(
     contactPhoneE164,
     displayName,
     secondaryLabel: deriveConversationSecondaryLabel({
-      conversationType: String(row.conversation_type),
+      conversationType: normalizedConversationType,
+      chatJid: asString(row.chat_jid),
       contactPhoneE164,
       contactJid: asString(row.contact_jid)
     }),
@@ -1519,6 +1576,155 @@ export async function patchWaConversationMemberProfile(
     .update(updates)
     .returning("*");
   return rows;
+}
+
+export async function reconcileWaConversationWithSibling(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waConversationId: string;
+  }
+) {
+  const current = await trx("wa_conversations")
+    .where({ tenant_id: input.tenantId, wa_conversation_id: input.waConversationId })
+    .first<Record<string, unknown> | undefined>();
+  if (!current) return false;
+
+  const currentId = String(current.wa_conversation_id);
+  const normalizedType = normalizeConversationTypeValue({
+    chatJid: asString(current.chat_jid),
+    conversationType: asString(current.conversation_type)
+  });
+
+  const currentMessageRow = await trx("wa_messages")
+    .where({ tenant_id: input.tenantId, wa_conversation_id: currentId })
+    .count<{ count: string }>("wa_message_id as count")
+    .first();
+  const currentMessageCount = Number(currentMessageRow?.count ?? 0);
+
+  let patchedCurrent = false;
+  if (normalizedType === "group" && String(current.conversation_type) !== "group") {
+    await trx("wa_conversations")
+      .where({ wa_conversation_id: currentId })
+      .update({
+        conversation_type: "group",
+        contact_jid: null,
+        contact_name: null,
+        contact_phone_e164: null,
+        updated_at: trx.fn.now()
+      });
+    patchedCurrent = true;
+  }
+
+  if (currentMessageCount > 0) {
+    return patchedCurrent;
+  }
+
+  const messageCountSubquery = trx("wa_messages")
+    .where("tenant_id", input.tenantId)
+    .groupBy("wa_conversation_id")
+    .select("wa_conversation_id")
+    .count("wa_message_id as message_count")
+    .as("wmc");
+
+  const siblingQuery = trx("wa_conversations as c")
+    .leftJoin(messageCountSubquery, "wmc.wa_conversation_id", "c.wa_conversation_id")
+    .where("c.tenant_id", input.tenantId)
+    .where("c.wa_account_id", String(current.wa_account_id))
+    .whereNot("c.wa_conversation_id", currentId)
+    .whereRaw("coalesce(wmc.message_count, 0) > 0");
+
+  if (normalizedType === "group") {
+    const currentChatJid = asString(current.chat_jid);
+    siblingQuery.andWhere((builder) => {
+      if (currentChatJid) {
+        builder.where("c.chat_jid", currentChatJid).orWhere("c.contact_jid", currentChatJid);
+      }
+    });
+  } else {
+    let { aliasJids, phoneE164 } = buildDirectConversationAliasJids({
+      chatJid: asString(current.chat_jid),
+      contactJid: asString(current.contact_jid),
+      contactPhoneE164: asString(current.contact_phone_e164)
+    });
+    if (!phoneE164) {
+      const contactRow = await trx("wa_contacts")
+        .where({
+          tenant_id: input.tenantId,
+          wa_account_id: String(current.wa_account_id)
+        })
+        .whereIn("contact_jid", Array.from(new Set([
+          asString(current.chat_jid),
+          asString(current.contact_jid)
+        ].filter(Boolean) as string[])))
+        .orderBy("updated_at", "desc")
+        .select("phone_e164")
+        .first<Record<string, unknown> | undefined>();
+      phoneE164 = asString(contactRow?.phone_e164);
+      if (phoneE164) {
+        aliasJids = Array.from(new Set([...aliasJids, jidFromPhoneE164(phoneE164)].filter(Boolean) as string[]));
+      }
+    }
+    siblingQuery.andWhere("c.conversation_type", "direct").andWhere((builder) => {
+      if (aliasJids.length > 0) {
+        builder.whereIn("c.chat_jid", aliasJids).orWhereIn("c.contact_jid", aliasJids);
+      }
+      if (phoneE164) {
+        if (aliasJids.length > 0) builder.orWhere("c.contact_phone_e164", phoneE164);
+        else builder.where("c.contact_phone_e164", phoneE164);
+      }
+    });
+  }
+
+  const sibling = await siblingQuery
+    .orderByRaw("coalesce(wmc.message_count, 0) desc")
+    .orderByRaw("coalesce(c.last_message_at, c.updated_at, c.created_at) desc")
+    .first<Record<string, unknown> | undefined>();
+  if (!sibling) return patchedCurrent;
+
+  const siblingId = String(sibling.wa_conversation_id);
+  await trx("wa_messages").where({ tenant_id: input.tenantId, wa_conversation_id: siblingId }).update({ wa_conversation_id: currentId });
+  await trx("wa_message_gaps").where({ tenant_id: input.tenantId, wa_conversation_id: siblingId }).update({ wa_conversation_id: currentId });
+  await trx("wa_outbound_jobs").where({ tenant_id: input.tenantId, wa_conversation_id: siblingId }).update({ wa_conversation_id: currentId });
+  await trx("wa_assignment_history").where({ tenant_id: input.tenantId, wa_conversation_id: siblingId }).update({ wa_conversation_id: currentId });
+  await trx("wa_assignment_locks").where({ tenant_id: input.tenantId, wa_conversation_id: siblingId }).delete();
+
+  if (normalizedType === "group") {
+    await trx("wa_conversation_members").where({ tenant_id: input.tenantId, wa_conversation_id: currentId }).delete();
+    await trx("wa_conversation_members").where({ tenant_id: input.tenantId, wa_conversation_id: siblingId }).update({ wa_conversation_id: currentId });
+  } else {
+    await trx("wa_conversation_members").where({ tenant_id: input.tenantId, wa_conversation_id: siblingId }).delete();
+  }
+
+  await trx("wa_conversations")
+    .where({ wa_conversation_id: currentId })
+    .update({
+      chat_jid: normalizedType === "group"
+        ? (asString(current.chat_jid) ?? asString(sibling.chat_jid))
+        : (asString(current.chat_jid) ?? asString(sibling.chat_jid)),
+      conversation_type: normalizedType,
+      subject: normalizedType === "group"
+        ? (asString(current.subject) ?? asString(sibling.subject))
+        : (asString(current.subject) ?? asString(sibling.subject)),
+      contact_jid: normalizedType === "group"
+        ? null
+        : (asString(current.contact_jid) ?? asString(sibling.contact_jid) ?? asString(current.chat_jid)),
+      contact_name: normalizedType === "group"
+        ? null
+        : (asString(current.contact_name) ?? asString(sibling.contact_name)),
+      contact_phone_e164: normalizedType === "group"
+        ? null
+        : (
+            asString(current.contact_phone_e164) ??
+            asString(sibling.contact_phone_e164) ??
+            derivePhoneE164FromJid(asString(current.contact_jid) ?? asString(current.chat_jid))
+          ),
+      unread_count: Math.max(Number(current.unread_count ?? 0), Number(sibling.unread_count ?? 0)),
+      updated_at: trx.fn.now()
+    });
+
+  await trx("wa_conversations").where({ wa_conversation_id: siblingId }).delete();
+  return true;
 }
 
 export async function upsertWaConversation(

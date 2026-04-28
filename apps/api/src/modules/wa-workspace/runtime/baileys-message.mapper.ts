@@ -59,7 +59,7 @@ function resolveDirectIdentity(remoteJid: string, remoteJidAlt: string | null) {
 
 function isNonConversationJid(jid: string | null) {
   if (!jid) return true;
-  return jid === "status@broadcast";
+  return jid === "status@broadcast" || jid.endsWith("@newsletter");
 }
 
 function describeCallType(value: unknown) {

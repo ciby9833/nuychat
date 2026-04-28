@@ -31,7 +31,8 @@ import { refreshWaConversationProjection } from "./wa-conversation-projection.se
 const groupMetadataRateLimitCooldowns = new Map<string, number>();
 
 function isNonConversationJid(jid: string | null) {
-  return jid === "status@broadcast";
+  if (!jid) return true;
+  return jid === "status@broadcast" || jid.endsWith("@newsletter");
 }
 
 async function applyContactProjection(
@@ -137,6 +138,33 @@ function derivePhoneE164FromJid(jid: string | null) {
   if (!jid.endsWith("@s.whatsapp.net")) return null;
   const local = jid.split("@")[0] ?? "";
   return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
+}
+
+function isLidJid(jid: string | null) {
+  return Boolean(jid?.endsWith("@lid"));
+}
+
+function isPnJid(jid: string | null) {
+  return Boolean(jid?.endsWith("@s.whatsapp.net"));
+}
+
+function resolveDirectChatIdentity(chat: Partial<Chat>) {
+  const id = asString(chat.id);
+  const lidJid = asString((chat as Record<string, unknown>).lidJid);
+  const pnJid = asString((chat as Record<string, unknown>).pnJid);
+  const canonicalJid =
+    isLidJid(id) ? id :
+    isLidJid(lidJid) ? lidJid :
+    id;
+  const phoneJid =
+    isPnJid(id) ? id :
+    isPnJid(pnJid) ? pnJid :
+    null;
+  return {
+    chatJid: canonicalJid,
+    contactJid: canonicalJid,
+    contactPhoneE164: derivePhoneE164FromJid(phoneJid)
+  };
 }
 
 function resolveContactName(contact: Partial<Contact>) {
@@ -382,24 +410,27 @@ export async function ingestBaileysChatsUpdate(input: {
     const hasGroupChats = input.chats.some((chat) => typeof chat.id === "string" && chat.id.endsWith("@g.us"));
     for (const chat of input.chats) {
       if (!chat.id) continue;
-      const chatId = chat.id;
+      const chatId = asString(chat.id);
+      if (!chatId) continue;
       if (isNonConversationJid(chatId)) continue;
+      const isGroup = chatId.endsWith("@g.us");
+      const directIdentity = isGroup ? null : resolveDirectChatIdentity(chat);
       const conversation = await upsertWaConversation(trx, {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
-        chatJid: chatId,
-        conversationType: chatId.endsWith("@g.us") ? "group" : "direct",
+        chatJid: directIdentity?.chatJid ?? chatId,
+        conversationType: isGroup ? "group" : "direct",
         subject: typeof chat.name === "string" && chat.name.trim() ? chat.name : undefined,
-        contactJid: chatId.endsWith("@g.us") ? undefined : chatId,
-        contactName: chatId.endsWith("@g.us") ? undefined : (typeof chat.name === "string" && chat.name.trim() ? chat.name : undefined),
-        contactPhoneE164: chatId.endsWith("@g.us") ? undefined : derivePhoneE164FromJid(chatId),
+        contactJid: isGroup ? undefined : (directIdentity?.contactJid ?? chatId),
+        contactName: isGroup ? undefined : (typeof chat.name === "string" && chat.name.trim() ? chat.name : undefined),
+        contactPhoneE164: isGroup ? undefined : (directIdentity?.contactPhoneE164 ?? derivePhoneE164FromJid(chatId)),
         unreadCount: typeof chat.unreadCount === "number" ? chat.unreadCount : null
       });
       if (typeof chat.unreadCount === "number") {
         await patchWaConversationChatState(trx, {
           tenantId: input.tenantId,
           waAccountId: input.waAccountId,
-          chatJid: chatId,
+          chatJid: directIdentity?.chatJid ?? chatId,
           conversationType: conversation.conversationType,
           unreadCount: chat.unreadCount
         });
