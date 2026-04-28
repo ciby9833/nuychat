@@ -535,10 +535,8 @@ export function WaChatPanel(props: WaChatPanelProps) {
     onLoadMoreMessages,
     composerText,
     onComposerTextChange,
-    selectedMentions,
-    onAddMention,
-    onRemoveMention,
-    quotedMessage,
+  onAddMention,
+  quotedMessage,
     onClearQuoted,
     uploadingAttachments,
     onRemoveAttachment,
@@ -735,6 +733,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
   const filteredMentionCandidates = mentionQuery
       ? mentionCandidates.filter((member) =>
         member.label.toLowerCase().includes(mentionQuery) ||
+        (member.phoneE164 ?? "").toLowerCase().includes(mentionQuery) ||
         member.jid.split("@")[0].toLowerCase().includes(mentionQuery) ||
         deriveMentionToken(member).toLowerCase().includes(mentionQuery)
       )
@@ -989,22 +988,6 @@ export function WaChatPanel(props: WaChatPanelProps) {
           </div>
         ) : null}
 
-        {selectedMentions.length > 0 ? (
-          <div className="mb-3 flex flex-wrap gap-2">
-            {selectedMentions.map((mention) => (
-              <button
-                key={mention.jid}
-                type="button"
-                onClick={() => onRemoveMention(mention.jid)}
-                className="inline-flex items-center gap-1 rounded-full bg-[#d9fdd3] px-3 py-1 text-xs font-medium text-[#005c4b] hover:bg-[#c7f2ce]"
-              >
-                <span>@{mention.label}</span>
-                <span>✕</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-
         {uploadingAttachments.length > 0 ? (
           <div className="mb-3 flex flex-wrap gap-2">
             {uploadingAttachments.map((att) => {
@@ -1053,43 +1036,6 @@ export function WaChatPanel(props: WaChatPanelProps) {
               <span className="sr-only">{t("wa.chat.attachment")}</span>
               <input type="file" multiple className="hidden" onChange={handleFileInput} />
             </label>
-            {mentionCandidates.length > 0 ? (
-              <div className="relative shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setMentionPickerOpen((current) => !current)}
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-[15px] font-medium text-[#54656f] transition-colors hover:bg-[#f0f2f5]"
-                >
-                  <span>@</span>
-                </button>
-                {showMentionPicker ? (
-                  <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 max-h-64 w-64 overflow-auto rounded-[12px] border border-[#d1d7db] bg-white p-2 shadow-[0_12px_32px_rgba(17,27,33,0.18)]">
-                    <div className="px-2 pb-2 text-[11px] font-medium uppercase tracking-wide text-[#667781]">
-                      {t("wa.chat.mentionMembers")}
-                    </div>
-                    <div className="space-y-1">
-                      {filteredMentionCandidates.map((member) => (
-                        <button
-                          key={member.jid}
-                          type="button"
-                          onClick={() => {
-                            onAddMention(member);
-                            setMentionPickerOpen(false);
-                          }}
-                          className="flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left hover:bg-[#f5f6f6]"
-                        >
-                          <span className="truncate text-sm text-[#111b21]">{member.label}</span>
-                          <span className="ml-3 truncate text-[11px] text-[#667781]">{member.phoneE164 || member.jid.split("@")[0]}</span>
-                        </button>
-                      ))}
-                      {filteredMentionCandidates.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-[#667781]">{t("wa.chat.noMentionMatches")}</div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
             <textarea
               ref={composerRef}
               value={composerText}
@@ -1110,6 +1056,32 @@ export function WaChatPanel(props: WaChatPanelProps) {
               }}
               onPaste={handleComposerPaste}
             />
+            {showMentionPicker ? (
+              <div className="absolute bottom-[calc(100%+8px)] left-12 z-20 max-h-64 w-72 overflow-auto rounded-[12px] border border-[#d1d7db] bg-white p-2 shadow-[0_12px_32px_rgba(17,27,33,0.18)]">
+                <div className="px-2 pb-2 text-[11px] font-medium uppercase tracking-wide text-[#667781]">
+                  {t("wa.chat.mentionMembers")}
+                </div>
+                <div className="space-y-1">
+                  {filteredMentionCandidates.map((member) => (
+                    <button
+                      key={member.jid}
+                      type="button"
+                      onClick={() => {
+                        onAddMention(member);
+                        setMentionPickerOpen(false);
+                      }}
+                      className="flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left hover:bg-[#f5f6f6]"
+                    >
+                      <span className="truncate text-sm text-[#111b21]">{member.label}</span>
+                      <span className="ml-3 truncate text-[11px] text-[#667781]">{member.phoneE164 || member.jid.split("@")[0]}</span>
+                    </button>
+                  ))}
+                  {filteredMentionCandidates.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-[#667781]">{t("wa.chat.noMentionMatches")}</div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
           <button
             type="button"

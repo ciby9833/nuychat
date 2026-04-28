@@ -80,6 +80,19 @@ function extractStoredMessageKey(providerPayload: unknown): Record<string, unkno
   }
 }
 
+function buildStoredReadKey(providerPayload: unknown) {
+  const key = extractStoredMessageKey(providerPayload);
+  const remoteJid = typeof key?.remoteJid === "string" ? key.remoteJid : null;
+  const id = typeof key?.id === "string" ? key.id : null;
+  if (!remoteJid || !id) return null;
+  return {
+    remoteJid,
+    id,
+    participant: typeof key?.participant === "string" ? key.participant : null,
+    fromMe: Boolean(key?.fromMe)
+  };
+}
+
 export async function listWorkbenchAccounts(
   trx: Knex.Transaction,
   input: { tenantId: string; membershipId: string; role: string }
@@ -285,37 +298,28 @@ export async function getWorkbenchConversationDetail(
       })
       .select("instance_key")
       .first<Record<string, unknown> | undefined>();
-    const latestKeyRow = await trx("wa_messages")
+    const unreadInboundRows = await trx("wa_messages")
       .where({
         tenant_id: input.tenantId,
         wa_conversation_id: input.waConversationId
       })
+      .andWhere("direction", "inbound")
       .whereNotNull("provider_message_id")
       .select("provider_payload")
       .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint) desc")
-      .first<Record<string, unknown> | undefined>();
+      .limit(Math.max(1, Math.min(conversation.unreadCount, 50)));
 
-    if (account?.instance_key && latestKeyRow?.provider_payload) {
-      const payload = typeof latestKeyRow.provider_payload === "string"
-        ? JSON.parse(String(latestKeyRow.provider_payload))
-        : (latestKeyRow.provider_payload as Record<string, unknown>);
-      const key = payload?.key && typeof payload.key === "object"
-        ? (payload.key as Record<string, unknown>)
-        : null;
-      const remoteJid = typeof key?.remoteJid === "string" ? key.remoteJid : conversation.chatJid;
-      const id = typeof key?.id === "string" ? key.id : null;
-      if (id) {
+    if (account?.instance_key && unreadInboundRows.length > 0) {
+      const keys = unreadInboundRows
+        .map((row) => buildStoredReadKey(row.provider_payload))
+        .filter((item): item is { remoteJid: string; id: string; participant: string | null; fromMe: boolean } => Boolean(item));
+      if (keys.length > 0) {
         try {
           await waProviderAdapter.markConversationRead({
             tenantId: input.tenantId,
             waAccountId: conversation.waAccountId,
             instanceKey: String(account.instance_key),
-            keys: [{
-              remoteJid,
-              id,
-              participant: typeof key?.participant === "string" ? key.participant : null,
-              fromMe: Boolean(key?.fromMe)
-            }]
+            keys
           });
         } catch (error) {
           console.warn("[wa-workbench] mark read failed", {

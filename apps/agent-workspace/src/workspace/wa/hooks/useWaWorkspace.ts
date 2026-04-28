@@ -43,6 +43,7 @@ type SelectedMention = {
   jid: string;
   label: string;
   mentionToken: string;
+  phoneE164?: string | null;
 };
 
 type ComposerDraft = {
@@ -96,6 +97,26 @@ function deriveMentionToken(mention: Pick<SelectedMention, "jid" | "mentionToken
   const localPart = mention.jid.split("@")[0] ?? mention.jid;
   const normalizedLocal = localPart.split(":")[0] ?? localPart;
   return normalizeMentionToken(normalizedLocal);
+}
+
+function mentionDisplayText(mention: Pick<SelectedMention, "label">) {
+  const label = mention.label.trim();
+  return label.startsWith("@") ? label : `@${label}`;
+}
+
+function buildTransportMessageText(text: string, mentions: SelectedMention[]) {
+  let nextText = text;
+  const sortedMentions = [...mentions]
+    .filter((mention) => mentionDisplayText(mention))
+    .sort((left, right) => mentionDisplayText(right).length - mentionDisplayText(left).length);
+
+  for (const mention of sortedMentions) {
+    const displayText = mentionDisplayText(mention);
+    const mentionToken = deriveMentionToken(mention);
+    if (!mentionToken) continue;
+    nextText = nextText.split(displayText).join(`@${mentionToken}`);
+  }
+  return nextText;
 }
 
 export function useWaWorkspace(session: Session | null) {
@@ -269,6 +290,13 @@ export function useWaWorkspace(session: Session | null) {
   uploadingAttachmentsRef.current = uploadingAttachments;
 
   useEffect(() => {
+    setSelectedMentions((current) => {
+      const next = current.filter((mention) => composerText.includes(mentionDisplayText(mention)));
+      return next.length === current.length ? current : next;
+    });
+  }, [composerText]);
+
+  useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
 
@@ -429,6 +457,7 @@ export function useWaWorkspace(session: Session | null) {
     // Derive the ID used by the backend — prefer the WhatsApp provider ID so
     // the backend can build a proper quote context without an extra DB lookup.
     const quotedMessageId = quotedMessage?.providerMessageId || quotedMessage?.waMessageId || null;
+    const transportText = buildTransportMessageText(composerText.trim(), selectedMentions);
 
     setActionLoading("send");
     setError("");
@@ -436,7 +465,7 @@ export function useWaWorkspace(session: Session | null) {
       if (uploadingAttachments.length === 0) {
         await sendWaTextMessage(session, selectedConversationId, {
           clientMessageId: crypto.randomUUID(),
-          text: composerText.trim(),
+          text: transportText,
           quotedMessageId,
           mentionJids: selectedMentions.map((item) => item.jid)
         });
@@ -450,7 +479,7 @@ export function useWaWorkspace(session: Session | null) {
         await sendWaMediaMessage(session, selectedConversationId, {
           clientMessageId: crypto.randomUUID(),
           type: mediaType,
-          text: composerText.trim() || null,
+          text: transportText || null,
           quotedMessageId,
           mentionJids: selectedMentions.map((item) => item.jid),
           attachment: {
@@ -637,9 +666,7 @@ export function useWaWorkspace(session: Session | null) {
       current.some((item) => item.jid === mention.jid) ? current : [...current, mention]
     );
     setComposerText((current) => {
-      const mentionToken = deriveMentionToken(mention);
-      if (!mentionToken) return current;
-      const nextToken = `@${mentionToken}`;
+      const nextToken = mentionDisplayText(mention);
       const mentionQueryMatch = current.match(/(?:^|\s)@([^\s@]*)$/);
       if (mentionQueryMatch) {
         return current.replace(/@([^\s@]*)$/, `${nextToken} `);
@@ -649,7 +676,12 @@ export function useWaWorkspace(session: Session | null) {
   }, []);
 
   const removeMention = useCallback((jid: string) => {
-    setSelectedMentions((current) => current.filter((item) => item.jid !== jid));
+    setSelectedMentions((current) => {
+      const target = current.find((item) => item.jid === jid) ?? null;
+      if (!target) return current;
+      setComposerText((text) => text.split(mentionDisplayText(target)).join("").replace(/\s{2,}/g, " ").trimStart());
+      return current.filter((item) => item.jid !== jid);
+    });
   }, []);
 
   return {

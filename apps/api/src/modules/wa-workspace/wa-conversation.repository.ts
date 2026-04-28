@@ -313,7 +313,7 @@ function deriveMentionTokenForParticipant(participantJid: string, phoneE164: str
 function resolveMentionView(input: {
   jid: string;
   waAccountId: string;
-  memberNameByParticipant: Map<string, string>;
+  memberNameByAlias: Map<string, string>;
   contactProfiles: Map<string, ResolvedContactProfile>;
 }) {
   const phoneE164 = normalizePhoneE164(derivePhoneE164FromJid(input.jid));
@@ -322,7 +322,9 @@ function resolveMentionView(input: {
     phoneE164
   ]);
   const label =
-    input.memberNameByParticipant.get(input.jid) ??
+    Array.from(memberMentionAliases(input.jid))
+      .map((alias) => input.memberNameByAlias.get(alias))
+      .find(Boolean) ??
     profile?.displayName ??
     profile?.phoneE164 ??
     phoneE164 ??
@@ -928,7 +930,7 @@ export async function getConversationMessages(
           .where({ tenant_id: tenantId, wa_conversation_id: waConversationId })
           .whereIn("participant_jid", memberLookupJids)
           .select("participant_jid", "display_name");
-  const memberNameByParticipant = new Map<string, string>();
+  const memberNameByAlias = new Map<string, string>();
   const memberPhoneByParticipant = new Map<string, string>();
   const memberJidByMentionToken = new Map<string, string>();
   for (const row of memberRows) {
@@ -936,7 +938,11 @@ export async function getConversationMessages(
     if (!participantJid) continue;
     const name = asString(row.display_name);
     if (name) {
-      memberNameByParticipant.set(participantJid, name);
+      for (const alias of memberMentionAliases(participantJid)) {
+        if (!memberNameByAlias.has(alias)) {
+          memberNameByAlias.set(alias, name);
+        }
+      }
     }
     for (const alias of memberMentionAliases(participantJid)) {
       if (!memberJidByMentionToken.has(alias)) {
@@ -1122,7 +1128,11 @@ export async function getConversationMessages(
     const senderDisplayName =
       String(conversationRow?.conversation_type ?? "") === "group"
         ? (
-            (participantJid ? memberNameByParticipant.get(participantJid) : null) ??
+            (participantJid
+              ? Array.from(memberMentionAliases(participantJid))
+                  .map((alias) => memberNameByAlias.get(alias))
+                  .find(Boolean) ?? null
+              : null) ??
             senderProfile?.displayName ??
             payloadPushName ??
             payloadAltPhone ??
@@ -1171,7 +1181,7 @@ export async function getConversationMessages(
       mentions: rowMentionJids.map((jid) => resolveMentionView({
         jid,
         waAccountId,
-        memberNameByParticipant,
+        memberNameByAlias,
         contactProfiles
       })),
       logicalSeq: Number(row.logical_seq ?? 0),
