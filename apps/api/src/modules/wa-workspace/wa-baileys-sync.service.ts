@@ -424,8 +424,12 @@ export async function ingestBaileysChatsUpdate(input: {
         contactJid: isGroup ? undefined : (directIdentity?.contactJid ?? chatId),
         contactName: isGroup ? undefined : (typeof chat.name === "string" && chat.name.trim() ? chat.name : undefined),
         contactPhoneE164: isGroup ? undefined : (directIdentity?.contactPhoneE164 ?? derivePhoneE164FromJid(chatId)),
-        unreadCount: typeof chat.unreadCount === "number" ? chat.unreadCount : null
+        unreadCount: typeof chat.unreadCount === "number" ? chat.unreadCount : null,
+        allowCreate: false
       });
+      if (!conversation) {
+        continue;
+      }
       if (typeof chat.unreadCount === "number") {
         await patchWaConversationChatState(trx, {
           tenantId: input.tenantId,

@@ -635,9 +635,13 @@ export async function listWaConversations(
   } else {
     query.whereNull("c.archived_at");
   }
-  query.andWhere((builder) => {
-    builder.whereNotNull("c.last_message_at").orWhereRaw("coalesce(c.message_cursor, 0) > 0");
-  });
+  query.whereExists(
+    trx("wa_messages as wm")
+      .select(trx.raw("1"))
+      .whereRaw("wm.tenant_id = c.tenant_id")
+      .whereRaw("wm.wa_conversation_id = c.wa_conversation_id")
+      .whereNull("wm.deleted_for_me_at")
+  );
   if (input.search) {
     const keyword = `%${input.search.trim()}%`;
     query.andWhere((builder) => {
@@ -1001,7 +1005,10 @@ export async function getConversationMessages(
   );
   const participantJids = Array.from(new Set(rows.map((row) => (row.participant_jid ? String(row.participant_jid) : null)).filter(Boolean))) as string[];
   const payloadMentionJids = Array.from(new Set(rows.flatMap((row) => extractPayloadMentionJids(row.provider_payload))));
-  const isGroupConversation = String(conversationRow?.conversation_type ?? "") === "group";
+  const isGroupConversation = normalizeConversationTypeValue({
+    chatJid: asString(conversationRow?.chat_jid),
+    conversationType: asString(conversationRow?.conversation_type)
+  }) === "group";
   const memberLookupJids = Array.from(new Set([...participantJids, ...payloadMentionJids]));
   const memberRows = isGroupConversation
     ? await trx("wa_conversation_members")
@@ -1151,7 +1158,7 @@ export async function getConversationMessages(
       senderPhone
     ]);
     const senderDisplayName =
-      String(conversationRow?.conversation_type ?? "") === "group"
+      isGroupConversation
         ? (
             (participantJid
               ? Array.from(memberMentionAliases(participantJid))
@@ -1213,7 +1220,7 @@ export async function getConversationMessages(
       memberPhoneByParticipant.set(participantJid, payloadAltPhone);
     }
     const senderDisplayName =
-      String(conversationRow?.conversation_type ?? "") === "group"
+      isGroupConversation
         ? (
             (participantJid
               ? Array.from(memberMentionAliases(participantJid))
@@ -1497,8 +1504,27 @@ export async function patchWaConversationChatState(
     unreadCount?: number | null;
   }
 ) {
+  const current = await trx("wa_conversations")
+    .where({
+      tenant_id: input.tenantId,
+      wa_account_id: input.waAccountId,
+      chat_jid: input.chatJid
+    })
+    .first<Record<string, unknown> | undefined>();
+  if (!current) return null;
+
+  const resolvedType =
+    normalizeConversationTypeValue({
+      chatJid: asString(current.chat_jid) ?? input.chatJid,
+      conversationType: asString(current.conversation_type) ?? input.conversationType
+    }) === "group"
+      ? "group"
+      : normalizeConversationTypeValue({
+          chatJid: input.chatJid,
+          conversationType: input.conversationType
+        });
   const updates: Record<string, unknown> = {
-    conversation_type: input.conversationType,
+    conversation_type: resolvedType,
     updated_at: trx.fn.now()
   };
 
@@ -1516,11 +1542,7 @@ export async function patchWaConversationChatState(
   }
 
   const [row] = await trx("wa_conversations")
-    .where({
-      tenant_id: input.tenantId,
-      wa_account_id: input.waAccountId,
-      chat_jid: input.chatJid
-    })
+    .where({ wa_conversation_id: String(current.wa_conversation_id) })
     .update(updates)
     .returning("*");
   return row ? mapConversation(row as Record<string, unknown>) : null;
@@ -1742,6 +1764,7 @@ export async function upsertWaConversation(
     contactName?: string | null;
     contactPhoneE164?: string | null;
     unreadCount?: number | null;
+    allowCreate?: boolean;
   }
 ) {
   if (isNonConversationJid(input.chatJid)) {
@@ -1879,6 +1902,10 @@ export async function upsertWaConversation(
       })
       .returning("*");
     return mapConversation(row as Record<string, unknown>);
+  }
+
+  if (input.allowCreate === false) {
+    return null;
   }
 
   const [row] = await trx("wa_conversations")

@@ -640,15 +640,15 @@ async function buildSocket(input: {
         waAccountId: input.waAccountId,
         contacts: event.contacts ?? []
       });
-      await ingestBaileysChatsUpdate({
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        chats: event.chats ?? []
-      });
       await ingestBaileysHistorySet({
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
         messages: event.messages
+      });
+      await ingestBaileysChatsUpdate({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        chats: event.chats ?? []
       });
     })().catch((error) => {
       console.error("[wa-baileys] messaging-history.set ingest failed", {

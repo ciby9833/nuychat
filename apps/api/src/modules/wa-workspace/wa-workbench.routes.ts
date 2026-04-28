@@ -367,8 +367,15 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     const { attachmentId } = req.params as { attachmentId: string };
 
     const result = await withTenantTransaction(auth.tenantId, async (trx) => {
-      const att = await trx("wa_message_attachments")
-        .where({ tenant_id: auth.tenantId, attachment_id: attachmentId })
+      const att = await trx("wa_message_attachments as att")
+        .join("wa_messages as m", function joinMessage() {
+          this.on("m.wa_message_id", "=", "att.wa_message_id").andOn("m.tenant_id", "=", "att.tenant_id");
+        })
+        .join("wa_conversations as c", function joinConversation() {
+          this.on("c.wa_conversation_id", "=", "m.wa_conversation_id").andOn("c.tenant_id", "=", "m.tenant_id");
+        })
+        .where({ "att.tenant_id": auth.tenantId, "att.attachment_id": attachmentId })
+        .select("att.*", "m.provider_payload as message_provider_payload", "c.wa_account_id")
         .first<Record<string, unknown> | undefined>();
       if (!att) return null;
       return att;
@@ -378,7 +385,7 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
 
     // provider_payload on the attachment row IS the full raw Baileys WAMessage,
     // which contains the mediaKey, fileEncSha256, directPath, etc. needed for decryption.
-    const rawPayload = result.provider_payload;
+    const rawPayload = result.provider_payload ?? result.message_provider_payload;
     const payload = rawPayload
       ? (typeof rawPayload === "string" ? JSON.parse(String(rawPayload)) : rawPayload) as Record<string, unknown>
       : null;
@@ -394,15 +401,44 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     const mimeType = result.mime_type ? String(result.mime_type) : "application/octet-stream";
     const fileName = result.file_name ? String(result.file_name) : null;
 
-    const msgContent = (payload?.message as Record<string, unknown> | null)?.[contentKeyMap[attachmentType]] as Record<string, unknown> | null;
+    const asStr = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+    const wrapperKeys = [
+      "ephemeralMessage",
+      "viewOnceMessage",
+      "viewOnceMessageV2",
+      "viewOnceMessageV2Extension",
+      "documentWithCaptionMessage"
+    ];
+
+    function findMediaContainer(
+      messageNode: Record<string, unknown> | null
+    ): { container: Record<string, unknown>; media: Record<string, unknown> } | null {
+      if (!messageNode) return null;
+      const contentKey = contentKeyMap[attachmentType];
+      const direct = messageNode[contentKey];
+      if (direct && typeof direct === "object") {
+        return { container: messageNode, media: direct as Record<string, unknown> };
+      }
+      for (const wrapperKey of wrapperKeys) {
+        const wrapper = messageNode[wrapperKey];
+        if (!wrapper || typeof wrapper !== "object") continue;
+        const nestedMessage = (wrapper as Record<string, unknown>).message;
+        if (!nestedMessage || typeof nestedMessage !== "object") continue;
+        const nested = findMediaContainer(nestedMessage as Record<string, unknown>);
+        if (nested) return nested;
+      }
+      return null;
+    }
+
+    const mediaContainer = findMediaContainer((payload?.message as Record<string, unknown> | null) ?? null);
+    const msgContent = mediaContainer?.media ?? null;
 
     // ── Shared local-disk helper ─────────────────────────────────────────────
     // Outbound messages we sent ourselves have storage_url = "/uploads/<uuid>.<ext>".
     // Baileys stores that same "/uploads/..." path as imageMessage.url in provider_payload.
     // We must NEVER pass a local path to downloadContentFromMessage — it would try to open
     // "/uploads/..." as a file path from root and crash with ENOENT + unhandled ReadStream error.
-    const asStr = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
-
     async function serveLocalFile(localPath: string): Promise<typeof reply> {
       const { readFile } = await import("node:fs/promises");
       const { getUploadsDir } = await import("../../infra/storage/upload.service.js");
@@ -463,6 +499,9 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
       fileEncSha256: toBuffer(msgContent["fileEncSha256"]),
       fileSha256: toBuffer(msgContent["fileSha256"])
     };
+    if (mediaContainer) {
+      mediaContainer.container[contentKeyMap[attachmentType]] = reconstructed;
+    }
 
     // ── Case 3: no mediaKey — WhatsApp Channels/Newsletters (staticUrl, public) ──
     if (!reconstructed.mediaKey) {
@@ -485,17 +524,48 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
 
     // ── Case 4: encrypted WhatsApp CDN URL — decrypt via Baileys ────────────
     try {
-      const { downloadContentFromMessage } = await import("@whiskeysockets/baileys");
-      const stream = await downloadContentFromMessage(
-        reconstructed as Parameters<typeof downloadContentFromMessage>[0],
-        attachmentType
+      const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
+      const { getBaileysRuntime } = await import("./runtime/baileys-runtime.manager.js");
+      const runtime = getBaileysRuntime(auth.tenantId, String(result.wa_account_id));
+
+      let refreshedPayload: Record<string, unknown> | null = null;
+      const mediaMessage = payload as Record<string, unknown>;
+      const buffer = await downloadMediaMessage(
+        mediaMessage as Parameters<typeof downloadMediaMessage>[0],
+        "buffer",
+        {},
+        runtime
+          ? {
+              logger: app.log,
+              reuploadRequest: async (message) => {
+                const updated = await runtime.socket.updateMediaMessage(message);
+                refreshedPayload = (updated as Record<string, unknown>) ?? (message as Record<string, unknown>);
+                return updated;
+              }
+            }
+          : undefined
       );
 
-      const chunks: Buffer[] = [];
-      for await (const chunk of stream) {
-        chunks.push(chunk as Buffer);
+      if (refreshedPayload) {
+        const refreshedContainer = findMediaContainer((refreshedPayload.message as Record<string, unknown> | null) ?? null);
+        const refreshedMedia = refreshedContainer?.media ?? null;
+        await withTenantTransaction(auth.tenantId, async (trx) => {
+          await trx("wa_messages")
+            .where({ tenant_id: auth.tenantId, wa_message_id: String(result.wa_message_id) })
+            .update({
+              provider_payload: JSON.stringify(refreshedPayload),
+              updated_at: trx.fn.now()
+            });
+          await trx("wa_message_attachments")
+            .where({ tenant_id: auth.tenantId, attachment_id: attachmentId })
+            .update({
+              provider_payload: JSON.stringify(refreshedPayload),
+              storage_url: asStr(refreshedMedia?.url) ?? asStr(result.storage_url),
+              preview_url: asStr(refreshedMedia?.thumbnailDirectPath) ?? asStr(result.preview_url),
+              updated_at: trx.fn.now()
+            });
+        });
       }
-      const buffer = Buffer.concat(chunks);
 
       void reply.header("Content-Type", mimeType);
       void reply.header("Cache-Control", "private, max-age=86400");

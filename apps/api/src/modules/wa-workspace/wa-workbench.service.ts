@@ -27,8 +27,7 @@ import {
   insertWaMessageAttachment,
   insertWaMessageReaction,
   listWaConversations,
-  listWaContacts,
-  patchWaConversationChatState
+  listWaContacts
 } from "./wa-conversation.repository.js";
 import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
 import {
@@ -445,18 +444,6 @@ export async function getWorkbenchConversationDetail(
             instanceKey: String(account.instance_key),
             keys
           });
-          await patchWaConversationChatState(trx, {
-            tenantId: input.tenantId,
-            waAccountId: conversation.waAccountId,
-            chatJid: conversation.chatJid,
-            conversationType: conversation.conversationType,
-            unreadCount: 0
-          });
-          await refreshWaConversationProjection(trx, {
-            tenantId: input.tenantId,
-            waAccountId: conversation.waAccountId,
-            waConversationId: input.waConversationId
-          });
         } catch (error) {
           console.warn("[wa-workbench] mark read failed", {
             tenantId: input.tenantId,
@@ -466,37 +453,16 @@ export async function getWorkbenchConversationDetail(
         }
       }
     }
-
-    // Do not mutate unread_count locally here.
-    // The source of truth is WhatsApp/Baileys chat unreadCount, which will
-    // arrive through chats.update/upsert after markConversationRead().
-    conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId);
   }
 
   const [messages, members] = await Promise.all([
     getConversationMessages(trx, input.tenantId, input.waConversationId),
     getConversationMembers(trx, input.tenantId, input.waConversationId)
   ]);
-  let hydratedMessages = messages;
-  let hydratedMembers = members;
-  if (hydratedMessages.length > 0 && hydratedMessages.length < 20) {
-    const inserted = await backfillConversationMessagesFromProviderHistory(trx, {
-      tenantId: input.tenantId,
-      waConversationId: input.waConversationId,
-      waAccountId: conversation.waAccountId,
-      chatJid: conversation.chatJid,
-      limit: 50
-    });
-    if (inserted > 0) {
-      hydratedMessages = await getConversationMessages(trx, input.tenantId, input.waConversationId);
-      conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId) ?? conversation;
-      hydratedMembers = await getConversationMembers(trx, input.tenantId, input.waConversationId);
-    }
-  }
   return {
     conversation,
-    messages: hydratedMessages,
-    members: hydratedMembers,
+    messages,
+    members,
     permissions: {
       canReply:
         !conversation.currentReplierMembershipId ||
