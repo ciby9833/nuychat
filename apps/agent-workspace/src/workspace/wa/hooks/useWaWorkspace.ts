@@ -42,6 +42,7 @@ type UploadingAttachment = {
 type SelectedMention = {
   jid: string;
   label: string;
+  mentionToken: string;
 };
 
 type ComposerDraft = {
@@ -64,8 +65,37 @@ function sortWaConversations(rows: WaConversationItem[]) {
   });
 }
 
-function buildNotificationBody(conversation: WaConversationItem) {
-  return conversation.lastMessagePreview || conversation.contactPhoneE164 || conversation.chatJid;
+function buildNotificationMessageBody(input: {
+  bodyText: string | null;
+  messageType: string;
+  senderDisplayName: string | null;
+  conversationSecondaryLabel: string | null;
+}) {
+  const prefix = input.senderDisplayName || input.conversationSecondaryLabel || "";
+  const body =
+    input.bodyText?.trim() ||
+    ({
+      image: "Image",
+      video: "Video",
+      audio: "Voice message",
+      document: "Document",
+      sticker: "Sticker",
+      reaction: "Reaction",
+      call_log: "Call"
+    }[input.messageType] ?? "New message");
+  return prefix ? `${prefix}: ${body}` : body;
+}
+
+function normalizeMentionToken(value: string) {
+  return value.replace(/[^\p{L}\p{N}_-]/gu, "");
+}
+
+function deriveMentionToken(mention: Pick<SelectedMention, "jid" | "mentionToken">) {
+  const preferred = normalizeMentionToken(mention.mentionToken);
+  if (preferred) return preferred;
+  const localPart = mention.jid.split("@")[0] ?? mention.jid;
+  const normalizedLocal = localPart.split(":")[0] ?? localPart;
+  return normalizeMentionToken(normalizedLocal);
 }
 
 export function useWaWorkspace(session: Session | null) {
@@ -295,8 +325,6 @@ export function useWaWorkspace(session: Session | null) {
       const currentAccountId = accountIdRef.current;
       const currentSelectedId = selectedConversationIdRef.current;
       const isArchivedList = archivedOnlyRef.current;
-      const previousConversation =
-        conversationsRef.current.find((item) => item.waConversationId === event.conversation.waConversationId) ?? null;
       setConversations((current) => {
         const target = event.conversation;
         if (!isSeatVisibleWaConversation(target)) {
@@ -317,39 +345,50 @@ export function useWaWorkspace(session: Session | null) {
         return sortWaConversations(scoped);
       });
 
-      const notifyKey = event.conversation.lastMessageAt ?? "";
-      const previousLastMessageAt = previousConversation?.lastMessageAt ?? null;
-      const previousUnreadCount = previousConversation?.unreadCount ?? 0;
-      const hasLaterMessage =
-        Boolean(notifyKey) &&
-        (!previousLastMessageAt || Date.parse(notifyKey) > Date.parse(previousLastMessageAt));
-      const unreadIncreased = event.conversation.unreadCount > previousUnreadCount;
-      const shouldNotify =
-        Notification.permission === "granted" &&
-        (document.visibilityState === "hidden" || !document.hasFocus()) &&
-        hasLaterMessage &&
-        unreadIncreased &&
-        event.conversation.unreadCount > 0 &&
-        event.conversation.waConversationId !== currentSelectedId &&
-        notifiedConversationAtRef.current[event.conversation.waConversationId] !== notifyKey;
-      if (shouldNotify) {
-        notifiedConversationAtRef.current[event.conversation.waConversationId] = notifyKey;
-        const notification = new Notification(event.conversation.displayName || event.conversation.subject || event.conversation.contactName || event.conversation.chatJid, {
-          body: buildNotificationBody(event.conversation),
-          icon: "/favicon.ico",
-          tag: `wa:${event.conversation.waConversationId}`
-        });
-        notification.onclick = () => {
-          window.focus();
-          setSelectedConversationId(event.conversation.waConversationId);
-          notification.close();
-        };
-      }
-
       // Reload messages if this conversation is currently open (new message arrived).
       if (event.conversation.waConversationId === currentSelectedId) {
         void loadDetailRef.current();
       }
+    });
+
+    socket.on("wa.message.received", (event: {
+      waAccountId: string;
+      waConversationId: string;
+      waMessageId: string;
+      direction: string;
+      messageType: string;
+      bodyText: string | null;
+      senderDisplayName: string | null;
+      conversationDisplayName: string | null;
+      conversationSecondaryLabel: string | null;
+      unreadCount: number;
+    }) => {
+      const currentSelectedId = selectedConversationIdRef.current;
+      const currentAccountId = accountIdRef.current;
+      if (Notification.permission !== "granted") return;
+      if (!(document.visibilityState === "hidden" || !document.hasFocus())) return;
+      if (event.direction !== "inbound") return;
+      if (event.unreadCount <= 0) return;
+      if (event.waConversationId === currentSelectedId) return;
+      if (currentAccountId && event.waAccountId !== currentAccountId) return;
+      if (notifiedConversationAtRef.current[event.waConversationId] === event.waMessageId) return;
+
+      notifiedConversationAtRef.current[event.waConversationId] = event.waMessageId;
+      const notification = new Notification(event.conversationDisplayName || event.conversationSecondaryLabel || "WhatsApp", {
+        body: buildNotificationMessageBody({
+          bodyText: event.bodyText,
+          messageType: event.messageType,
+          senderDisplayName: event.senderDisplayName,
+          conversationSecondaryLabel: event.conversationSecondaryLabel
+        }),
+        icon: "/favicon.ico",
+        tag: `wa:${event.waConversationId}:${event.waMessageId}`
+      });
+      notification.onclick = () => {
+        window.focus();
+        setSelectedConversationId(event.waConversationId);
+        notification.close();
+      };
     });
 
     socket.on("wa.message.updated", (event: {
@@ -598,7 +637,13 @@ export function useWaWorkspace(session: Session | null) {
       current.some((item) => item.jid === mention.jid) ? current : [...current, mention]
     );
     setComposerText((current) => {
-      const nextToken = `@${mention.label}`;
+      const mentionToken = deriveMentionToken(mention);
+      if (!mentionToken) return current;
+      const nextToken = `@${mentionToken}`;
+      const mentionQueryMatch = current.match(/(?:^|\s)@([^\s@]*)$/);
+      if (mentionQueryMatch) {
+        return current.replace(/@([^\s@]*)$/, `${nextToken} `);
+      }
       return current.includes(nextToken) ? current : `${current}${current.trim().length ? " " : ""}${nextToken} `;
     });
   }, []);

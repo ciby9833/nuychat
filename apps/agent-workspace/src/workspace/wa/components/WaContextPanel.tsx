@@ -29,14 +29,8 @@ export function WaContextPanel(props: WaContextPanelProps) {
   }, [focusedParticipantJid]);
   const title =
     detail?.conversation.displayName ||
-    detail?.conversation.subject ||
-    detail?.conversation.contactPhoneE164 ||
-    detail?.conversation.contactJid ||
-    detail?.conversation.chatJid ||
     t("wa.context.noConversation");
-  const subtitle = detail?.conversation.conversationType === "group"
-    ? detail?.conversation.chatJid
-    : (detail?.conversation.contactPhoneE164 || detail?.conversation.contactJid || t("wa.context.directChat"));
+  const subtitle = detail?.conversation.secondaryLabel || t("wa.context.directChat");
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#f7f8fa] text-[#111b21]">
@@ -97,8 +91,8 @@ export function WaContextPanel(props: WaContextPanelProps) {
                     : "border-[#d1d7db] bg-white"
                 }`}
               >
-                <div className="font-medium text-[#111b21]">{member.displayName || member.participantJid}</div>
-                <div className="mt-1 truncate text-[#667781]">{member.participantJid}</div>
+                <div className="font-medium text-[#111b21]">{member.displayName || member.phoneE164 || member.participantJid}</div>
+                <div className="mt-1 truncate text-[#667781]">{member.phoneE164 || member.participantJid}</div>
                 <div className="mt-1 text-[#667781]">{member.isAdmin ? t("wa.context.admin") : t("wa.context.member")}</div>
               </div>
             ))}

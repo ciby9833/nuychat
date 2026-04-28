@@ -29,7 +29,7 @@ import {
 } from "./wa-conversation.repository.js";
 import { emitWaConversationProjection } from "./wa-conversation-projection.service.js";
 import { createMissingReferenceGap, resolveGapsForArrivedMessage } from "./wa-reconcile.service.js";
-import { emitWaMessageUpdated } from "./wa-realtime.service.js";
+import { emitWaMessageReceived, emitWaMessageUpdated } from "./wa-realtime.service.js";
 
 function asString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -110,7 +110,16 @@ async function ingestSingleMessage(
     providerMessageId
   });
   if (existingMessage) {
-    return conversation.waConversationId;
+    return {
+      waConversationId: conversation.waConversationId,
+      waMessageId: existingMessage.waMessageId,
+      direction: mapped.direction,
+      messageType: mapped.messageType,
+      bodyText: mapped.bodyText ?? null,
+      senderDisplayName: pushName,
+      participantJid: mapped.participantJid ?? null,
+      providerMessageId
+    };
   }
 
   const savedMessage = await insertWaMessage(trx, {
@@ -218,7 +227,16 @@ async function ingestSingleMessage(
     }
   }
 
-  return conversation.waConversationId;
+  return {
+    waConversationId: conversation.waConversationId,
+    waMessageId: String(savedMessage.wa_message_id),
+    direction: mapped.direction,
+    messageType: mapped.messageType,
+    bodyText: mapped.bodyText ?? null,
+    senderDisplayName: pushName,
+    participantJid: mapped.participantJid ?? null,
+    providerMessageId
+  };
 }
 
 export async function ingestBaileysMessagesUpsert(input: {
@@ -227,27 +245,59 @@ export async function ingestBaileysMessagesUpsert(input: {
   messages: WAMessage[];
   type: string;
 }) {
-  const touchedConversationIds = await withTenantTransaction(input.tenantId, async (trx) => {
-    const touched = new Set<string>();
+  const touchedResults = await withTenantTransaction(input.tenantId, async (trx) => {
+    const touched: Array<{
+      waConversationId: string;
+      waMessageId: string;
+      direction: string;
+      messageType: string;
+      bodyText: string | null;
+      senderDisplayName: string | null;
+      participantJid: string | null;
+      providerMessageId: string;
+    }> = [];
     for (const message of input.messages) {
-      const waConversationId = await ingestSingleMessage(trx, {
+      const result = await ingestSingleMessage(trx, {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
         message,
         eventType: `MESSAGES_UPSERT:${input.type}`
       });
-      if (waConversationId) {
-        touched.add(waConversationId);
+      if (result) {
+        touched.push(result);
       }
     }
-    return Array.from(touched);
+    return touched;
   });
-  for (const waConversationId of touchedConversationIds) {
-    await emitWaConversationProjection({
+  const conversationIds = Array.from(new Set(touchedResults.map((item) => item.waConversationId)));
+  const conversations = new Map<string, Awaited<ReturnType<typeof emitWaConversationProjection>>>();
+  for (const waConversationId of conversationIds) {
+    const conversation = await emitWaConversationProjection({
       tenantId: input.tenantId,
       waAccountId: input.waAccountId,
       waConversationId
     });
+    conversations.set(waConversationId, conversation);
+  }
+  for (const result of touchedResults) {
+    const conversation = conversations.get(result.waConversationId) ?? null;
+    if (result.direction === "inbound" && conversation) {
+      emitWaMessageReceived({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        waConversationId: result.waConversationId,
+        waMessageId: result.waMessageId,
+        providerMessageId: result.providerMessageId,
+        direction: result.direction,
+        messageType: result.messageType,
+        bodyText: result.bodyText,
+        senderDisplayName: result.senderDisplayName,
+        participantJid: result.participantJid,
+        conversationDisplayName: conversation.displayName,
+        conversationSecondaryLabel: conversation.secondaryLabel ?? null,
+        unreadCount: conversation.unreadCount
+      });
+    }
   }
   return { ok: true, count: input.messages.length };
 }

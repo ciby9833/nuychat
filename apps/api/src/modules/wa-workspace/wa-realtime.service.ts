@@ -67,6 +67,40 @@ export function emitWaMessageUpdated(input: {
   });
 }
 
+export function emitWaMessageReceived(input: {
+  tenantId: string;
+  waAccountId: string;
+  waConversationId: string;
+  waMessageId: string;
+  providerMessageId?: string | null;
+  direction: string;
+  messageType: string;
+  bodyText?: string | null;
+  senderDisplayName?: string | null;
+  participantJid?: string | null;
+  conversationDisplayName?: string | null;
+  conversationSecondaryLabel?: string | null;
+  unreadCount: number;
+  occurredAt?: string;
+}) {
+  realtimeEventBus.emitEvent("wa.message.received", {
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    waConversationId: input.waConversationId,
+    waMessageId: input.waMessageId,
+    providerMessageId: input.providerMessageId ?? null,
+    direction: input.direction,
+    messageType: input.messageType,
+    bodyText: input.bodyText ?? null,
+    senderDisplayName: input.senderDisplayName ?? null,
+    participantJid: input.participantJid ?? null,
+    conversationDisplayName: input.conversationDisplayName ?? null,
+    conversationSecondaryLabel: input.conversationSecondaryLabel ?? null,
+    unreadCount: input.unreadCount,
+    occurredAt: input.occurredAt ?? new Date().toISOString()
+  });
+}
+
 export function emitWaConversationUpdated(input: {
   tenantId: string;
   waAccountId: string;
@@ -80,6 +114,8 @@ export function emitWaConversationUpdated(input: {
     contactJid: string | null;
     contactName: string | null;
     contactPhoneE164: string | null;
+    secondaryLabel?: string | null;
+    listCategory?: string | null;
     conversationStatus: string;
     currentReplierMembershipId: string | null;
     currentReplierName: string | null;

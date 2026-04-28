@@ -63,6 +63,19 @@ function deriveConversationDisplayName(row: Record<string, unknown>) {
   );
 }
 
+function deriveConversationListCategory(conversationType: string | null) {
+  return conversationType === "group" ? "groups" : "chats";
+}
+
+function deriveConversationSecondaryLabel(input: {
+  conversationType: string | null;
+  contactPhoneE164: string | null;
+  contactJid: string | null;
+}) {
+  if (input.conversationType === "group") return null;
+  return input.contactPhoneE164 ?? input.contactJid ?? null;
+}
+
 type ResolvedContactProfile = {
   displayName: string | null;
   phoneE164: string | null;
@@ -146,16 +159,25 @@ function resolveContactProfile(
 }
 
 function mapConversation(row: Record<string, unknown>) {
+  const conversationType = asString(row.conversation_type);
+  const contactJid = row.contact_jid ? String(row.contact_jid) : null;
+  const contactPhoneE164 = row.contact_phone_e164 ? String(row.contact_phone_e164) : null;
   return {
     waConversationId: String(row.wa_conversation_id),
     waAccountId: String(row.wa_account_id),
     chatJid: String(row.chat_jid),
     conversationType: String(row.conversation_type),
+    listCategory: deriveConversationListCategory(conversationType),
     subject: row.subject ? String(row.subject) : null,
     displayName: deriveConversationDisplayName(row),
-    contactJid: row.contact_jid ? String(row.contact_jid) : null,
+    contactJid,
     contactName: row.contact_name ? String(row.contact_name) : null,
-    contactPhoneE164: row.contact_phone_e164 ? String(row.contact_phone_e164) : null,
+    contactPhoneE164,
+    secondaryLabel: deriveConversationSecondaryLabel({
+      conversationType,
+      contactPhoneE164,
+      contactJid
+    }),
     conversationStatus: String(row.conversation_status),
     currentReplierMembershipId: row.current_replier_membership_id ? String(row.current_replier_membership_id) : null,
     currentReplierName: row.current_replier_name ? String(row.current_replier_name) : null,
@@ -278,6 +300,14 @@ function mentionFallbackLabel(jid: string, phoneE164: string | null) {
   if (phoneE164) return phoneE164;
   const local = jid.split("@")[0] ?? jid;
   return local || jid;
+}
+
+function deriveMentionTokenForParticipant(participantJid: string, phoneE164: string | null) {
+  const phoneDigits = phoneE164?.replace(/[^\d]/g, "") ?? "";
+  if (phoneDigits) return phoneDigits;
+  const local = participantJid.split("@")[0] ?? participantJid;
+  const normalizedLocal = local.split(":")[0] ?? local;
+  return normalizedLocal.replace(/[^\p{L}\p{N}_-]/gu, "") || normalizedLocal;
 }
 
 function resolveMentionView(input: {
@@ -511,18 +541,22 @@ export async function getWaConversationById(trx: Knex.Transaction, tenantId: str
   ]);
 
   const isDirect = String(row.conversation_type) === "direct";
+  const contactName = asString(row.contact_name) ?? contactProfile?.displayName ?? (isDirect ? fallbackPushName : null);
+  const contactPhoneE164 = asString(row.contact_phone_e164) ?? contactProfile?.phoneE164 ?? (isDirect ? fallbackPhone : null);
+  const displayName =
+    contactName ??
+    contactPhoneE164 ??
+    deriveConversationDisplayName(row);
   return {
     ...mapConversation(row),
-    contactName: asString(row.contact_name) ?? contactProfile?.displayName ?? (isDirect ? fallbackPushName : null),
-    contactPhoneE164: asString(row.contact_phone_e164) ?? contactProfile?.phoneE164 ?? (isDirect ? fallbackPhone : null),
-    displayName:
-      asString(row.contact_name) ??
-      contactProfile?.displayName ??
-      (isDirect ? fallbackPushName : null) ??
-      asString(row.contact_phone_e164) ??
-      contactProfile?.phoneE164 ??
-      (isDirect ? fallbackPhone : null) ??
-      deriveConversationDisplayName(row)
+    contactName,
+    contactPhoneE164,
+    displayName,
+    secondaryLabel: deriveConversationSecondaryLabel({
+      conversationType: String(row.conversation_type),
+      contactPhoneE164,
+      contactJid: asString(row.contact_jid)
+    })
   };
 }
 
@@ -608,25 +642,29 @@ export async function listWaConversations(
         asString(record.contact_phone_e164),
         phoneByConversation.get(String(row.wa_conversation_id)) ?? null
       ]);
+      const contactName =
+        asString(record.contact_name) ??
+        profile?.displayName ??
+        (isDirect ? (pushNameByConversation.get(String(row.wa_conversation_id)) ?? null) : null) ??
+        null;
+      const contactPhoneE164 =
+        asString(record.contact_phone_e164) ??
+        profile?.phoneE164 ??
+        (isDirect ? (phoneByConversation.get(String(row.wa_conversation_id)) ?? null) : null);
+      const displayName =
+        contactName ??
+        contactPhoneE164 ??
+        deriveConversationDisplayName(record);
       return {
         ...mapConversation(record),
-        contactName:
-          asString(record.contact_name) ??
-          profile?.displayName ??
-          (isDirect ? (pushNameByConversation.get(String(row.wa_conversation_id)) ?? null) : null) ??
-          null,
-        contactPhoneE164:
-          asString(record.contact_phone_e164) ??
-          profile?.phoneE164 ??
-          (isDirect ? (phoneByConversation.get(String(row.wa_conversation_id)) ?? null) : null),
-        displayName:
-          asString(record.contact_name) ??
-          profile?.displayName ??
-          (isDirect ? (pushNameByConversation.get(String(row.wa_conversation_id)) ?? null) : null) ??
-          asString(record.contact_phone_e164) ??
-          profile?.phoneE164 ??
-          (isDirect ? (phoneByConversation.get(String(row.wa_conversation_id)) ?? null) : null) ??
-          deriveConversationDisplayName(record),
+        contactName,
+        contactPhoneE164,
+        displayName,
+        secondaryLabel: deriveConversationSecondaryLabel({
+          conversationType: String(record.conversation_type),
+          contactPhoneE164,
+          contactJid: asString(record.contact_jid)
+        }),
         avatarUrl: asString(record.avatar_url) ?? profile?.avatarUrl ?? null
       };
     })(),
@@ -680,18 +718,22 @@ export async function getWaConversationListItem(
   ]);
 
   const isDirect = String(row.conversation_type) === "direct";
+  const contactName = asString(row.contact_name) ?? contactProfile?.displayName ?? (isDirect ? fallbackPushName : null);
+  const contactPhoneE164 = asString(row.contact_phone_e164) ?? contactProfile?.phoneE164 ?? (isDirect ? fallbackPhone : null);
+  const displayName =
+    contactName ??
+    contactPhoneE164 ??
+    deriveConversationDisplayName(row);
   return {
     ...mapConversation(row),
-    contactName: asString(row.contact_name) ?? contactProfile?.displayName ?? (isDirect ? fallbackPushName : null),
-    contactPhoneE164: asString(row.contact_phone_e164) ?? contactProfile?.phoneE164 ?? (isDirect ? fallbackPhone : null),
-    displayName:
-      asString(row.contact_name) ??
-      contactProfile?.displayName ??
-      (isDirect ? fallbackPushName : null) ??
-      asString(row.contact_phone_e164) ??
-      contactProfile?.phoneE164 ??
-      (isDirect ? fallbackPhone : null) ??
-      deriveConversationDisplayName(row),
+    contactName,
+    contactPhoneE164,
+    displayName,
+    secondaryLabel: deriveConversationSecondaryLabel({
+      conversationType: String(row.conversation_type),
+      contactPhoneE164,
+      contactJid: asString(row.contact_jid)
+    }),
     lastMessagePreview: messageRow?.body_text
       ? String(messageRow.body_text)
       : (messageRow ? extractBodyTextFromPayload(messageRow.provider_payload) : null)
@@ -1264,6 +1306,16 @@ export async function getConversationMembers(
         memberRowId: String(row.member_row_id),
         participantJid,
         participantType: String(row.participant_type),
+        phoneE164:
+          profile?.phoneE164 ??
+          fallbackByParticipant.get(participantJid)?.phone ??
+          null,
+        mentionToken: deriveMentionTokenForParticipant(
+          participantJid,
+          profile?.phoneE164 ??
+            fallbackByParticipant.get(participantJid)?.phone ??
+            null
+        ),
         displayName:
           (row.display_name ? String(row.display_name) : null) ??
           profile?.displayName ??

@@ -16,6 +16,8 @@ import type { WaAttachment, WaConversationDetail, WaMessageItem, WaReaction } fr
 type ComposerMention = {
   jid: string;
   label: string;
+  mentionToken: string;
+  phoneE164?: string | null;
 };
 
 // ─── Prop types ──────────────────────────────────────────────────────────────
@@ -124,6 +126,18 @@ function mentionAliases(mention: WaMessageItem["mentions"][number]) {
     phoneDigits ? `@${phoneDigits}` : null,
     mention.phoneE164 ? `@${mention.phoneE164}` : null
   ].filter((value): value is string => Boolean(value))));
+}
+
+function normalizeMentionToken(value: string | null | undefined) {
+  return (value ?? "").replace(/[^\p{L}\p{N}_-]/gu, "");
+}
+
+function deriveMentionToken(candidate: ComposerMention) {
+  const preferred = normalizeMentionToken(candidate.mentionToken);
+  if (preferred) return preferred;
+  const localPart = candidate.jid.split("@")[0] ?? candidate.jid;
+  const normalizedLocal = localPart.split(":")[0] ?? localPart;
+  return normalizeMentionToken(normalizedLocal);
 }
 
 function hrefForMessageUrl(value: string) {
@@ -542,17 +556,15 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
   const token = session.accessToken;
   const [mentionPickerOpen, setMentionPickerOpen] = useState(false);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const title =
     detail?.conversation.displayName ||
-    detail?.conversation.subject ||
-    detail?.conversation.contactJid ||
-    detail?.conversation.chatJid ||
     t("wa.chat.selectConversation");
   const currentReplier = detail?.conversation.currentReplierName || t("wa.chat.unassigned");
   const headerMeta = detail?.conversation.conversationType === "group"
     ? t("wa.context.memberCount", { count: detail.members.length })
-    : detail?.conversation.contactPhoneE164 || detail?.conversation.contactJid || t("wa.chat.directChat");
+    : detail?.conversation.secondaryLabel || t("wa.chat.directChat");
 
   // ── Scroll ────────────────────────────────────────────────────────────────
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -593,6 +605,14 @@ export function WaChatPanel(props: WaChatPanelProps) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [conversationId, messagesLength, firstUnreadCount]);
+
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "0px";
+    const nextHeight = Math.min(Math.max(composer.scrollHeight, 44), 140);
+    composer.style.height = `${nextHeight}px`;
+  }, [composerText]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -705,15 +725,18 @@ export function WaChatPanel(props: WaChatPanelProps) {
         .filter((member) => member.participantJid)
         .map((member) => ({
           jid: member.participantJid,
-          label: member.displayName || member.participantJid.split("@")[0]
+          label: member.displayName || member.phoneE164 || member.participantJid.split("@")[0],
+          mentionToken: member.mentionToken,
+          phoneE164: member.phoneE164
         }))
     : [];
   const mentionQueryMatch = composerText.match(/(?:^|\s)@([^\s@]*)$/);
   const mentionQuery = mentionQueryMatch?.[1]?.trim().toLowerCase() ?? "";
   const filteredMentionCandidates = mentionQuery
-    ? mentionCandidates.filter((member) =>
+      ? mentionCandidates.filter((member) =>
         member.label.toLowerCase().includes(mentionQuery) ||
-        member.jid.split("@")[0].toLowerCase().includes(mentionQuery)
+        member.jid.split("@")[0].toLowerCase().includes(mentionQuery) ||
+        deriveMentionToken(member).toLowerCase().includes(mentionQuery)
       )
     : mentionCandidates;
   const showMentionPicker = mentionCandidates.length > 0 && (mentionPickerOpen || Boolean(mentionQueryMatch));
@@ -830,7 +853,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                         isSticker
                           // Stickers: transparent, no bubble background
                           ? "max-w-[180px]"
-                          : `max-w-[72%] rounded-[12px] px-3 py-2 shadow-[0_1px_2px_rgba(11,20,26,0.12)] ${mine ? "bg-[#d9fdd3] text-[#111b21]" : "bg-white text-[#111b21]"}`
+                          : `relative max-w-[72%] rounded-[14px] px-3 py-2.5 shadow-[0_1px_2px_rgba(11,20,26,0.12)] ${mine ? "bg-[#d9fdd3] text-[#111b21]" : "bg-white text-[#111b21]"}`
                       }
                     >
                       {/* Sender name (groups) */}
@@ -872,15 +895,14 @@ export function WaChatPanel(props: WaChatPanelProps) {
 
                       {/* Timestamp + delivery status + action buttons */}
                       {!isSticker ? (
-                        <div className="mt-1.5 flex items-center justify-between gap-3">
-                          {/* Hover action buttons */}
-                          <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                        <div className="mt-1.5 flex items-center justify-end gap-3">
+                          <div className={`absolute ${mine ? "left-0 -translate-x-[calc(100%+8px)]" : "right-0 translate-x-[calc(100%+8px)]"} top-2 hidden items-center gap-1 rounded-full bg-white/95 px-1.5 py-1 shadow-[0_4px_14px_rgba(17,27,33,0.16)] transition-opacity group-hover:flex`}>
                             {/* Disable reply on failed outbound messages — they have no providerMessageId
                                 so Baileys cannot build a proper quote context. */}
                             {!(mine && message.deliveryStatus === "failed" && !message.providerMessageId) && (
                               <button
                                 type="button"
-                                className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
+                                className="rounded-full px-2 py-1 text-[11px] text-[#54656f] hover:bg-[#f0f2f5]"
                                 onClick={() => onReplyToMessage(message)}
                               >
                                 {t("wa.chat.reply")}
@@ -888,7 +910,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                             )}
                             <button
                               type="button"
-                              className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
+                              className="rounded-full px-2 py-1 text-[11px] text-[#54656f] hover:bg-[#f0f2f5]"
                               onClick={() => onSendReaction(message, "👍")}
                             >
                               👍
@@ -896,7 +918,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                             {mine && message.messageType === "text" && message.providerMessageId && message.deliveryStatus !== "revoked" ? (
                               <button
                                 type="button"
-                                className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
+                                className="rounded-full px-2 py-1 text-[11px] text-[#54656f] hover:bg-[#f0f2f5]"
                                 onClick={() => {
                                   const nextText = window.prompt(t("wa.chat.editPrompt"), message.bodyText ?? "");
                                   if (nextText != null && nextText.trim() && nextText.trim() !== (message.bodyText ?? "").trim()) {
@@ -910,7 +932,7 @@ export function WaChatPanel(props: WaChatPanelProps) {
                             {message.providerMessageId && message.deliveryStatus !== "revoked" ? (
                               <button
                                 type="button"
-                                className="rounded-full px-2 py-0.5 text-[11px] text-[#54656f] hover:bg-black/5"
+                                className="rounded-full px-2 py-1 text-[11px] text-[#54656f] hover:bg-[#f0f2f5]"
                                 onClick={() => {
                                   const scope = mine && window.confirm(t("wa.chat.deleteForEveryoneConfirm"))
                                     ? "everyone"
@@ -922,7 +944,6 @@ export function WaChatPanel(props: WaChatPanelProps) {
                               </button>
                             ) : null}
                           </div>
-                          {/* Timestamp + tick */}
                           <div className="ml-auto flex items-center gap-1.5 text-[11px] text-[#667781]">
                             <span>{bubbleTimestamp(message)}</span>
                             {message.editedAt ? <span>{t("wa.chat.edited")}</span> : null}
@@ -1026,73 +1047,75 @@ export function WaChatPanel(props: WaChatPanelProps) {
         ) : null}
 
         <div className="flex items-end gap-3">
-          <label className="flex h-10 cursor-pointer items-center gap-1.5 rounded-full border border-[#d1d7db] bg-white px-4 text-xs text-[#54656f] transition-colors hover:bg-[#f5f6f6]">
-            <span>📎</span>
-            <span>{t("wa.chat.attachment")}</span>
-            <input type="file" multiple className="hidden" onChange={handleFileInput} />
-          </label>
-          {mentionCandidates.length > 0 ? (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setMentionPickerOpen((current) => !current)}
-                className="flex h-10 items-center gap-1.5 rounded-full border border-[#d1d7db] bg-white px-4 text-xs font-medium text-[#54656f] transition-colors hover:bg-[#f5f6f6]"
-              >
-                <span>@</span>
-                <span>{t("wa.chat.mention")}</span>
-              </button>
-              {showMentionPicker ? (
-                <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 max-h-64 w-64 overflow-auto rounded-[12px] border border-[#d1d7db] bg-white p-2 shadow-[0_12px_32px_rgba(17,27,33,0.18)]">
-                  <div className="px-2 pb-2 text-[11px] font-medium uppercase tracking-wide text-[#667781]">
-                    {t("wa.chat.mentionMembers")}
+          <div className="relative flex min-h-[56px] flex-1 items-end gap-2 rounded-[14px] border border-[#d1d7db] bg-white px-3 py-2 shadow-[0_1px_2px_rgba(17,27,33,0.05)]">
+            <label className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-lg text-[#54656f] transition-colors hover:bg-[#f0f2f5]">
+              <span>📎</span>
+              <span className="sr-only">{t("wa.chat.attachment")}</span>
+              <input type="file" multiple className="hidden" onChange={handleFileInput} />
+            </label>
+            {mentionCandidates.length > 0 ? (
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setMentionPickerOpen((current) => !current)}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-[15px] font-medium text-[#54656f] transition-colors hover:bg-[#f0f2f5]"
+                >
+                  <span>@</span>
+                </button>
+                {showMentionPicker ? (
+                  <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 max-h-64 w-64 overflow-auto rounded-[12px] border border-[#d1d7db] bg-white p-2 shadow-[0_12px_32px_rgba(17,27,33,0.18)]">
+                    <div className="px-2 pb-2 text-[11px] font-medium uppercase tracking-wide text-[#667781]">
+                      {t("wa.chat.mentionMembers")}
+                    </div>
+                    <div className="space-y-1">
+                      {filteredMentionCandidates.map((member) => (
+                        <button
+                          key={member.jid}
+                          type="button"
+                          onClick={() => {
+                            onAddMention(member);
+                            setMentionPickerOpen(false);
+                          }}
+                          className="flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left hover:bg-[#f5f6f6]"
+                        >
+                          <span className="truncate text-sm text-[#111b21]">{member.label}</span>
+                          <span className="ml-3 truncate text-[11px] text-[#667781]">{member.phoneE164 || member.jid.split("@")[0]}</span>
+                        </button>
+                      ))}
+                      {filteredMentionCandidates.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-[#667781]">{t("wa.chat.noMentionMatches")}</div>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    {filteredMentionCandidates.map((member) => (
-                      <button
-                        key={member.jid}
-                        type="button"
-                        onClick={() => {
-                          onAddMention(member);
-                          setMentionPickerOpen(false);
-                        }}
-                        className="flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left hover:bg-[#f5f6f6]"
-                      >
-                        <span className="truncate text-sm text-[#111b21]">{member.label}</span>
-                        <span className="ml-3 truncate text-[11px] text-[#667781]">{member.jid.split("@")[0]}</span>
-                      </button>
-                    ))}
-                    {filteredMentionCandidates.length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-[#667781]">{t("wa.chat.noMentionMatches")}</div>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <textarea
-            value={composerText}
-            onChange={(event) => {
-              onComposerTextChange(event.target.value);
-              if (!event.target.value.match(/(?:^|\s)@([^\s@]*)$/)) {
-                setMentionPickerOpen(false);
-              }
-            }}
-            placeholder={t("wa.chat.composerPlaceholder")}
-            rows={1}
-            className="min-h-[44px] max-h-[140px] flex-1 resize-none rounded-[12px] border border-[#d1d7db] bg-white px-4 py-3 text-sm text-[#111b21] outline-none placeholder:text-[#667781]"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSend();
-              }
-            }}
-            onPaste={handleComposerPaste}
-          />
+                ) : null}
+              </div>
+            ) : null}
+            <textarea
+              ref={composerRef}
+              value={composerText}
+              onChange={(event) => {
+                onComposerTextChange(event.target.value);
+                if (!event.target.value.match(/(?:^|\s)@([^\s@]*)$/)) {
+                  setMentionPickerOpen(false);
+                }
+              }}
+              placeholder={t("wa.chat.composerPlaceholder")}
+              rows={1}
+              className="min-h-[40px] max-h-[140px] flex-1 resize-none border-0 bg-transparent px-1 py-2 text-sm leading-6 text-[#111b21] outline-none placeholder:text-[#667781]"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  onSend();
+                }
+              }}
+              onPaste={handleComposerPaste}
+            />
+          </div>
           <button
             type="button"
             onClick={onSend}
             disabled={!detail?.permissions.canReply || actionLoading !== null}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-[#00a884] text-lg text-white transition-colors hover:bg-[#017a61] disabled:opacity-50"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#00a884] text-lg text-white transition-colors hover:bg-[#017a61] disabled:opacity-50"
           >
             {actionLoading === "send" ? "…" : "➤"}
           </button>

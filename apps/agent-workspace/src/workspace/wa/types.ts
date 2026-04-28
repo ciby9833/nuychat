@@ -48,11 +48,13 @@ export type WaConversationItem = {
   waAccountId: string;
   chatJid: string;
   conversationType: string;
+  listCategory: "chats" | "groups";
   subject: string | null;
   displayName: string | null;
   contactJid: string | null;
   contactName: string | null;
   contactPhoneE164: string | null;
+  secondaryLabel: string | null;
   conversationStatus: string;
   currentReplierMembershipId: string | null;
   currentReplierName: string | null;
@@ -68,6 +70,8 @@ export type WaConversationMember = {
   memberRowId: string;
   participantJid: string;
   participantType: string;
+  phoneE164: string | null;
+  mentionToken: string;
   displayName: string | null;
   isAdmin: boolean;
   joinedAt: string;

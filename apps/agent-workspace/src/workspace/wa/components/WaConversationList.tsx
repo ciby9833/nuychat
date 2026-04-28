@@ -36,8 +36,7 @@ type WaConversationListProps = {
 
 /** Derives which tab a conversation belongs to from its chatJid suffix. */
 function getConversationTab(conversation: WaConversationItem): ConversationTab {
-  if (conversation.chatJid.endsWith("@g.us") || conversation.conversationType === "group") return "groups";
-  return "chats";
+  return conversation.listCategory;
 }
 
 export function WaConversationList(props: WaConversationListProps) {
@@ -185,7 +184,8 @@ export function WaConversationList(props: WaConversationListProps) {
 
       {/* ── Search + filters ────────────────────────────────────────────────── */}
       <div className="border-b border-[#d1d7db] bg-white px-3 py-3">
-        <div className="rounded-[10px] bg-[#f0f2f5] px-3 py-2">
+        <div className="flex items-center gap-2 rounded-[10px] bg-[#f0f2f5] px-3 py-2">
+          <span className="text-sm text-[#667781]">⌕</span>
           <input
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
@@ -263,11 +263,9 @@ export function WaConversationList(props: WaConversationListProps) {
         <div>
           {visibleConversations.map((conversation) => {
             const active = conversation.waConversationId === selectedConversationId;
-            const title = conversation.displayName || conversation.subject || conversation.contactJid || conversation.chatJid;
-            const isGroup = conversation.chatJid.endsWith("@g.us") || conversation.conversationType === "group";
-            const secondary = isGroup
-              ? conversation.chatJid
-              : (conversation.contactPhoneE164 || conversation.contactJid || conversation.chatJid);
+            const title = conversation.displayName || t("wa.conversationList.noMessage");
+            const isGroup = conversation.listCategory === "groups";
+            const secondary = conversation.secondaryLabel;
             const subtitle = conversation.lastMessagePreview || secondary || t("wa.conversationList.noMessage");
 
             // Avatar letter / icon
@@ -281,12 +279,13 @@ export function WaConversationList(props: WaConversationListProps) {
                 key={conversation.waConversationId}
                 type="button"
                 onClick={() => onSelectConversation(conversation.waConversationId)}
-                className={`w-full border-b border-[#e9edef] px-3 py-3 text-left transition-colors ${
+                className={`group relative w-full border-b border-[#e9edef] px-3 py-3 text-left transition-colors ${
                   active
                     ? "bg-[#f0f2f5]"
                     : "bg-white hover:bg-[#f5f6f6]"
                 }`}
               >
+                {active ? <div className="absolute inset-y-0 left-0 w-1 bg-[#00a884]" /> : null}
                 <div className="flex items-start gap-3">
                   {conversation.avatarUrl ? (
                     <img
@@ -303,15 +302,17 @@ export function WaConversationList(props: WaConversationListProps) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[16px] font-normal text-[#111b21]">{title}</div>
-                        <div className="mt-0.5 truncate text-[13px] text-[#667781]">{secondary}</div>
+                        <div className={`truncate text-[16px] ${conversation.unreadCount > 0 ? "font-semibold" : "font-normal"} text-[#111b21]`}>{title}</div>
+                        {secondary ? (
+                          <div className="mt-0.5 truncate text-[13px] text-[#667781]">{secondary}</div>
+                        ) : null}
                       </div>
                       <div className="shrink-0 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <span className="text-[11px] text-[#667781]">{formatListTime(conversation.lastMessageAt)}</span>
+                          <span className={`text-[11px] ${conversation.unreadCount > 0 ? "text-[#00a884]" : "text-[#667781]"}`}>{formatListTime(conversation.lastMessageAt)}</span>
                           <button
                             type="button"
-                            className="rounded-full px-1.5 py-0.5 text-[13px] text-[#667781] hover:bg-[#e9edef]"
+                            className={`rounded-full px-1.5 py-0.5 text-[13px] text-[#667781] transition-opacity hover:bg-[#e9edef] ${active ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               onArchiveConversation(conversation.waConversationId, !archivedOnly);
@@ -328,7 +329,7 @@ export function WaConversationList(props: WaConversationListProps) {
                         ) : null}
                       </div>
                     </div>
-                    <div className="mt-1 truncate text-[14px] text-[#667781]">{subtitle}</div>
+                    <div className={`mt-1 truncate text-[14px] ${conversation.unreadCount > 0 ? "text-[#111b21]" : "text-[#667781]"}`}>{subtitle}</div>
                     <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-[#667781]">
                       <span>{conversation.currentReplierName || t("wa.conversationList.unassigned")}</span>
                       <span>{conversation.accountDisplayName || t("wa.common.waShort")}</span>

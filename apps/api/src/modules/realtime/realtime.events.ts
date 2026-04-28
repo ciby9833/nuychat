@@ -122,6 +122,23 @@ type WaMessageUpdatedEvent = RealtimeEventBase & {
   occurredAt: string;
 };
 
+type WaMessageReceivedEvent = RealtimeEventBase & {
+  tenantId: string;
+  waAccountId: string;
+  waConversationId: string;
+  waMessageId: string;
+  providerMessageId: string | null;
+  direction: string;
+  messageType: string;
+  bodyText: string | null;
+  senderDisplayName: string | null;
+  participantJid: string | null;
+  conversationDisplayName: string | null;
+  conversationSecondaryLabel: string | null;
+  unreadCount: number;
+  occurredAt: string;
+};
+
 type WaConversationUpdatedEvent = RealtimeEventBase & {
   tenantId: string;
   waAccountId: string;
@@ -155,6 +172,7 @@ export type RealtimeEvents = {
   "task.updated": TaskUpdatedEvent;
   "wa.account.updated": WaAccountUpdatedEvent;
   "wa.conversation.updated": WaConversationUpdatedEvent;
+  "wa.message.received": WaMessageReceivedEvent;
   "wa.message.updated": WaMessageUpdatedEvent;
 };
 
