@@ -635,6 +635,9 @@ export async function listWaConversations(
   } else {
     query.whereNull("c.archived_at");
   }
+  query.andWhere((builder) => {
+    builder.whereNotNull("c.last_message_at").orWhereRaw("coalesce(c.message_cursor, 0) > 0");
+  });
   if (input.search) {
     const keyword = `%${input.search.trim()}%`;
     query.andWhere((builder) => {

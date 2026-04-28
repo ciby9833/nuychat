@@ -28,7 +28,6 @@ import {
   insertWaMessageReaction,
   listWaConversations,
   listWaContacts,
-  reconcileWaConversationWithSibling,
   patchWaConversationChatState
 } from "./wa-conversation.repository.js";
 import { refreshWaConversationProjection } from "./wa-conversation-projection.service.js";
@@ -99,9 +98,25 @@ function buildStoredReadKey(providerPayload: unknown) {
   };
 }
 
+function extractStoredHistoryKey(providerPayload: unknown) {
+  const key = extractStoredMessageKey(providerPayload);
+  const remoteJid = typeof key?.remoteJid === "string" ? key.remoteJid : null;
+  const id = typeof key?.id === "string" ? key.id : null;
+  if (!remoteJid || !id) return null;
+  return {
+    remoteJid,
+    id,
+    participant: typeof key?.participant === "string" ? key.participant : null,
+    fromMe: Boolean(key?.fromMe),
+    remoteJidAlt: typeof key?.remoteJidAlt === "string" ? key.remoteJidAlt : null,
+    participantAlt: typeof key?.participantAlt === "string" ? key.participantAlt : null,
+    addressingMode: typeof key?.addressingMode === "string" ? key.addressingMode : null
+  };
+}
+
 async function backfillConversationMessagesFromProviderHistory(
   trx: Knex.Transaction,
-  input: { tenantId: string; waConversationId: string; waAccountId: string; chatJid: string }
+  input: { tenantId: string; waConversationId: string; waAccountId: string; chatJid: string; limit?: number }
 ) {
   const account = await trx("wa_accounts")
     .where({
@@ -113,12 +128,28 @@ async function backfillConversationMessagesFromProviderHistory(
   const instanceKey = account?.instance_key ? String(account.instance_key) : null;
   if (!instanceKey) return 0;
 
+  const oldestMessageRow = await trx("wa_messages")
+    .where({
+      tenant_id: input.tenantId,
+      wa_conversation_id: input.waConversationId
+    })
+    .whereNotNull("provider_message_id")
+    .whereNull("deleted_for_me_at")
+    .select("provider_payload", "provider_ts")
+    .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint, logical_seq) asc")
+    .orderBy("logical_seq", "asc")
+    .first<Record<string, unknown> | undefined>();
+  const oldestMessageKey = oldestMessageRow ? extractStoredHistoryKey(oldestMessageRow.provider_payload) : null;
+  const oldestMessageTimestampMs = oldestMessageRow?.provider_ts ? Number(oldestMessageRow.provider_ts) : null;
+
   const snapshot = await waProviderAdapter.fetchHistory({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     instanceKey,
     chatJid: input.chatJid,
-    limit: 100
+    limit: input.limit ?? 100,
+    oldestMessageKey,
+    oldestMessageTimestampMs
   });
   if (!snapshot.messages.length) return 0;
 
@@ -448,27 +479,18 @@ export async function getWorkbenchConversationDetail(
   ]);
   let hydratedMessages = messages;
   let hydratedMembers = members;
-  if (hydratedMessages.length === 0) {
-    const reconciled = await reconcileWaConversationWithSibling(trx, {
-      tenantId: input.tenantId,
-      waConversationId: input.waConversationId
-    });
-    if (reconciled) {
-      hydratedMessages = await getConversationMessages(trx, input.tenantId, input.waConversationId);
-      hydratedMembers = await getConversationMembers(trx, input.tenantId, input.waConversationId);
-      conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId) ?? conversation;
-    }
-  }
-  if (hydratedMessages.length === 0) {
+  if (hydratedMessages.length > 0 && hydratedMessages.length < 20) {
     const inserted = await backfillConversationMessagesFromProviderHistory(trx, {
       tenantId: input.tenantId,
       waConversationId: input.waConversationId,
       waAccountId: conversation.waAccountId,
-      chatJid: conversation.chatJid
+      chatJid: conversation.chatJid,
+      limit: 50
     });
     if (inserted > 0) {
       hydratedMessages = await getConversationMessages(trx, input.tenantId, input.waConversationId);
       conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId) ?? conversation;
+      hydratedMembers = await getConversationMembers(trx, input.tenantId, input.waConversationId);
     }
   }
   return {
@@ -947,7 +969,22 @@ export async function loadMoreWorkbenchMessages(
 ) {
   await assertConversationAccessible(trx, input);
   const limit = Math.min(input.limit ?? 50, 100);
-  const messages = await getConversationMessages(trx, input.tenantId, input.waConversationId, limit, input.beforeLogicalSeq);
+  let messages = await getConversationMessages(trx, input.tenantId, input.waConversationId, limit, input.beforeLogicalSeq);
+  if (messages.length < limit) {
+    const conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId);
+    if (conversation) {
+      const inserted = await backfillConversationMessagesFromProviderHistory(trx, {
+        tenantId: input.tenantId,
+        waConversationId: input.waConversationId,
+        waAccountId: conversation.waAccountId,
+        chatJid: conversation.chatJid,
+        limit
+      });
+      if (inserted > 0) {
+        messages = await getConversationMessages(trx, input.tenantId, input.waConversationId, limit, input.beforeLogicalSeq);
+      }
+    }
+  }
   return {
     messages,
     hasMore: messages.length >= limit

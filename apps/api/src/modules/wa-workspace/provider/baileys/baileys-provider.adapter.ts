@@ -8,6 +8,7 @@
  */
 import {
   createBaileysLoginTicket,
+  fetchBaileysHistoryOnDemand,
   getBaileysHistorySnapshot,
   logoutBaileysRuntime,
   markBaileysConversationRead,
@@ -166,7 +167,28 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
     chatJid: string;
     cursor?: string | null;
     limit?: number;
+    oldestMessageKey?: {
+      remoteJid: string;
+      id: string;
+      participant?: string | null;
+      fromMe?: boolean;
+      remoteJidAlt?: string | null;
+      participantAlt?: string | null;
+      addressingMode?: string | null;
+    } | null;
+    oldestMessageTimestampMs?: number | null;
   }): Promise<WaProviderHistoryResult> {
+    if (input.tenantId && input.waAccountId && input.oldestMessageKey && input.oldestMessageTimestampMs) {
+      await fetchBaileysHistoryOnDemand({
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        instanceKey: input.instanceKey,
+        chatJid: input.chatJid,
+        limit: input.limit ?? 50,
+        oldestMessageKey: input.oldestMessageKey,
+        oldestMessageTimestampMs: input.oldestMessageTimestampMs
+      });
+    }
     return {
       messages: !input.tenantId || !input.waAccountId
         ? []

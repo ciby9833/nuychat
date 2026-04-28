@@ -834,6 +834,79 @@ export function getBaileysHistorySnapshot(input: {
   return bucket.slice(-(input.limit ?? 50));
 }
 
+export async function fetchBaileysHistoryOnDemand(input: {
+  tenantId: string;
+  waAccountId: string;
+  instanceKey: string;
+  chatJid: string;
+  limit: number;
+  oldestMessageKey: {
+    remoteJid: string;
+    id: string;
+    participant?: string | null;
+    fromMe?: boolean;
+    remoteJidAlt?: string | null;
+    participantAlt?: string | null;
+    addressingMode?: string | null;
+  };
+  oldestMessageTimestampMs: number;
+}) {
+  const runtime = await ensureBaileysRuntime({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    instanceKey: input.instanceKey,
+    loginMode: "history_sync"
+  });
+  const beforeSize = (runtime.recentHistory.get(input.chatJid) ?? []).length;
+  const maxWaitMs = 12_000;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      runtime.socket.ev.off("messaging-history.set", onHistorySet);
+      clearTimeout(timeout);
+    };
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
+    const onHistorySet = (event: { messages?: unknown[] }) => {
+      const hasTargetChat = Array.isArray(event?.messages) && event.messages.some((message) => {
+        const mapped = mapBaileysMessageToInbound(message as never);
+        return mapped?.chatJid === input.chatJid;
+      });
+      if (hasTargetChat) {
+        finish(() => resolve());
+      }
+    };
+    const timeout = setTimeout(() => finish(() => resolve()), maxWaitMs);
+    runtime.socket.ev.on("messaging-history.set", onHistorySet);
+
+    void runtime.socket.fetchMessageHistory(
+      Math.max(1, Math.min(input.limit, 50)),
+      {
+        remoteJid: input.oldestMessageKey.remoteJid,
+        id: input.oldestMessageKey.id,
+        participant: input.oldestMessageKey.participant ?? undefined,
+        fromMe: input.oldestMessageKey.fromMe ?? false,
+        ...(input.oldestMessageKey.remoteJidAlt ? { remoteJidAlt: input.oldestMessageKey.remoteJidAlt } : {}),
+        ...(input.oldestMessageKey.participantAlt ? { participantAlt: input.oldestMessageKey.participantAlt } : {}),
+        ...(input.oldestMessageKey.addressingMode ? { addressingMode: input.oldestMessageKey.addressingMode } : {})
+      },
+      input.oldestMessageTimestampMs
+    ).catch((error) => finish(() => reject(error)));
+  });
+
+  const waitUntil = Date.now() + 3_000;
+  while (Date.now() < waitUntil) {
+    const currentSize = (runtime.recentHistory.get(input.chatJid) ?? []).length;
+    if (currentSize > beforeSize) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 export async function createBaileysLoginTicket(input: {
   tenantId: string;
   waAccountId: string;

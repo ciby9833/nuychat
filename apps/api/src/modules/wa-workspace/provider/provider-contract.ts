@@ -117,5 +117,15 @@ export interface WaProviderAdapter {
     chatJid: string;
     cursor?: string | null;
     limit?: number;
+    oldestMessageKey?: {
+      remoteJid: string;
+      id: string;
+      participant?: string | null;
+      fromMe?: boolean;
+      remoteJidAlt?: string | null;
+      participantAlt?: string | null;
+      addressingMode?: string | null;
+    } | null;
+    oldestMessageTimestampMs?: number | null;
   }): Promise<WaProviderHistoryResult>;
 }
