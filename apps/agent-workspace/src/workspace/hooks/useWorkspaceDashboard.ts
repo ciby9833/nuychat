@@ -127,6 +127,7 @@ export function useWorkspaceDashboard() {
     typeof window !== "undefined" ? window.sessionStorage.getItem("nuychat.lastRealtimeEventId") : null
   );
   const waUnreadRefreshTimerRef = useRef<number | null>(null);
+  const waConversationUnreadRef = useRef<Map<string, number>>(new Map());
 
   const [socketStatus, setSocketStatus] = useState("connecting");
   const [view, setView] = useState<SideView>("all");
@@ -786,10 +787,11 @@ export function useWorkspaceDashboard() {
     socket.on("message.sent", handleMessageSentEvent);
     socket.on("message.updated", handleMessageUpdatedEvent);
     socket.on("task.updated", handleTaskUpdatedEvent);
-    socket.on("wa.account.updated", () => {
-      scheduleWaUnreadRefresh();
-    });
-    socket.on("wa.conversation.updated", () => {
+    socket.on("wa.conversation.updated", (event: { conversation: { waConversationId: string; unreadCount: number } }) => {
+      const previousUnread = waConversationUnreadRef.current.get(event.conversation.waConversationId);
+      waConversationUnreadRef.current.set(event.conversation.waConversationId, event.conversation.unreadCount);
+      if (previousUnread == null) return;
+      if (previousUnread === event.conversation.unreadCount) return;
       scheduleWaUnreadRefresh();
     });
 

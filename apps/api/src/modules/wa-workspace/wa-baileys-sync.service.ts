@@ -186,6 +186,7 @@ async function updateSessionSyncMeta(
     loginPhase: typeof meta?.loginPhase === "string" ? meta.loginPhase : null,
     disconnectReason: sessionRow.disconnect_reason ? String(sessionRow.disconnect_reason) : null,
     qrCodeAvailable: typeof meta?.qrCode === "string" && meta.qrCode.length > 0,
+    heartbeatAt: sessionRow.heartbeat_at ? new Date(String(sessionRow.heartbeat_at)).toISOString() : null,
     historySyncedAt: typeof meta?.historySyncedAt === "string" ? meta.historySyncedAt : null,
     chatsSyncedAt: typeof meta?.chatsSyncedAt === "string" ? meta.chatsSyncedAt : null,
     groupsSyncedAt: typeof meta?.groupsSyncedAt === "string" ? meta.groupsSyncedAt : null,
