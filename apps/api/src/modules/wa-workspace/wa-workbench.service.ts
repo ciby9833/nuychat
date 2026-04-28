@@ -18,6 +18,7 @@ import {
   upsertWaAccountSession
 } from "./wa-account.repository.js";
 import {
+  findWaMessageByProviderId,
   getConversationMembers,
   getConversationMessages,
   getOrCreateDirectConversationForContact,
@@ -95,6 +96,83 @@ function buildStoredReadKey(providerPayload: unknown) {
     participantAlt: typeof key?.participantAlt === "string" ? key.participantAlt : null,
     addressingMode: typeof key?.addressingMode === "string" ? key.addressingMode : null
   };
+}
+
+async function backfillConversationMessagesFromProviderHistory(
+  trx: Knex.Transaction,
+  input: { tenantId: string; waConversationId: string; waAccountId: string; chatJid: string }
+) {
+  const account = await trx("wa_accounts")
+    .where({
+      tenant_id: input.tenantId,
+      wa_account_id: input.waAccountId
+    })
+    .select("instance_key")
+    .first<Record<string, unknown> | undefined>();
+  const instanceKey = account?.instance_key ? String(account.instance_key) : null;
+  if (!instanceKey) return 0;
+
+  const snapshot = await waProviderAdapter.fetchHistory({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    instanceKey,
+    chatJid: input.chatJid,
+    limit: 100
+  });
+  if (!snapshot.messages.length) return 0;
+
+  let inserted = 0;
+  for (const message of [...snapshot.messages].sort((left, right) => left.providerTs - right.providerTs)) {
+    const existing = await findWaMessageByProviderId(trx, {
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      providerMessageId: message.providerMessageId
+    });
+    if (existing) continue;
+
+    const row = await insertWaMessage(trx, {
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      waConversationId: input.waConversationId,
+      providerMessageId: message.providerMessageId,
+      direction: message.direction,
+      senderJid: message.senderJid,
+      participantJid: message.participantJid ?? null,
+      senderRole: message.senderRole,
+      bodyText: message.bodyText ?? undefined,
+      providerTs: message.providerTs,
+      messageType: message.messageType,
+      quotedMessageId: message.quotedMessageId ?? null,
+      providerPayload: {},
+      deliveryStatus: message.direction === "outbound" ? "sent" : "received"
+    });
+    if (message.attachment) {
+      await insertWaMessageAttachment(trx, {
+        tenantId: input.tenantId,
+        waMessageId: String(row.wa_message_id),
+        attachmentType: message.attachment.attachmentType,
+        mimeType: message.attachment.mimeType,
+        fileName: message.attachment.fileName,
+        fileSize: message.attachment.fileSize,
+        width: message.attachment.width,
+        height: message.attachment.height,
+        durationMs: message.attachment.durationMs,
+        storageUrl: message.attachment.storageUrl,
+        previewUrl: message.attachment.previewUrl,
+        providerPayload: {}
+      });
+    }
+    inserted += 1;
+  }
+
+  if (inserted > 0) {
+    await refreshWaConversationProjection(trx, {
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      waConversationId: input.waConversationId
+    });
+  }
+  return inserted;
 }
 
 export async function listWorkbenchAccounts(
@@ -206,6 +284,7 @@ export async function listWorkbenchConversations(
     assignedToMe?: boolean;
     type?: string | null;
     archived?: boolean;
+    search?: string | null;
   }
 ) {
   const accounts = await listWorkbenchAccounts(trx, input);
@@ -215,7 +294,8 @@ export async function listWorkbenchConversations(
     waAccountIds,
     assignedToMembershipId: input.assignedToMe ? input.membershipId : null,
     type: input.type ?? null,
-    archived: input.archived ?? false
+    archived: input.archived ?? false,
+    search: input.search ?? null
   });
 }
 
@@ -365,9 +445,22 @@ export async function getWorkbenchConversationDetail(
     getConversationMessages(trx, input.tenantId, input.waConversationId),
     getConversationMembers(trx, input.tenantId, input.waConversationId)
   ]);
+  let hydratedMessages = messages;
+  if (hydratedMessages.length === 0) {
+    const inserted = await backfillConversationMessagesFromProviderHistory(trx, {
+      tenantId: input.tenantId,
+      waConversationId: input.waConversationId,
+      waAccountId: conversation.waAccountId,
+      chatJid: conversation.chatJid
+    });
+    if (inserted > 0) {
+      hydratedMessages = await getConversationMessages(trx, input.tenantId, input.waConversationId);
+      conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId) ?? conversation;
+    }
+  }
   return {
     conversation,
-    messages,
+    messages: hydratedMessages,
     members,
     permissions: {
       canReply:

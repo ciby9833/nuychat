@@ -51,6 +51,8 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
               accounts={vm.accounts}
               accountId={vm.accountId}
               onAccountChange={vm.setAccountId}
+              keyword={vm.searchKeyword}
+              onKeywordChange={vm.setSearchKeyword}
               assignedToMeOnly={vm.assignedToMeOnly}
               onAssignedToMeOnlyChange={vm.setAssignedToMeOnly}
               archivedOnly={vm.archivedOnly}

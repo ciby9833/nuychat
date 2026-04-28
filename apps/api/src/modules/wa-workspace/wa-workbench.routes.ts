@@ -84,14 +84,15 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
 
   app.get("/api/wa/workbench/conversations", async (req) => {
     const auth = requireWaSeatAccess(app, req);
-    const query = req.query as { accountId?: string; assignedToMe?: string; type?: string; archived?: string };
+    const query = req.query as { accountId?: string; assignedToMe?: string; type?: string; archived?: string; search?: string };
     return withTenantTransaction(auth.tenantId, async (trx) =>
       listWorkbenchConversations(trx, {
         ...auth,
         accountId: query.accountId ?? null,
         assignedToMe: query.assignedToMe === "true",
         type: query.type ?? null,
-        archived: query.archived === "true"
+        archived: query.archived === "true",
+        search: query.search ?? null
       })
     );
   });

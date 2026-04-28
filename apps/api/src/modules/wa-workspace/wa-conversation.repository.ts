@@ -564,7 +564,14 @@ export async function getWaConversationById(trx: Knex.Transaction, tenantId: str
 
 export async function listWaConversations(
   trx: Knex.Transaction,
-  input: { tenantId: string; waAccountIds: string[]; assignedToMembershipId?: string | null; type?: string | null; archived?: boolean }
+  input: {
+    tenantId: string;
+    waAccountIds: string[];
+    assignedToMembershipId?: string | null;
+    type?: string | null;
+    archived?: boolean;
+    search?: string | null;
+  }
 ) {
   if (input.waAccountIds.length === 0) return [];
   const query = buildConversationBaseQuery(trx, input.tenantId)
@@ -580,6 +587,25 @@ export async function listWaConversations(
     query.whereNotNull("c.archived_at");
   } else {
     query.whereNull("c.archived_at");
+  }
+  if (input.search) {
+    const keyword = `%${input.search.trim()}%`;
+    query.andWhere((builder) => {
+      builder
+        .whereRaw("coalesce(c.subject, '') ilike ?", [keyword])
+        .orWhereRaw("coalesce(c.contact_name, '') ilike ?", [keyword])
+        .orWhereRaw("coalesce(c.contact_phone_e164, '') ilike ?", [keyword])
+        .orWhereRaw("coalesce(c.contact_jid, '') ilike ?", [keyword])
+        .orWhereRaw("coalesce(c.chat_jid, '') ilike ?", [keyword])
+        .orWhereExists(
+          trx("wa_messages as wm")
+            .select(trx.raw("1"))
+            .whereRaw("wm.tenant_id = c.tenant_id")
+            .whereRaw("wm.wa_conversation_id = c.wa_conversation_id")
+            .whereNull("wm.deleted_for_me_at")
+            .whereRaw("coalesce(wm.body_text, '') ilike ?", [keyword])
+        );
+    });
   }
 
   const rows = await query

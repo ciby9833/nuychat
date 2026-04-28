@@ -16,13 +16,14 @@ export function listWaWorkbenchAccounts(session: Session) {
 
 export function listWaWorkbenchConversations(
   session: Session,
-  input?: { accountId?: string | null; assignedToMe?: boolean; type?: string | null; archived?: boolean }
+  input?: { accountId?: string | null; assignedToMe?: boolean; type?: string | null; archived?: boolean; search?: string | null }
 ) {
   const params = new URLSearchParams();
   if (input?.accountId) params.set("accountId", input.accountId);
   if (input?.assignedToMe) params.set("assignedToMe", "true");
   if (input?.type) params.set("type", input.type);
   if (input?.archived) params.set("archived", "true");
+  if (input?.search) params.set("search", input.search);
   return apiFetch<WaConversationItem[]>(`/api/wa/workbench/conversations${params.toString() ? `?${params}` : ""}`, session);
 }
 

@@ -143,6 +143,7 @@ export function useWaWorkspace(session: Session | null) {
   const [error, setError] = useState<string>("");
   const [assignedToMeOnly, setAssignedToMeOnly] = useState(false);
   const [archivedOnly, setArchivedOnly] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState("");
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -210,7 +211,8 @@ export function useWaWorkspace(session: Session | null) {
       const rows = await listWaWorkbenchConversations(session, {
         accountId,
         assignedToMe: assignedToMeOnly,
-        archived: archivedOnly
+        archived: archivedOnly,
+        search: searchKeyword.trim() || null
       });
       const visibleRows = rows.filter(isSeatVisibleWaConversation);
       setConversations(visibleRows);
@@ -225,7 +227,7 @@ export function useWaWorkspace(session: Session | null) {
     } finally {
       setLoading(false);
     }
-  }, [accountId, archivedOnly, assignedToMeOnly, session]);
+  }, [accountId, archivedOnly, assignedToMeOnly, searchKeyword, session]);
 
   const loadContacts = useCallback(async () => {
     if (!session?.waSeatEnabled || !accountId) {
@@ -233,12 +235,15 @@ export function useWaWorkspace(session: Session | null) {
       return;
     }
     try {
-      const rows = await listWaWorkbenchContacts(session, { accountId });
+      const rows = await listWaWorkbenchContacts(session, {
+        accountId,
+        search: searchKeyword.trim() || null
+      });
       setContacts(rows);
     } catch {
       setContacts([]);
     }
-  }, [accountId, session]);
+  }, [accountId, searchKeyword, session]);
 
   const loadDetail = useCallback(async () => {
     if (!session?.waSeatEnabled || !selectedConversationId) {
@@ -713,6 +718,8 @@ export function useWaWorkspace(session: Session | null) {
     setAssignedToMeOnly,
     archivedOnly,
     setArchivedOnly,
+    searchKeyword,
+    setSearchKeyword,
     loadAccounts,
     loadConversations,
     loadDetail,

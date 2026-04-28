@@ -18,6 +18,8 @@ type WaConversationListProps = {
   accounts: WaAccountItem[];
   accountId: string | null;
   onAccountChange: (value: string | null) => void;
+  keyword: string;
+  onKeywordChange: (value: string) => void;
   assignedToMeOnly: boolean;
   onAssignedToMeOnlyChange: (value: boolean) => void;
   archivedOnly: boolean;
@@ -45,6 +47,8 @@ export function WaConversationList(props: WaConversationListProps) {
     accounts,
     accountId,
     onAccountChange,
+    keyword,
+    onKeywordChange,
     assignedToMeOnly,
     onAssignedToMeOnlyChange,
     archivedOnly,
@@ -61,7 +65,6 @@ export function WaConversationList(props: WaConversationListProps) {
     syncEnabled = false
   } = props;
 
-  const [keyword, setKeyword] = useState("");
   const [activeTab, setActiveTab] = useState<ConversationTab>("chats");
   const TAB_CONFIG: { id: ConversationTab; label: string; icon: string }[] = [
     { id: "chats", label: t("wa.conversationList.tabs.chats"), icon: "💬" },
@@ -93,25 +96,7 @@ export function WaConversationList(props: WaConversationListProps) {
     [conversations, activeTab]
   );
 
-  const visibleConversations = useMemo(() => {
-    const normalized = keyword.trim().toLowerCase();
-    if (!normalized) return tabConversations;
-    return tabConversations.filter((conversation) => {
-      const haystack = [
-        conversation.displayName,
-        conversation.subject,
-        conversation.contactName,
-        conversation.contactPhoneE164,
-        conversation.contactJid,
-        conversation.chatJid,
-        conversation.lastMessagePreview
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(normalized);
-    });
-  }, [tabConversations, keyword]);
+  const visibleConversations = tabConversations;
 
   const selectedAccount = accounts.find((item) => item.waAccountId === accountId) ?? null;
 
@@ -188,7 +173,7 @@ export function WaConversationList(props: WaConversationListProps) {
           <span className="text-sm text-[#667781]">⌕</span>
           <input
             value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
+            onChange={(event) => onKeywordChange(event.target.value)}
             placeholder={t("wa.conversationList.searchPlaceholder")}
             className="w-full border-0 bg-transparent text-sm text-[#111b21] outline-none placeholder:text-[#667781]"
           />
