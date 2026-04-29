@@ -91,6 +91,10 @@ type LoginTicket = {
 
 const runtimes = new Map<string, RuntimeEntry>();
 const loggedBaileysErrors = new Map<string, number>();
+const postConnectTaskKeys = new Set<string>();
+const postConnectTaskQueue: Array<() => Promise<void>> = [];
+let postConnectTaskActive = 0;
+const POST_CONNECT_TASK_CONCURRENCY = 1;
 
 function shouldLogBaileysError(trace: string): boolean {
   const now = Date.now();
@@ -140,6 +144,39 @@ const baileysLogger = {
 
 function runtimeKey(tenantId: string, waAccountId: string) {
   return `${tenantId}:${waAccountId}`;
+}
+
+function enqueuePostConnectTask(taskKey: string, task: () => Promise<void>) {
+  if (postConnectTaskKeys.has(taskKey)) {
+    return;
+  }
+  postConnectTaskKeys.add(taskKey);
+  postConnectTaskQueue.push(async () => {
+    try {
+      await task();
+    } finally {
+      postConnectTaskKeys.delete(taskKey);
+    }
+  });
+  pumpPostConnectTasks();
+}
+
+function pumpPostConnectTasks() {
+  while (postConnectTaskActive < POST_CONNECT_TASK_CONCURRENCY) {
+    const nextTask = postConnectTaskQueue.shift();
+    if (!nextTask) {
+      return;
+    }
+    postConnectTaskActive += 1;
+    void nextTask()
+      .catch((error) => {
+        console.error("[wa-runtime] post-connect task failed", { error });
+      })
+      .finally(() => {
+        postConnectTaskActive -= 1;
+        pumpPostConnectTasks();
+      });
+  }
 }
 
 function mapConnectionState(
@@ -498,8 +535,8 @@ async function buildSocket(input: {
     if (update.receivedPendingNotifications === true && !entry.postConnectSyncScheduled) {
       entry.postConnectSyncScheduled = true;
       setTimeout(() => {
-        void syncAllGroupsForAccount(socket, input.tenantId, input.waAccountId).catch((error) => {
-          console.error("[wa-sync] proactive group sync failed", { tenantId: input.tenantId, waAccountId: input.waAccountId, error });
+        enqueuePostConnectTask(`${runtimeKey(input.tenantId, input.waAccountId)}:groups`, async () => {
+          await syncAllGroupsForAccount(socket, input.tenantId, input.waAccountId);
         });
       }, 8_000);
     }
@@ -509,11 +546,16 @@ async function buildSocket(input: {
       // Message reconciliation: compare in-memory cache with DB and backfill gaps.
       // Runs 15s after reconnect to let messaging-history.set complete first.
       setTimeout(() => {
-        void reconcileAfterReconnect({
-          tenantId: input.tenantId,
-          waAccountId: input.waAccountId
-        }).catch((error) => {
-          console.error("[wa-reconcile] post-reconnect reconciliation failed", { tenantId: input.tenantId, waAccountId: input.waAccountId, error });
+        const candidateChatJids = Array.from(entry.recentRawHistory.keys());
+        if (candidateChatJids.length === 0) {
+          return;
+        }
+        enqueuePostConnectTask(`${runtimeKey(input.tenantId, input.waAccountId)}:reconcile`, async () => {
+          await reconcileAfterReconnect({
+            tenantId: input.tenantId,
+            waAccountId: input.waAccountId,
+            candidateChatJids
+          });
         });
       }, 15_000);
     }
@@ -522,8 +564,8 @@ async function buildSocket(input: {
       entry.avatarSyncScheduled = true;
       // Avatar sync runs after group sync finishes (offset by 60s to avoid racing)
       setTimeout(() => {
-        void syncAvatarsForAccount(socket, input.tenantId, input.waAccountId).catch((error) => {
-          console.error("[wa-sync] avatar sync failed", { tenantId: input.tenantId, waAccountId: input.waAccountId, error });
+        enqueuePostConnectTask(`${runtimeKey(input.tenantId, input.waAccountId)}:avatars`, async () => {
+          await syncAvatarsForAccount(socket, input.tenantId, input.waAccountId);
         });
       }, 60_000);
     }

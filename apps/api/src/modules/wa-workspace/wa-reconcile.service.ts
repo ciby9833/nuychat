@@ -57,17 +57,36 @@ export async function resolveGapsForArrivedMessage(
 }
 
 export async function reconcileWaConversation(
-  trx: Knex.Transaction,
   input: { tenantId: string; waConversationId: string; reason?: string | null }
 ) {
-  const conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId);
-  if (!conversation) {
-    throw new Error("Conversation not found");
-  }
+  const { conversation, gaps, account } = await withTenantTransaction(input.tenantId, async (trx) => {
+    const conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId);
+    if (!conversation) {
+      throw new Error("Conversation not found");
+    }
 
-  const gaps = await listOpenWaMessageGaps(trx, {
-    tenantId: input.tenantId,
-    waConversationId: input.waConversationId
+    const gaps = await listOpenWaMessageGaps(trx, {
+      tenantId: input.tenantId,
+      waConversationId: input.waConversationId
+    });
+
+    const account = await trx("wa_accounts")
+      .where({ tenant_id: input.tenantId, wa_account_id: conversation.waAccountId })
+      .select("instance_key", "provider_key")
+      .first<{ instance_key: string; provider_key: string } | undefined>();
+    if (!account) {
+      throw new Error("WA account not found");
+    }
+
+    for (const gap of gaps) {
+      await updateWaMessageGapStatus(trx, {
+        tenantId: input.tenantId,
+        gapId: gap.gapId,
+        status: "reconciling"
+      });
+    }
+
+    return { conversation, gaps, account };
   });
 
   if (gaps.length === 0) {
@@ -80,22 +99,6 @@ export async function reconcileWaConversation(
     };
   }
 
-  for (const gap of gaps) {
-    await updateWaMessageGapStatus(trx, {
-      tenantId: input.tenantId,
-      gapId: gap.gapId,
-      status: "reconciling"
-    });
-  }
-
-  const account = await trx("wa_accounts")
-    .where({ tenant_id: input.tenantId, wa_account_id: conversation.waAccountId })
-    .select("instance_key", "provider_key")
-    .first<{ instance_key: string; provider_key: string } | undefined>();
-  if (!account) {
-    throw new Error("WA account not found");
-  }
-
   const historyResult = await triggerWaConversationHistorySync({
     tenantId: input.tenantId,
     waConversationId: input.waConversationId,
@@ -105,22 +108,25 @@ export async function reconcileWaConversation(
     limit: 50
   });
 
-  const remainingGaps = await listOpenWaMessageGaps(trx, {
-    tenantId: input.tenantId,
-    waConversationId: input.waConversationId
-  });
-
-  for (const gap of remainingGaps) {
-    await updateWaMessageGapStatus(trx, {
+  const remainingGaps = await withTenantTransaction(input.tenantId, async (trx) => {
+    const remainingGaps = await listOpenWaMessageGaps(trx, {
       tenantId: input.tenantId,
-      gapId: gap.gapId,
-      status: "manual_review",
-      payload: {
-        ...gap.payload,
-        lastReconcileReason: input.reason ?? null
-      }
+      waConversationId: input.waConversationId
     });
-  }
+
+    for (const gap of remainingGaps) {
+      await updateWaMessageGapStatus(trx, {
+        tenantId: input.tenantId,
+        gapId: gap.gapId,
+        status: "manual_review",
+        payload: {
+          ...gap.payload,
+          lastReconcileReason: input.reason ?? null
+        }
+      });
+    }
+    return remainingGaps;
+  });
 
   return {
     accepted: true,
@@ -144,10 +150,13 @@ export async function reconcileWaConversation(
 export async function reconcileAfterReconnect(input: {
   tenantId: string;
   waAccountId: string;
+  candidateChatJids?: string[];
 }) {
   const { tenantId, waAccountId } = input;
+  const candidateChatJids = Array.from(
+    new Set((input.candidateChatJids ?? []).filter((jid) => typeof jid === "string" && jid.trim().length > 0))
+  );
 
-  // Find recently active conversations for this account, along with the account's instance key
   const account = await withTenantTransaction(tenantId, async (trx) => {
     return trx("wa_accounts")
       .where({ tenant_id: tenantId, wa_account_id: waAccountId })
@@ -155,14 +164,16 @@ export async function reconcileAfterReconnect(input: {
       .first<{ instance_key: string } | undefined>();
   });
   if (!account) return { reconciledConversations: 0, backfilledMessages: 0, resolvedGaps: 0 };
+  if (candidateChatJids.length === 0) {
+    return { reconciledConversations: 0, backfilledMessages: 0, resolvedGaps: 0 };
+  }
 
   const conversations = await withTenantTransaction(tenantId, async (trx) => {
     return trx("wa_conversations")
       .where({ tenant_id: tenantId, wa_account_id: waAccountId })
-      .andWhere("last_message_at", ">", trx.raw("NOW() - INTERVAL '24 hours'"))
+      .whereIn("chat_jid", candidateChatJids)
       .select("wa_conversation_id", "chat_jid", "conversation_type")
-      .orderBy("last_message_at", "desc")
-      .limit(50);
+      .orderBy("last_message_at", "desc");
   });
 
   if (conversations.length === 0) return { reconciledConversations: 0, backfilledMessages: 0, resolvedGaps: 0 };
@@ -175,20 +186,18 @@ export async function reconcileAfterReconnect(input: {
     const waConversationId = String(conv.wa_conversation_id);
 
     try {
-      const result = await withTenantTransaction(tenantId, async (trx) => {
-        const historyResult = await triggerWaConversationHistorySync({
-          tenantId,
-          waConversationId,
-          waAccountId,
-          instanceKey: account.instance_key,
-          chatJid,
-          limit: 200
-        });
-        return {
-          backfilled: historyResult.inserted,
-          gapsResolved: 0
-        };
+      const historyResult = await triggerWaConversationHistorySync({
+        tenantId,
+        waConversationId,
+        waAccountId,
+        instanceKey: account.instance_key,
+        chatJid,
+        limit: 200
       });
+      const result = {
+        backfilled: historyResult.inserted,
+        gapsResolved: 0
+      };
 
       totalBackfilled += result.backfilled;
       totalResolvedGaps += result.gapsResolved;
@@ -236,12 +245,10 @@ export async function reconcileOpenGaps(input: { tenantId: string; waAccountId: 
 
   for (const row of conversationsWithGaps) {
     try {
-      const result = await withTenantTransaction(tenantId, async (trx) => {
-        return reconcileWaConversation(trx, {
-          tenantId,
-          waConversationId: String(row.wa_conversation_id),
-          reason: "periodic_gap_reconcile"
-        });
+      const result = await reconcileWaConversation({
+        tenantId,
+        waConversationId: String(row.wa_conversation_id),
+        reason: "periodic_gap_reconcile"
       });
       totalResolved += result.resolvedGapCount;
     } catch (error) {

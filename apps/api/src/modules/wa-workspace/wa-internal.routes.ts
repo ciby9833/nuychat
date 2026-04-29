@@ -7,7 +7,6 @@
  */
 import type { FastifyInstance } from "fastify";
 
-import { withTenantTransaction } from "../../infra/db/client.js";
 import { reconcileWaConversation } from "./wa-reconcile.service.js";
 
 export async function waInternalRoutes(app: FastifyInstance) {
@@ -18,12 +17,10 @@ export async function waInternalRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("tenantId is required");
     }
 
-    return withTenantTransaction(body.tenantId, async (trx) =>
-      reconcileWaConversation(trx, {
-        tenantId: body.tenantId.trim(),
-        waConversationId,
-        reason: body.reason ?? null
-      })
-    );
+    return reconcileWaConversation({
+      tenantId: body.tenantId.trim(),
+      waConversationId,
+      reason: body.reason ?? null
+    });
   });
 }
