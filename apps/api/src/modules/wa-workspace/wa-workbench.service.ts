@@ -358,7 +358,6 @@ export async function getWorkbenchConversationDetail(
         wa_conversation_id: input.waConversationId
       })
       .andWhere("direction", "inbound")
-      .whereNotNull("provider_message_id")
       .select("provider_payload", "provider_message_id", "participant_jid", "direction")
       .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint) desc")
       .limit(Math.max(1, Math.min(conversation.unreadCount, 50)));
@@ -389,6 +388,21 @@ export async function getWorkbenchConversationDetail(
             instanceKey: String(account.instance_key),
             keys
           });
+          await trx("wa_conversations")
+            .where({
+              tenant_id: input.tenantId,
+              wa_conversation_id: input.waConversationId
+            })
+            .update({
+              unread_count: 0,
+              updated_at: trx.fn.now()
+            });
+          await refreshWaConversationProjection(trx, {
+            tenantId: input.tenantId,
+            waAccountId: conversation.waAccountId,
+            waConversationId: input.waConversationId
+          });
+          conversation = await getWaConversationById(trx, input.tenantId, input.waConversationId) ?? conversation;
         } catch (error) {
           console.warn("[wa-workbench] mark read failed", {
             tenantId: input.tenantId,
