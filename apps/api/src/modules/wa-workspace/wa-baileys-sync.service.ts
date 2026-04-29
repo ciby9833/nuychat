@@ -14,14 +14,12 @@ import { withTenantTransaction } from "../../infra/db/client.js";
 import { emitWaAccountUpdated } from "./wa-realtime.service.js";
 import { deriveWaStatus } from "./wa-session-status.js";
 import { mapBaileysMessageToInbound } from "./runtime/baileys-message.mapper.js";
+import { ingestSingleBaileysMessage } from "./wa-baileys-event.service.js";
 import {
   findWaMessageByProviderId,
-  insertWaMessage,
-  insertWaMessageAttachment,
   patchWaConversationChatState,
   patchWaConversationContactProfile,
   patchWaConversationMemberProfile,
-  resolveWaMessageGapsByTarget,
   upsertWaContact,
   upsertWaConversation,
   upsertWaConversationMember
@@ -257,84 +255,27 @@ export async function ingestBaileysHistorySet(input: {
   waAccountId: string;
   messages: WAMessage[];
 }) {
-  return withTenantTransaction(input.tenantId, async (trx) => {
-    let inserted = 0;
-    for (const raw of input.messages) {
-      const mapped = mapBaileysMessageToInbound(raw);
-      if (!mapped) continue;
-      if (isNonConversationJid(mapped.chatJid)) continue;
-      const pushName = typeof raw.pushName === "string" && raw.pushName.trim()
-        ? raw.pushName.trim()
-        : null;
-
-      const existing = await findWaMessageByProviderId(trx, {
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        providerMessageId: mapped.providerMessageId
-      });
-      if (existing) continue;
-
-      const conversation = await upsertWaConversation(trx, {
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        chatJid: mapped.chatJid,
-        conversationType: mapped.conversationType,
-        subject: mapped.subject ?? null,
-        contactJid: mapped.contactJid ?? null,
-        contactName: mapped.contactName ?? null,
-        contactPhoneE164: mapped.contactPhoneE164 ?? null
-      });
-
-      const saved = await insertWaMessage(trx, {
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        waConversationId: conversation.waConversationId,
-        providerMessageId: mapped.providerMessageId,
-        direction: mapped.direction,
-        senderJid: mapped.senderJid,
-        participantJid: mapped.participantJid ?? null,
-        senderRole: mapped.senderRole,
-        bodyText: mapped.bodyText ?? undefined,
-        providerTs: mapped.providerTs,
-        messageType: mapped.messageType,
-        quotedMessageId: mapped.quotedMessageId ?? null,
-        providerPayload: raw as unknown as Record<string, unknown>,
-        deliveryStatus: "history_sync"
-      });
-
-      if (mapped.attachment) {
-        await insertWaMessageAttachment(trx, {
+  let inserted = 0;
+  for (const message of input.messages) {
+    try {
+      const result = await withTenantTransaction(input.tenantId, async (trx) => {
+        return ingestSingleBaileysMessage(trx, {
           tenantId: input.tenantId,
-          waMessageId: String(saved.wa_message_id),
-          attachmentType: mapped.attachment.attachmentType,
-          mimeType: mapped.attachment.mimeType ?? null,
-          fileName: mapped.attachment.fileName ?? null,
-          fileSize: mapped.attachment.fileSize ?? null,
-          width: mapped.attachment.width ?? null,
-          height: mapped.attachment.height ?? null,
-          durationMs: mapped.attachment.durationMs ?? null,
-          storageUrl: mapped.attachment.storageUrl ?? null,
-          previewUrl: mapped.attachment.previewUrl ?? null,
-          providerPayload: raw as unknown as Record<string, unknown>
+          waAccountId: input.waAccountId,
+          message,
+          eventType: "MESSAGING_HISTORY_SET"
         });
-      }
-      if (mapped.conversationType === "group" && mapped.participantJid) {
-        await upsertWaConversationMember(trx, {
-          tenantId: input.tenantId,
-          waConversationId: conversation.waConversationId,
-          participantJid: mapped.participantJid,
-          displayName: pushName
-        });
-      }
-      // History messages should also close gaps that were opened by live messages
-      // referencing this message before it arrived.
-      await resolveWaMessageGapsByTarget(trx, {
-        tenantId: input.tenantId,
-        waConversationId: conversation.waConversationId,
-        targetProviderMessageId: mapped.providerMessageId
       });
-      inserted += 1;
+      if (result) {
+        inserted += 1;
+      }
+    } catch (error) {
+      const jid = message.key?.remoteJid ?? "unknown";
+      console.warn(`[ingestBaileysHistorySet] skipping history message from jid=${jid}:`, error);
     }
+  }
+
+  await withTenantTransaction(input.tenantId, async (trx) => {
     await updateSessionSyncMeta(trx, {
       tenantId: input.tenantId,
       waAccountId: input.waAccountId,
@@ -342,8 +283,10 @@ export async function ingestBaileysHistorySet(input: {
         historySyncedAt: new Date().toISOString()
       }
     });
-    return { ok: true, inserted };
+    return { ok: true };
   });
+
+  return { ok: true, inserted };
 }
 
 export async function ingestBaileysGroupsUpdate(input: {

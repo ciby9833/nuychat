@@ -146,6 +146,13 @@ async function loadWaAccounts(
           and c.wa_account_id = a.wa_account_id
           and c.chat_jid <> 'status@broadcast'
           and c.chat_jid not like '%@newsletter'
+          and exists (
+            select 1
+            from wa_messages wm
+            where wm.tenant_id = c.tenant_id
+              and wm.wa_conversation_id = c.wa_conversation_id
+              and wm.deleted_for_me_at is null
+          )
       ) as unread_message_count`),
       trx.raw("coalesce(json_agg(distinct wam.membership_id) filter (where wam.membership_id is not null), '[]'::json) as member_ids"),
       trx.raw("count(distinct wam.membership_id) as member_count")
@@ -349,6 +356,13 @@ export async function getAccessibleWaAccountUnreadSummary(
     .whereIn("wa_account_id", waAccountIds)
     .whereNot("chat_jid", "status@broadcast")
     .whereRaw("chat_jid not like ?", ["%@newsletter"])
+    .whereExists(
+      trx("wa_messages as wm")
+        .select(trx.raw("1"))
+        .whereRaw("wm.tenant_id = wa_conversations.tenant_id")
+        .whereRaw("wm.wa_conversation_id = wa_conversations.wa_conversation_id")
+        .whereNull("wm.deleted_for_me_at")
+    )
     .sum<{ total_unread_messages?: string | number | null }>("unread_count as total_unread_messages")
     .first();
 

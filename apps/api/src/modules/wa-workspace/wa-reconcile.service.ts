@@ -11,20 +11,17 @@
 import type { Knex } from "knex";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
-import { waProviderAdapter } from "./provider/provider-registry.js";
 import {
   createWaMessageGap,
   findWaMessageByProviderId,
   getWaConversationById,
-  insertWaMessage,
-  insertWaMessageAttachment,
   insertWaMessageReaction,
   listOpenWaMessageGaps,
   resolveWaMessageGapsByTarget,
-  updateWaMessageGapStatus,
-  upsertWaConversationMember
+  updateWaMessageGapStatus
 } from "./wa-conversation.repository.js";
 import { emitWaConversationProjection } from "./wa-conversation-projection.service.js";
+import { triggerWaConversationHistorySync } from "./wa-history-sync.service.js";
 
 export async function createMissingReferenceGap(
   trx: Knex.Transaction,
@@ -99,101 +96,14 @@ export async function reconcileWaConversation(
     throw new Error("WA account not found");
   }
 
-  const providerResult = await waProviderAdapter.fetchHistory({
+  const historyResult = await triggerWaConversationHistorySync(trx, {
     tenantId: input.tenantId,
+    waConversationId: input.waConversationId,
     waAccountId: conversation.waAccountId,
     instanceKey: account.instance_key,
     chatJid: conversation.chatJid,
     limit: 50
   });
-
-  let pulledMessageCount = 0;
-  for (const message of providerResult.messages) {
-    const existing = await findWaMessageByProviderId(trx, {
-      tenantId: input.tenantId,
-      waAccountId: conversation.waAccountId,
-      providerMessageId: message.providerMessageId
-    });
-    if (existing) {
-      await resolveWaMessageGapsByTarget(trx, {
-        tenantId: input.tenantId,
-        waConversationId: input.waConversationId,
-        targetProviderMessageId: message.providerMessageId
-      });
-      continue;
-    }
-
-    const savedMessage = await insertWaMessage(trx, {
-      tenantId: input.tenantId,
-      waAccountId: conversation.waAccountId,
-      waConversationId: input.waConversationId,
-      providerMessageId: message.providerMessageId,
-      direction: message.direction,
-      senderJid: message.senderJid,
-      participantJid: message.participantJid ?? null,
-      senderRole: message.senderRole,
-      bodyText: message.bodyText ?? undefined,
-      providerTs: message.providerTs,
-      messageType: message.messageType,
-      quotedMessageId: message.quotedMessageId ?? null,
-      providerPayload: {
-        source: "history_sync",
-        reason: input.reason ?? null
-      }
-    });
-
-    if (message.conversationType === "group" && message.participantJid) {
-      await upsertWaConversationMember(trx, {
-        tenantId: input.tenantId,
-        waConversationId: input.waConversationId,
-        participantJid: message.participantJid
-      });
-    }
-
-    if (message.attachment) {
-      await insertWaMessageAttachment(trx, {
-        tenantId: input.tenantId,
-        waMessageId: String(savedMessage.wa_message_id),
-        attachmentType: message.attachment.attachmentType,
-        mimeType: message.attachment.mimeType ?? null,
-        fileName: message.attachment.fileName ?? null,
-        fileSize: message.attachment.fileSize ?? null,
-        width: message.attachment.width ?? null,
-        height: message.attachment.height ?? null,
-        durationMs: message.attachment.durationMs ?? null,
-        storageUrl: message.attachment.storageUrl ?? null,
-        previewUrl: message.attachment.previewUrl ?? null,
-        providerPayload: {
-          source: "history_sync",
-          reason: input.reason ?? null
-        }
-      });
-    }
-
-    if (message.messageType === "reaction" && message.reactionEmoji && message.reactionTargetId) {
-      const reactionTarget = await findWaMessageByProviderId(trx, {
-        tenantId: input.tenantId,
-        waAccountId: conversation.waAccountId,
-        providerMessageId: message.reactionTargetId
-      });
-      if (reactionTarget) {
-        await insertWaMessageReaction(trx, {
-          tenantId: input.tenantId,
-          waMessageId: reactionTarget.waMessageId,
-          actorJid: message.senderJid,
-          emoji: message.reactionEmoji,
-          providerTs: message.providerTs
-        });
-      }
-    }
-
-    await resolveWaMessageGapsByTarget(trx, {
-      tenantId: input.tenantId,
-      waConversationId: input.waConversationId,
-      targetProviderMessageId: message.providerMessageId
-    });
-    pulledMessageCount += 1;
-  }
 
   const remainingGaps = await listOpenWaMessageGaps(trx, {
     tenantId: input.tenantId,
@@ -217,7 +127,7 @@ export async function reconcileWaConversation(
     waConversationId: input.waConversationId,
     openGapCount: gaps.length,
     resolvedGapCount: gaps.length - remainingGaps.length,
-    pulledMessageCount
+    pulledMessageCount: historyResult.inserted
   };
 }
 
@@ -264,84 +174,20 @@ export async function reconcileAfterReconnect(input: {
     const chatJid = String(conv.chat_jid);
     const waConversationId = String(conv.wa_conversation_id);
 
-    // Get cached messages from Baileys runtime via provider adapter
-    const providerResult = await waProviderAdapter.fetchHistory({
-      tenantId,
-      waAccountId,
-      instanceKey: account.instance_key,
-      chatJid,
-      limit: 200
-    });
-
-    if (providerResult.messages.length === 0) continue;
-
     try {
       const result = await withTenantTransaction(tenantId, async (trx) => {
-        let backfilled = 0;
-        let gapsResolved = 0;
-
-        for (const message of providerResult.messages) {
-          const existing = await findWaMessageByProviderId(trx, {
-            tenantId,
-            waAccountId,
-            providerMessageId: message.providerMessageId
-          });
-          if (existing) {
-            // Message exists — try to resolve any gaps it might close
-            const resolved = await resolveWaMessageGapsByTarget(trx, {
-              tenantId,
-              waConversationId,
-              targetProviderMessageId: message.providerMessageId
-            });
-            gapsResolved += resolved.length;
-            continue;
-          }
-
-          // Missing message — backfill it
-          const savedMessage = await insertWaMessage(trx, {
-            tenantId,
-            waAccountId,
-            waConversationId,
-            providerMessageId: message.providerMessageId,
-            direction: message.direction,
-            senderJid: message.senderJid,
-            participantJid: message.participantJid ?? null,
-            senderRole: message.senderRole,
-            bodyText: message.bodyText ?? undefined,
-            providerTs: message.providerTs,
-            messageType: message.messageType,
-            quotedMessageId: message.quotedMessageId ?? null,
-            deliveryStatus: "received",
-            providerPayload: { source: "reconnect_reconcile" }
-          });
-
-          if (message.attachment && savedMessage) {
-            await insertWaMessageAttachment(trx, {
-              tenantId,
-              waMessageId: String(savedMessage.wa_message_id),
-              attachmentType: message.attachment.attachmentType,
-              mimeType: message.attachment.mimeType ?? null,
-              fileName: message.attachment.fileName ?? null,
-              fileSize: message.attachment.fileSize ?? null,
-              width: message.attachment.width ?? null,
-              height: message.attachment.height ?? null,
-              durationMs: message.attachment.durationMs ?? null,
-              storageUrl: message.attachment.storageUrl ?? null,
-              previewUrl: message.attachment.previewUrl ?? null,
-              providerPayload: { source: "reconnect_reconcile" }
-            }).catch(() => { /* best-effort attachment backfill */ });
-          }
-
-          const resolved = await resolveWaMessageGapsByTarget(trx, {
-            tenantId,
-            waConversationId,
-            targetProviderMessageId: message.providerMessageId
-          });
-          gapsResolved += resolved.length;
-          backfilled += 1;
-        }
-
-        return { backfilled, gapsResolved };
+        const historyResult = await triggerWaConversationHistorySync(trx, {
+          tenantId,
+          waConversationId,
+          waAccountId,
+          instanceKey: account.instance_key,
+          chatJid,
+          limit: 200
+        });
+        return {
+          backfilled: historyResult.inserted,
+          gapsResolved: 0
+        };
       });
 
       totalBackfilled += result.backfilled;

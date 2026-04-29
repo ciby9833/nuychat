@@ -20,7 +20,15 @@ export async function refreshWaConversationProjection(
     tenantId: input.tenantId,
     waConversationId: input.waConversationId
   });
-  if (!conversation) return null;
+  if (!conversation) {
+    emitWaConversationUpdated({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      conversation: null,
+      removedWaConversationId: input.waConversationId
+    });
+    return null;
+  }
 
   emitWaConversationUpdated({
     tenantId: input.tenantId,

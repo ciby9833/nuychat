@@ -13,6 +13,7 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   type AuthenticationCreds,
+  type WAMessage,
   type WAMessageKey,
   type ConnectionState
 } from "@whiskeysockets/baileys";
@@ -77,6 +78,7 @@ type RuntimeEntry = {
   reconcileScheduled: boolean;
   avatarSyncScheduled: boolean;
   recentHistory: Map<string, ReturnType<typeof mapBaileysMessageToInbound>[]>;
+  recentRawHistory: Map<string, WAMessage[]>;
 };
 
 type LoginTicket = {
@@ -425,7 +427,8 @@ async function buildSocket(input: {
     postConnectSyncScheduled: false,
     reconcileScheduled: false,
     avatarSyncScheduled: false,
-    recentHistory: new Map()
+    recentHistory: new Map(),
+    recentRawHistory: new Map()
   };
 
   socket.ev.on("creds.update", async (_creds: Partial<AuthenticationCreds>) => {
@@ -573,6 +576,9 @@ async function buildSocket(input: {
       const bucket = entry.recentHistory.get(mapped.chatJid) ?? [];
       bucket.push(mapped);
       entry.recentHistory.set(mapped.chatJid, bucket.slice(-200));
+      const rawBucket = entry.recentRawHistory.get(mapped.chatJid) ?? [];
+      rawBucket.push(message);
+      entry.recentRawHistory.set(mapped.chatJid, rawBucket.slice(-200));
     }
     void withRetry(
       () => ingestBaileysMessagesUpsert({
@@ -633,6 +639,9 @@ async function buildSocket(input: {
       const bucket = entry.recentHistory.get(mapped.chatJid) ?? [];
       bucket.push(mapped);
       entry.recentHistory.set(mapped.chatJid, bucket.slice(-500));
+      const rawBucket = entry.recentRawHistory.get(mapped.chatJid) ?? [];
+      rawBucket.push(message);
+      entry.recentRawHistory.set(mapped.chatJid, rawBucket.slice(-500));
     }
     void (async () => {
       await ingestBaileysContactsUpsert({
@@ -831,6 +840,18 @@ export function getBaileysHistorySnapshot(input: {
   const runtime = getBaileysRuntime(input.tenantId, input.waAccountId);
   if (!runtime) return [];
   const bucket = runtime.recentHistory.get(input.chatJid) ?? [];
+  return bucket.slice(-(input.limit ?? 50));
+}
+
+export function getBaileysRawHistorySnapshot(input: {
+  tenantId: string;
+  waAccountId: string;
+  chatJid: string;
+  limit?: number;
+}) {
+  const runtime = getBaileysRuntime(input.tenantId, input.waAccountId);
+  if (!runtime) return [];
+  const bucket = runtime.recentRawHistory.get(input.chatJid) ?? [];
   return bucket.slice(-(input.limit ?? 50));
 }
 

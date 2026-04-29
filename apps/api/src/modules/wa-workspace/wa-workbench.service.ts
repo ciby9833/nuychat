@@ -8,6 +8,7 @@
  */
 import type { Knex } from "knex";
 
+import { withTenantTransaction } from "../../infra/db/client.js";
 import { waProviderAdapter } from "./provider/provider-registry.js";
 import { deriveWaActions, deriveWaStatus } from "./wa-session-status.js";
 import { assertCanReplyToWaConversation, releaseWaConversation, takeOverWaConversation } from "./wa-assignment.service.js";
@@ -36,6 +37,7 @@ import {
   deleteBaileysMessageForMe,
   editBaileysTextMessage
 } from "./runtime/baileys-send.service.js";
+import { triggerWaConversationHistorySync } from "./wa-history-sync.service.js";
 
 async function assertConversationAccessible(
   trx: Knex.Transaction,
@@ -97,19 +99,24 @@ function buildStoredReadKey(providerPayload: unknown) {
   };
 }
 
-function extractStoredHistoryKey(providerPayload: unknown) {
-  const key = extractStoredMessageKey(providerPayload);
-  const remoteJid = typeof key?.remoteJid === "string" ? key.remoteJid : null;
-  const id = typeof key?.id === "string" ? key.id : null;
-  if (!remoteJid || !id) return null;
+function buildFallbackReadKey(input: {
+  providerPayload: unknown;
+  providerMessageId: string | null;
+  chatJid: string;
+  participantJid: string | null;
+  direction: string;
+}) {
+  const storedKey = buildStoredReadKey(input.providerPayload);
+  if (storedKey) return storedKey;
+  if (!input.providerMessageId) return null;
   return {
-    remoteJid,
-    id,
-    participant: typeof key?.participant === "string" ? key.participant : null,
-    fromMe: Boolean(key?.fromMe),
-    remoteJidAlt: typeof key?.remoteJidAlt === "string" ? key.remoteJidAlt : null,
-    participantAlt: typeof key?.participantAlt === "string" ? key.participantAlt : null,
-    addressingMode: typeof key?.addressingMode === "string" ? key.addressingMode : null
+    remoteJid: input.chatJid,
+    id: input.providerMessageId,
+    participant: input.participantJid,
+    fromMe: input.direction === "outbound",
+    remoteJidAlt: null,
+    participantAlt: null,
+    addressingMode: null
   };
 }
 
@@ -127,83 +134,15 @@ async function backfillConversationMessagesFromProviderHistory(
   const instanceKey = account?.instance_key ? String(account.instance_key) : null;
   if (!instanceKey) return 0;
 
-  const oldestMessageRow = await trx("wa_messages")
-    .where({
-      tenant_id: input.tenantId,
-      wa_conversation_id: input.waConversationId
-    })
-    .whereNotNull("provider_message_id")
-    .whereNull("deleted_for_me_at")
-    .select("provider_payload", "provider_ts")
-    .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint, logical_seq) asc")
-    .orderBy("logical_seq", "asc")
-    .first<Record<string, unknown> | undefined>();
-  const oldestMessageKey = oldestMessageRow ? extractStoredHistoryKey(oldestMessageRow.provider_payload) : null;
-  const oldestMessageTimestampMs = oldestMessageRow?.provider_ts ? Number(oldestMessageRow.provider_ts) : null;
-
-  const snapshot = await waProviderAdapter.fetchHistory({
+  const result = await triggerWaConversationHistorySync(trx, {
     tenantId: input.tenantId,
+    waConversationId: input.waConversationId,
     waAccountId: input.waAccountId,
     instanceKey,
     chatJid: input.chatJid,
-    limit: input.limit ?? 100,
-    oldestMessageKey,
-    oldestMessageTimestampMs
+    limit: input.limit
   });
-  if (!snapshot.messages.length) return 0;
-
-  let inserted = 0;
-  for (const message of [...snapshot.messages].sort((left, right) => left.providerTs - right.providerTs)) {
-    const existing = await findWaMessageByProviderId(trx, {
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      providerMessageId: message.providerMessageId
-    });
-    if (existing) continue;
-
-    const row = await insertWaMessage(trx, {
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      waConversationId: input.waConversationId,
-      providerMessageId: message.providerMessageId,
-      direction: message.direction,
-      senderJid: message.senderJid,
-      participantJid: message.participantJid ?? null,
-      senderRole: message.senderRole,
-      bodyText: message.bodyText ?? undefined,
-      providerTs: message.providerTs,
-      messageType: message.messageType,
-      quotedMessageId: message.quotedMessageId ?? null,
-      providerPayload: {},
-      deliveryStatus: message.direction === "outbound" ? "sent" : "received"
-    });
-    if (message.attachment) {
-      await insertWaMessageAttachment(trx, {
-        tenantId: input.tenantId,
-        waMessageId: String(row.wa_message_id),
-        attachmentType: message.attachment.attachmentType,
-        mimeType: message.attachment.mimeType,
-        fileName: message.attachment.fileName,
-        fileSize: message.attachment.fileSize,
-        width: message.attachment.width,
-        height: message.attachment.height,
-        durationMs: message.attachment.durationMs,
-        storageUrl: message.attachment.storageUrl,
-        previewUrl: message.attachment.previewUrl,
-        providerPayload: {}
-      });
-    }
-    inserted += 1;
-  }
-
-  if (inserted > 0) {
-    await refreshWaConversationProjection(trx, {
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId,
-      waConversationId: input.waConversationId
-    });
-  }
-  return inserted;
+  return result.inserted;
 }
 
 export async function listWorkbenchAccounts(
@@ -420,13 +359,19 @@ export async function getWorkbenchConversationDetail(
       })
       .andWhere("direction", "inbound")
       .whereNotNull("provider_message_id")
-      .select("provider_payload")
+      .select("provider_payload", "provider_message_id", "participant_jid", "direction")
       .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint) desc")
       .limit(Math.max(1, Math.min(conversation.unreadCount, 50)));
 
     if (account?.instance_key && unreadInboundRows.length > 0) {
       const keys = unreadInboundRows
-        .map((row) => buildStoredReadKey(row.provider_payload))
+        .map((row) => buildFallbackReadKey({
+          providerPayload: row.provider_payload,
+          providerMessageId: row.provider_message_id ? String(row.provider_message_id) : null,
+          chatJid: conversation.chatJid,
+          participantJid: row.participant_jid ? String(row.participant_jid) : null,
+          direction: String(row.direction ?? "inbound")
+        }))
         .filter((item): item is {
           remoteJid: string;
           id: string;

@@ -159,7 +159,8 @@ type WaConversationUpdatedEvent = RealtimeEventBase & {
     lastMessageAt: string | null;
     lastMessagePreview: string | null;
     unreadCount: number;
-  };
+  } | null;
+  removedWaConversationId?: string | null;
   occurredAt: string;
 };
 

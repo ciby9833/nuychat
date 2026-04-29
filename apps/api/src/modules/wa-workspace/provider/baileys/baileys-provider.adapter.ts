@@ -10,6 +10,7 @@ import {
   createBaileysLoginTicket,
   fetchBaileysHistoryOnDemand,
   getBaileysHistorySnapshot,
+  getBaileysRawHistorySnapshot,
   logoutBaileysRuntime,
   markBaileysConversationRead,
   restartBaileysRuntime
@@ -198,6 +199,14 @@ export class BaileysProviderAdapter implements WaProviderAdapter {
             chatJid: input.chatJid,
             limit: input.limit ?? 50
           }),
+      rawMessages: !input.tenantId || !input.waAccountId
+        ? []
+        : getBaileysRawHistorySnapshot({
+            tenantId: input.tenantId,
+            waAccountId: input.waAccountId,
+            chatJid: input.chatJid,
+            limit: input.limit ?? 50
+          }).map((message) => message as unknown as Record<string, unknown>),
       nextCursor: null
     };
   }

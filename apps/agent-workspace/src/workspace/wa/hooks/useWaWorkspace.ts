@@ -162,6 +162,7 @@ export function useWaWorkspace(session: Session | null) {
   const quotedMessageRef = useRef<WaMessageItem | null>(null);
   const uploadingAttachmentsRef = useRef<UploadingAttachment[]>([]);
   const composerDraftsRef = useRef<Record<string, ComposerDraft>>({});
+  const detailRequestSeqRef = useRef(0);
 
   const activeDraftKey = accountId && selectedConversationId
     ? `${accountId}:${selectedConversationId}`
@@ -250,19 +251,25 @@ export function useWaWorkspace(session: Session | null) {
       setDetail(null);
       return;
     }
+    const requestSeq = ++detailRequestSeqRef.current;
     setDetailLoading(true);
     setError("");
+    setDetail(null);
     try {
       const next = await getWaWorkbenchConversationDetail(session, selectedConversationId);
+      if (detailRequestSeqRef.current !== requestSeq) return;
       setDetail(next);
       // Assume there may be more if exactly 100 messages are returned (the default limit).
       setHasMoreMessages(next.messages.length >= 100);
     } catch (nextError) {
+      if (detailRequestSeqRef.current !== requestSeq) return;
       setError((nextError as Error).message);
       setDetail(null);
       setHasMoreMessages(false);
     } finally {
-      setDetailLoading(false);
+      if (detailRequestSeqRef.current === requestSeq) {
+        setDetailLoading(false);
+      }
     }
   }, [selectedConversationId, session]);
 
@@ -354,11 +361,18 @@ export function useWaWorkspace(session: Session | null) {
       ));
     });
 
-    socket.on("wa.conversation.updated", (event: { waAccountId: string; conversation: WaConversationItem }) => {
+    socket.on("wa.conversation.updated", (event: {
+      waAccountId: string;
+      conversation: WaConversationItem | null;
+      removedWaConversationId?: string | null;
+    }) => {
       const currentAccountId = accountIdRef.current;
       const currentSelectedId = selectedConversationIdRef.current;
       const isArchivedList = archivedOnlyRef.current;
       setConversations((current) => {
+        if (!event.conversation) {
+          return current.filter((item) => item.waConversationId !== event.removedWaConversationId);
+        }
         const target = event.conversation;
         if (!isSeatVisibleWaConversation(target)) {
           return current.filter((item) => item.waConversationId !== target.waConversationId);
@@ -379,7 +393,7 @@ export function useWaWorkspace(session: Session | null) {
       });
 
       // Reload messages if this conversation is currently open (new message arrived).
-      if (event.conversation.waConversationId === currentSelectedId) {
+      if (event.conversation && event.conversation.waConversationId === currentSelectedId) {
         void loadDetailRef.current();
       }
     });

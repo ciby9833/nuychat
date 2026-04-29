@@ -196,6 +196,22 @@ function resolveContactProfile(
   return null;
 }
 
+function deriveMessagePreviewFallback(messageType: string, deliveryStatus: string | null) {
+  if (deliveryStatus === "revoked") return "Message deleted";
+  switch (messageType) {
+    case "image": return "Photo";
+    case "video": return "Video";
+    case "audio": return "Voice message";
+    case "document": return "Document";
+    case "sticker": return "Sticker";
+    case "reaction": return "Reaction";
+    case "location": return "Location";
+    case "contact_card": return "Contact";
+    case "call_log": return "Call";
+    default: return "";
+  }
+}
+
 function mapConversation(row: Record<string, unknown>) {
   const conversationType = normalizeConversationTypeValue({
     chatJid: asString(row.chat_jid),
@@ -481,6 +497,20 @@ function isDisplayableStoredWaMessage(row: Record<string, unknown>) {
   return ["call_log", "contact_card", "location"].includes(messageType);
 }
 
+function applyVisibleWaMessageExistsConstraint(
+  trx: Knex.Transaction,
+  query: Knex.QueryBuilder,
+  conversationAlias: string
+) {
+  return query.whereExists(
+    trx("wa_messages as wm")
+      .select(trx.raw("1"))
+      .whereRaw(`wm.tenant_id = ${conversationAlias}.tenant_id`)
+      .whereRaw(`wm.wa_conversation_id = ${conversationAlias}.wa_conversation_id`)
+      .whereNull("wm.deleted_for_me_at")
+  );
+}
+
 /**
  * Best-effort extraction of body text from a stored WAMessage provider_payload.
  * Used as a fallback when the body_text column is NULL (e.g. for messages stored
@@ -635,13 +665,7 @@ export async function listWaConversations(
   } else {
     query.whereNull("c.archived_at");
   }
-  query.whereExists(
-    trx("wa_messages as wm")
-      .select(trx.raw("1"))
-      .whereRaw("wm.tenant_id = c.tenant_id")
-      .whereRaw("wm.wa_conversation_id = c.wa_conversation_id")
-      .whereNull("wm.deleted_for_me_at")
-  );
+  applyVisibleWaMessageExistsConstraint(trx, query, "c");
   if (input.search) {
     const keyword = `%${input.search.trim()}%`;
     query.andWhere((builder) => {
@@ -692,7 +716,10 @@ export async function listWaConversations(
     if (!isDisplayableStoredWaMessage(row as Record<string, unknown>)) continue;
     const preview = row.body_text
       ? String(row.body_text)
-      : (extractBodyTextFromPayload(row.provider_payload) ?? "");
+      : (
+          extractBodyTextFromPayload(row.provider_payload) ??
+          deriveMessagePreviewFallback(String(row.message_type), asString(row.delivery_status))
+        );
     previewByConversation.set(waConversationId, preview);
   }
   for (const row of messageRows) {
@@ -760,8 +787,10 @@ export async function getWaConversationListItem(
   trx: Knex.Transaction,
   input: { tenantId: string; waConversationId: string }
 ) {
-  const row = await buildConversationBaseQuery(trx, input.tenantId)
-    .where("c.wa_conversation_id", input.waConversationId)
+  const query = buildConversationBaseQuery(trx, input.tenantId)
+    .where("c.wa_conversation_id", input.waConversationId);
+  applyVisibleWaMessageExistsConstraint(trx, query, "c");
+  const row = await query
     .first<Record<string, unknown> | undefined>();
   if (!row) return null;
   const waAccountId = String(row.wa_account_id);

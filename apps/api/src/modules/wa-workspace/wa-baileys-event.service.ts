@@ -50,7 +50,7 @@ function derivePhoneE164FromJid(jid: string | null) {
   return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
 }
 
-async function ingestSingleMessage(
+export async function ingestSingleBaileysMessage(
   trx: Knex.Transaction,
   input: {
     tenantId: string;
@@ -260,7 +260,7 @@ export async function ingestBaileysMessagesUpsert(input: {
   for (const message of input.messages) {
     try {
       const result = await withTenantTransaction(input.tenantId, async (trx) => {
-        return ingestSingleMessage(trx, {
+        return ingestSingleBaileysMessage(trx, {
           tenantId: input.tenantId,
           waAccountId: input.waAccountId,
           message,

@@ -57,6 +57,7 @@ export type WaProviderSendReactionResult = WaProviderSendTextResult;
 
 export type WaProviderHistoryResult = {
   messages: WaNormalizedMessage[];
+  rawMessages?: Record<string, unknown>[];
   nextCursor?: string | null;
 };
 

@@ -787,7 +787,17 @@ export function useWorkspaceDashboard() {
     socket.on("message.sent", handleMessageSentEvent);
     socket.on("message.updated", handleMessageUpdatedEvent);
     socket.on("task.updated", handleTaskUpdatedEvent);
-    socket.on("wa.conversation.updated", (event: { conversation: { waConversationId: string; unreadCount: number } }) => {
+    socket.on("wa.conversation.updated", (event: {
+      conversation: { waConversationId: string; unreadCount: number } | null;
+      removedWaConversationId?: string | null;
+    }) => {
+      if (!event.conversation) {
+        if (!event.removedWaConversationId) return;
+        if (waConversationUnreadRef.current.delete(event.removedWaConversationId)) {
+          scheduleWaUnreadRefresh();
+        }
+        return;
+      }
       const previousUnread = waConversationUnreadRef.current.get(event.conversation.waConversationId);
       waConversationUnreadRef.current.set(event.conversation.waConversationId, event.conversation.unreadCount);
       if (previousUnread == null) return;

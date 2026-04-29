@@ -123,13 +123,15 @@ export function emitWaConversationUpdated(input: {
     lastMessageAt: string | null;
     lastMessagePreview: string | null;
     unreadCount: number;
-  };
+  } | null;
+  removedWaConversationId?: string | null;
   occurredAt?: string;
 }) {
   realtimeEventBus.emitEvent("wa.conversation.updated", {
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     conversation: input.conversation,
+    removedWaConversationId: input.removedWaConversationId ?? null,
     occurredAt: input.occurredAt ?? new Date().toISOString()
   });
 }
