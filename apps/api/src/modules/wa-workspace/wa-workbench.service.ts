@@ -134,7 +134,7 @@ async function backfillConversationMessagesFromProviderHistory(
   const instanceKey = account?.instance_key ? String(account.instance_key) : null;
   if (!instanceKey) return 0;
 
-  const result = await triggerWaConversationHistorySync(trx, {
+  const result = await triggerWaConversationHistorySync({
     tenantId: input.tenantId,
     waConversationId: input.waConversationId,
     waAccountId: input.waAccountId,

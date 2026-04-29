@@ -96,7 +96,7 @@ export async function reconcileWaConversation(
     throw new Error("WA account not found");
   }
 
-  const historyResult = await triggerWaConversationHistorySync(trx, {
+  const historyResult = await triggerWaConversationHistorySync({
     tenantId: input.tenantId,
     waConversationId: input.waConversationId,
     waAccountId: conversation.waAccountId,
@@ -176,7 +176,7 @@ export async function reconcileAfterReconnect(input: {
 
     try {
       const result = await withTenantTransaction(tenantId, async (trx) => {
-        const historyResult = await triggerWaConversationHistorySync(trx, {
+        const historyResult = await triggerWaConversationHistorySync({
           tenantId,
           waConversationId,
           waAccountId,

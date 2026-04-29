@@ -1,4 +1,3 @@
-import type { Knex } from "knex";
 import type { WAMessage } from "@whiskeysockets/baileys";
 
 import { withTenantTransaction } from "../../infra/db/client.js";
@@ -36,7 +35,6 @@ function extractStoredHistoryKey(providerPayload: unknown) {
 }
 
 export async function triggerWaConversationHistorySync(
-  trx: Knex.Transaction,
   input: {
     tenantId: string;
     waConversationId: string;
@@ -46,29 +44,36 @@ export async function triggerWaConversationHistorySync(
     limit?: number;
   }
 ) {
-  const oldestMessageRow = await trx("wa_messages")
-    .where({
-      tenant_id: input.tenantId,
-      wa_conversation_id: input.waConversationId
-    })
-    .whereNotNull("provider_message_id")
-    .whereNull("deleted_for_me_at")
-    .select("provider_payload", "provider_ts")
-    .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint, logical_seq) asc")
-    .orderBy("logical_seq", "asc")
-    .first<Record<string, unknown> | undefined>();
-  const oldestMessageKey = oldestMessageRow ? extractStoredHistoryKey(oldestMessageRow.provider_payload) : null;
-  const oldestMessageTimestampMs = oldestMessageRow?.provider_ts ? Number(oldestMessageRow.provider_ts) : null;
+  const { oldestMessageKey, oldestMessageTimestampMs, existingCount } = await withTenantTransaction(
+    input.tenantId,
+    async (trx) => {
+      const oldestMessageRow = await trx("wa_messages")
+        .where({
+          tenant_id: input.tenantId,
+          wa_conversation_id: input.waConversationId
+        })
+        .whereNotNull("provider_message_id")
+        .whereNull("deleted_for_me_at")
+        .select("provider_payload", "provider_ts")
+        .orderByRaw("coalesce(provider_ts, (extract(epoch from created_at) * 1000)::bigint, logical_seq) asc")
+        .orderBy("logical_seq", "asc")
+        .first<Record<string, unknown> | undefined>();
+      const existingCountRow = await trx("wa_messages")
+        .where({
+          tenant_id: input.tenantId,
+          wa_conversation_id: input.waConversationId
+        })
+        .whereNull("deleted_for_me_at")
+        .count<{ count: string }>("wa_message_id as count")
+        .first();
 
-  const existingCountRow = await trx("wa_messages")
-    .where({
-      tenant_id: input.tenantId,
-      wa_conversation_id: input.waConversationId
-    })
-    .whereNull("deleted_for_me_at")
-    .count<{ count: string }>("wa_message_id as count")
-    .first();
-  const existingCount = Number(existingCountRow?.count ?? 0);
+      return {
+        oldestMessageKey: oldestMessageRow ? extractStoredHistoryKey(oldestMessageRow.provider_payload) : null,
+        oldestMessageTimestampMs: oldestMessageRow?.provider_ts ? Number(oldestMessageRow.provider_ts) : null,
+        existingCount: Number(existingCountRow?.count ?? 0)
+      };
+    }
+  );
 
   const historyResult = await waProviderAdapter.fetchHistory({
     tenantId: input.tenantId,
@@ -81,34 +86,40 @@ export async function triggerWaConversationHistorySync(
   });
 
   if ((!oldestMessageKey || !oldestMessageTimestampMs) && historyResult.rawMessages?.length) {
-    let inserted = 0;
-    for (const rawMessage of historyResult.rawMessages) {
-      try {
-        const result = await withTenantTransaction(input.tenantId, async (messageTrx) => {
-          return ingestSingleBaileysMessage(messageTrx, {
-            tenantId: input.tenantId,
-            waAccountId: input.waAccountId,
-            message: rawMessage as unknown as WAMessage,
-            eventType: "RUNTIME_HISTORY_SNAPSHOT"
+    const inserted = await withTenantTransaction(input.tenantId, async (trx) => {
+      let count = 0;
+      for (const rawMessage of historyResult.rawMessages ?? []) {
+        try {
+          const result = await trx.transaction(async (messageTrx) => {
+            return ingestSingleBaileysMessage(messageTrx, {
+              tenantId: input.tenantId,
+              waAccountId: input.waAccountId,
+              message: rawMessage as unknown as WAMessage,
+              eventType: "RUNTIME_HISTORY_SNAPSHOT"
+            });
           });
-        });
-        if (result) {
-          inserted += 1;
+          if (result) {
+            count += 1;
+          }
+        } catch (error) {
+          const remoteJid =
+            typeof (rawMessage as Record<string, unknown>)?.key === "object" &&
+            (rawMessage as { key?: { remoteJid?: string } }).key?.remoteJid
+              ? String((rawMessage as { key?: { remoteJid?: string } }).key?.remoteJid)
+              : "unknown";
+          console.warn(`[triggerWaConversationHistorySync] skipping runtime history snapshot message from jid=${remoteJid}:`, error);
         }
-      } catch (error) {
-        const remoteJid =
-          typeof (rawMessage as Record<string, unknown>)?.key === "object" &&
-          (rawMessage as { key?: { remoteJid?: string } }).key?.remoteJid
-            ? String((rawMessage as { key?: { remoteJid?: string } }).key?.remoteJid)
-            : "unknown";
-        console.warn(`[triggerWaConversationHistorySync] skipping runtime history snapshot message from jid=${remoteJid}:`, error);
       }
-    }
+      return count;
+    });
     if (inserted > 0) {
-      await refreshWaConversationProjection(trx, {
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        waConversationId: input.waConversationId
+      await withTenantTransaction(input.tenantId, async (trx) => {
+        await refreshWaConversationProjection(trx, {
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          waConversationId: input.waConversationId
+        });
+        return { ok: true };
       });
     }
     return { inserted };
@@ -120,8 +131,8 @@ export async function triggerWaConversationHistorySync(
 
   const waitUntil = Date.now() + 4_000;
   while (Date.now() < waitUntil) {
-    const nextCount = await withTenantTransaction(input.tenantId, async (pollTrx) => {
-      const nextCountRow = await pollTrx("wa_messages")
+    const nextCount = await withTenantTransaction(input.tenantId, async (trx) => {
+      const nextCountRow = await trx("wa_messages")
         .where({
           tenant_id: input.tenantId,
           wa_conversation_id: input.waConversationId
@@ -132,10 +143,13 @@ export async function triggerWaConversationHistorySync(
       return Number(nextCountRow?.count ?? 0);
     });
     if (nextCount > existingCount) {
-      await refreshWaConversationProjection(trx, {
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        waConversationId: input.waConversationId
+      await withTenantTransaction(input.tenantId, async (trx) => {
+        await refreshWaConversationProjection(trx, {
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          waConversationId: input.waConversationId
+        });
+        return { ok: true };
       });
       return { inserted: nextCount - existingCount };
     }

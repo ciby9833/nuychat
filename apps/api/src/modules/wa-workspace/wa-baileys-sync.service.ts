@@ -255,27 +255,27 @@ export async function ingestBaileysHistorySet(input: {
   waAccountId: string;
   messages: WAMessage[];
 }) {
-  let inserted = 0;
-  for (const message of input.messages) {
-    try {
-      const result = await withTenantTransaction(input.tenantId, async (trx) => {
-        return ingestSingleBaileysMessage(trx, {
-          tenantId: input.tenantId,
-          waAccountId: input.waAccountId,
-          message,
-          eventType: "MESSAGING_HISTORY_SET"
+  const inserted = await withTenantTransaction(input.tenantId, async (trx) => {
+    let count = 0;
+    for (const message of input.messages) {
+      try {
+        const result = await trx.transaction(async (messageTrx) => {
+          return ingestSingleBaileysMessage(messageTrx, {
+            tenantId: input.tenantId,
+            waAccountId: input.waAccountId,
+            message,
+            eventType: "MESSAGING_HISTORY_SET"
+          });
         });
-      });
-      if (result) {
-        inserted += 1;
+        if (result) {
+          count += 1;
+        }
+      } catch (error) {
+        const jid = message.key?.remoteJid ?? "unknown";
+        console.warn(`[ingestBaileysHistorySet] skipping history message from jid=${jid}:`, error);
       }
-    } catch (error) {
-      const jid = message.key?.remoteJid ?? "unknown";
-      console.warn(`[ingestBaileysHistorySet] skipping history message from jid=${jid}:`, error);
     }
-  }
 
-  await withTenantTransaction(input.tenantId, async (trx) => {
     await updateSessionSyncMeta(trx, {
       tenantId: input.tenantId,
       waAccountId: input.waAccountId,
@@ -283,7 +283,7 @@ export async function ingestBaileysHistorySet(input: {
         historySyncedAt: new Date().toISOString()
       }
     });
-    return { ok: true };
+    return count;
   });
 
   return { ok: true, inserted };
