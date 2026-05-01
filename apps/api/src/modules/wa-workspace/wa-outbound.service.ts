@@ -116,34 +116,41 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
           })
         });
 
-      await trx("wa_messages")
-        .where({ tenant_id: payload.tenantId, wa_message_id: payload.waMessageId })
-        .update({
-          provider_message_id: result.providerMessageId,
-          delivery_status: result.deliveryStatus,
-          provider_payload: JSON.stringify({
-            ...result.providerPayload,
-            mentionJids: payload.mentionJids ?? null
-          }),
-          sender_member_id: payload.createdByMembershipId ?? existingJob.created_by_membership_id ?? null,
-          updated_at: trx.fn.now()
+      // Reactions don't have their own wa_messages row — the result maps to the
+      // reaction entry in wa_message_reactions, not to the target message.
+      // Updating wa_messages here would corrupt the target message's record.
+      if (payload.jobType !== "send_reaction") {
+        await trx("wa_messages")
+          .where({ tenant_id: payload.tenantId, wa_message_id: payload.waMessageId })
+          .update({
+            provider_message_id: result.providerMessageId,
+            delivery_status: result.deliveryStatus,
+            provider_payload: JSON.stringify({
+              ...result.providerPayload,
+              mentionJids: payload.mentionJids ?? null
+            }),
+            sender_member_id: payload.createdByMembershipId ?? existingJob.created_by_membership_id ?? null,
+            updated_at: trx.fn.now()
+          });
+
+        await processWaMonitorMessage(trx, {
+          tenantId: payload.tenantId,
+          waMessageId: payload.waMessageId
+        }).catch((error) => {
+          console.warn("[wa-monitor] failed to resolve reply facts:", error);
         });
+      }
+    });
 
-      await processWaMonitorMessage(trx, {
+    if (payload.jobType !== "send_reaction") {
+      emitWaMessageUpdated({
         tenantId: payload.tenantId,
-        waMessageId: payload.waMessageId
-      }).catch((error) => {
-        console.warn("[wa-monitor] failed to resolve reply facts:", error);
+        waConversationId: payload.waConversationId,
+        waMessageId: payload.waMessageId,
+        providerMessageId: result.providerMessageId,
+        deliveryStatus: result.deliveryStatus
       });
-    });
-
-    emitWaMessageUpdated({
-      tenantId: payload.tenantId,
-      waConversationId: payload.waConversationId,
-      waMessageId: payload.waMessageId,
-      providerMessageId: result.providerMessageId,
-      deliveryStatus: result.deliveryStatus
-    });
+    }
 
     return { sent: true, providerMessageId: result.providerMessageId };
   } catch (error) {

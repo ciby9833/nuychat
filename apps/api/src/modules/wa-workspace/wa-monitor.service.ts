@@ -15,6 +15,8 @@ type WaMonitorReportQuery = {
   endAt: Date;
   waAccountId?: string | null;
   membershipId?: string | null;
+  requiresReply?: boolean | null;
+  isReplied?: boolean | null;
   page?: number;
   pageSize?: number;
 };
@@ -39,6 +41,32 @@ function toTimeRange(date: string) {
 function toIso(value: Date | string | null | undefined) {
   if (!value) return null;
   return new Date(value).toISOString();
+}
+
+function asString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizePhoneE164(value: string | null) {
+  if (!value) return null;
+  const digits = value.replace(/[^\d]/g, "");
+  return digits ? `+${digits}` : null;
+}
+
+function derivePhoneE164FromJid(jid: string | null) {
+  if (!jid || !jid.endsWith("@s.whatsapp.net")) return null;
+  const local = jid.split("@")[0] ?? "";
+  return /^[0-9]+$/.test(local) ? normalizePhoneE164(local) : null;
+}
+
+function extractPayloadPushName(value: unknown) {
+  try {
+    if (!value) return null;
+    const payload = typeof value === "string" ? JSON.parse(value) as Record<string, unknown> : value as Record<string, unknown>;
+    return asString(payload?.pushName);
+  } catch {
+    return null;
+  }
 }
 
 function buildMessageTimestampSql(alias: string) {
@@ -906,6 +934,9 @@ export async function listAdminWaMonitorMessageDetailReport(
     .modify((qb) => {
       if (input.waAccountId) qb.where("a.wa_account_id", input.waAccountId);
       if (input.membershipId) qb.where("f.replied_by_membership_id", input.membershipId);
+      if (input.requiresReply != null) qb.where("a.requires_reply", input.requiresReply);
+      if (input.isReplied === true) qb.whereNotNull("f.first_reply_at");
+      if (input.isReplied === false) qb.whereNull("f.first_reply_at");
     });
 
   const totalRow = await base.clone().count<{ total: string }>("a.analysis_id as total").first();
@@ -933,6 +964,8 @@ export async function listAdminWaMonitorMessageDetailReport(
       "m.message_type",
       "m.sender_jid",
       "m.participant_jid",
+      "m.logical_seq",
+      "m.provider_payload",
       "c.chat_jid",
       "c.subject",
       "c.contact_name",
@@ -949,35 +982,150 @@ export async function listAdminWaMonitorMessageDetailReport(
     .limit(pageSize)
     .offset(offset);
 
+  const conversationIds = Array.from(new Set(rows.map((row) => String(row.wa_conversation_id))));
+  const participantJids = Array.from(new Set(rows.flatMap((row) => [
+    asString(row.participant_jid),
+    asString(row.sender_jid)
+  ]).filter(Boolean) as string[]));
+  const [memberRows, contactRows] = await Promise.all([
+    conversationIds.length && participantJids.length
+      ? trx("wa_conversation_members")
+          .where("tenant_id", input.tenantId)
+          .whereIn("wa_conversation_id", conversationIds)
+          .whereIn("participant_jid", participantJids)
+          .select("wa_conversation_id", "participant_jid", "display_name")
+      : [],
+    participantJids.length
+      ? trx("wa_contacts")
+          .where("tenant_id", input.tenantId)
+          .whereIn("contact_jid", participantJids)
+          .select("wa_account_id", "contact_jid", "phone_e164", "display_name", "notify_name", "verified_name")
+      : []
+  ]);
+  const memberNameMap = new Map((memberRows as Array<Record<string, unknown>>).map((row) => [
+    `${String(row.wa_conversation_id)}:${String(row.participant_jid)}`,
+    asString(row.display_name)
+  ]));
+  const contactMap = new Map((contactRows as Array<Record<string, unknown>>).map((row) => [
+    `${String(row.wa_account_id)}:${String(row.contact_jid)}`,
+    {
+      phoneE164: asString(row.phone_e164),
+      displayName: asString(row.display_name) ?? asString(row.notify_name) ?? asString(row.verified_name)
+    }
+  ]));
+
+  const contextByMessageId = new Map<string, Array<{
+    waMessageId: string;
+    direction: string;
+    bodyText: string;
+    messageType: string;
+    senderName: string | null;
+    senderJid: string | null;
+    messageAt: string | null;
+  }>>();
+  const rowsByConversation = new Map<string, Array<Record<string, unknown>>>();
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const conversationId = String(row.wa_conversation_id);
+    rowsByConversation.set(conversationId, [...(rowsByConversation.get(conversationId) ?? []), row]);
+  }
+  for (const [conversationId, conversationRows] of rowsByConversation) {
+    const seqs = conversationRows.map((row) => Number(row.logical_seq)).filter(Number.isFinite);
+    if (seqs.length === 0) continue;
+    const minSeq = Math.max(0, Math.min(...seqs) - 3);
+    const maxSeq = Math.max(...seqs) + 3;
+    const contextRows = await trx("wa_messages as cm")
+      .where("cm.tenant_id", input.tenantId)
+      .where("cm.wa_conversation_id", conversationId)
+      .whereBetween("cm.logical_seq", [minSeq, maxSeq])
+      .select(
+        "cm.wa_message_id",
+        "cm.direction",
+        "cm.body_text",
+        "cm.message_type",
+        "cm.sender_jid",
+        "cm.participant_jid",
+        "cm.provider_ts",
+        "cm.created_at",
+        "cm.provider_payload",
+        "cm.logical_seq"
+      )
+      .orderBy("cm.logical_seq", "asc");
+    for (const sourceRow of conversationRows) {
+      const sourceSeq = Number(sourceRow.logical_seq);
+      if (!Number.isFinite(sourceSeq)) continue;
+      contextByMessageId.set(String(sourceRow.wa_message_id), contextRows
+        .filter((contextRow) => {
+          const seq = Number(contextRow.logical_seq);
+          return Number.isFinite(seq) && seq >= Math.max(0, sourceSeq - 3) && seq <= sourceSeq + 3;
+        })
+        .map((contextRow) => {
+          const contextSenderJid = asString(contextRow.participant_jid) ?? asString(contextRow.sender_jid);
+          const contextContact = contextSenderJid ? contactMap.get(`${String(sourceRow.wa_account_id)}:${contextSenderJid}`) : null;
+          const contextPhone = contextContact?.phoneE164 ?? derivePhoneE164FromJid(contextSenderJid);
+          return {
+            waMessageId: String(contextRow.wa_message_id),
+            direction: String(contextRow.direction),
+            bodyText: asString(contextRow.body_text) ?? "",
+            messageType: String(contextRow.message_type),
+            senderName: String(contextRow.direction) === "outbound"
+              ? "客服"
+              : (
+                  (contextSenderJid ? memberNameMap.get(`${conversationId}:${contextSenderJid}`) : null) ??
+                  contextContact?.displayName ??
+                  extractPayloadPushName(contextRow.provider_payload) ??
+                  contextPhone ??
+                  contextSenderJid
+                ),
+            senderJid: contextSenderJid,
+            messageAt: contextRow.provider_ts ? new Date(Number(contextRow.provider_ts)).toISOString() : toIso(contextRow.created_at as string | Date | null)
+          };
+        }));
+    }
+  }
+
   return mapPagedResult({
     page,
     pageSize,
     total: Number(totalRow?.total ?? 0),
-    rows: rows.map((row) => ({
-      analysisId: String(row.analysis_id),
-      waAccountId: String(row.wa_account_id),
-      accountDisplayName: accountMap.get(String(row.wa_account_id))?.displayName ?? String(row.wa_account_id),
-      waConversationId: String(row.wa_conversation_id),
-      waMessageId: String(row.wa_message_id),
-      displayName: row.subject ? String(row.subject) : (row.contact_name ? String(row.contact_name) : String(row.chat_jid)),
-      chatJid: String(row.chat_jid),
-      conversationType: String(row.conversation_type),
-      customerMessageAt: row.customer_message_at ? new Date(String(row.customer_message_at)).toISOString() : null,
-      senderJid: row.participant_jid ? String(row.participant_jid) : (row.sender_jid ? String(row.sender_jid) : null),
-      messageType: String(row.message_type),
-      bodyText: row.body_text ? String(row.body_text) : "",
-      requiresReply: Boolean(row.requires_reply),
-      reason: row.reason ? String(row.reason) : "",
-      confidence: Number(row.confidence ?? 0),
-      isReplied: Boolean(row.first_reply_at),
-      firstReplyAt: row.first_reply_at ? new Date(String(row.first_reply_at)).toISOString() : null,
-      replyDurationSeconds: row.reply_duration_sec == null ? null : Number(row.reply_duration_sec),
-      repliedByMembershipId: row.replied_by_membership_id ? String(row.replied_by_membership_id) : null,
-      repliedByName: row.replied_by_name ? String(row.replied_by_name) : null,
-      firstReplyText: row.first_reply_text ? String(row.first_reply_text) : "",
-      modelProvider: String(row.model_provider),
-      modelName: String(row.model_name)
-    }))
+    rows: rows.map((row) => {
+      const senderJid = asString(row.participant_jid) ?? asString(row.sender_jid);
+      const contact = senderJid ? contactMap.get(`${String(row.wa_account_id)}:${senderJid}`) : null;
+      const senderPhoneE164 = contact?.phoneE164 ?? derivePhoneE164FromJid(senderJid);
+      const senderDisplayName =
+        (senderJid ? memberNameMap.get(`${String(row.wa_conversation_id)}:${senderJid}`) : null) ??
+        contact?.displayName ??
+        extractPayloadPushName(row.provider_payload) ??
+        senderPhoneE164 ??
+        senderJid;
+      return {
+        analysisId: String(row.analysis_id),
+        waAccountId: String(row.wa_account_id),
+        accountDisplayName: accountMap.get(String(row.wa_account_id))?.displayName ?? String(row.wa_account_id),
+        waConversationId: String(row.wa_conversation_id),
+        waMessageId: String(row.wa_message_id),
+        displayName: row.subject ? String(row.subject) : (row.contact_name ? String(row.contact_name) : String(row.chat_jid)),
+        chatJid: String(row.chat_jid),
+        conversationType: String(row.conversation_type),
+        customerMessageAt: row.customer_message_at ? new Date(String(row.customer_message_at)).toISOString() : null,
+        senderJid,
+        senderDisplayName,
+        senderPhoneE164,
+        messageType: String(row.message_type),
+        bodyText: row.body_text ? String(row.body_text) : "",
+        contextMessages: contextByMessageId.get(String(row.wa_message_id)) ?? [],
+        requiresReply: Boolean(row.requires_reply),
+        reason: row.reason ? String(row.reason) : "",
+        confidence: Number(row.confidence ?? 0),
+        isReplied: Boolean(row.first_reply_at),
+        firstReplyAt: row.first_reply_at ? new Date(String(row.first_reply_at)).toISOString() : null,
+        replyDurationSeconds: row.reply_duration_sec == null ? null : Number(row.reply_duration_sec),
+        repliedByMembershipId: row.replied_by_membership_id ? String(row.replied_by_membership_id) : null,
+        repliedByName: row.replied_by_name ? String(row.replied_by_name) : null,
+        firstReplyText: row.first_reply_text ? String(row.first_reply_text) : "",
+        modelProvider: String(row.model_provider),
+        modelName: String(row.model_name)
+      };
+    })
   });
 }
 

@@ -254,7 +254,9 @@ export function useWaWorkspace(session: Session | null) {
     const requestSeq = ++detailRequestSeqRef.current;
     setDetailLoading(true);
     setError("");
-    setDetail(null);
+    // Do NOT clear detail here — keeping existing messages prevents scroll-position
+    // resets when a background reload is triggered by a socket event or an action.
+    // The conversation-switch effect below handles clearing for actual tab changes.
     try {
       const next = await getWaWorkbenchConversationDetail(session, selectedConversationId);
       if (detailRequestSeqRef.current !== requestSeq) return;
@@ -307,6 +309,13 @@ export function useWaWorkspace(session: Session | null) {
       return next.length === current.length ? current : next;
     });
   }, [composerText]);
+
+  // Clear the message panel immediately when the user switches to a different
+  // conversation so the previous chat's messages never flash before the new ones load.
+  useEffect(() => {
+    setDetail(null);
+    setHasMoreMessages(false);
+  }, [selectedConversationId]);
 
   useEffect(() => {
     void loadAccounts();
@@ -585,19 +594,25 @@ export function useWaWorkspace(session: Session | null) {
   const archiveConversation = useCallback(async (waConversationId: string, archive: boolean) => {
     if (!session) return;
     setActionLoading(`archive:${waConversationId}`);
+    // Optimistically remove the conversation from the current list view so the
+    // UI responds immediately without a full list reload.
+    setConversations((current) => current.filter((item) => item.waConversationId !== waConversationId));
+    if (selectedConversationId === waConversationId && archive && !archivedOnly) {
+      setSelectedConversationId(null);
+      setDetail(null);
+    }
     try {
       await archiveWaConversation(session, waConversationId, archive);
-      await loadConversations();
-      if (selectedConversationId === waConversationId && archive && !archivedOnly) {
-        setSelectedConversationId(null);
-        setDetail(null);
-      } else if (selectedConversationId === waConversationId) {
-        await loadDetail();
-      }
+      // The backend emits wa.conversation.updated after archiving; the socket
+      // handler will add/remove the conversation from the list as needed.
+    } catch (nextError) {
+      setError((nextError as Error).message);
+      // On error, reload the list to restore correct state.
+      void loadConversations();
     } finally {
       setActionLoading(null);
     }
-  }, [archivedOnly, loadConversations, loadDetail, selectedConversationId, session]);
+  }, [archivedOnly, loadConversations, selectedConversationId, session]);
 
   const editMessage = useCallback(async (message: WaMessageItem, text: string) => {
     if (!session || !text.trim()) return;
@@ -607,24 +622,53 @@ export function useWaWorkspace(session: Session | null) {
         text: text.trim(),
         mentionJids: message.mentions?.map((item) => item.jid) ?? null
       });
-      await loadConversations();
-      await loadDetail();
+      // Optimistic in-place update so the edit appears immediately without a
+      // full reload. The backend emits wa.conversation.updated which will trigger
+      // a background loadDetail() via the socket handler to confirm the new state.
+      setDetail((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          messages: current.messages.map((m) =>
+            m.waMessageId === message.waMessageId ? { ...m, bodyText: text.trim() } : m
+          )
+        };
+      });
     } finally {
       setActionLoading(null);
     }
-  }, [loadConversations, loadDetail, session]);
+  }, [session]);
 
   const deleteMessage = useCallback(async (message: WaMessageItem, scope: "me" | "everyone") => {
     if (!session) return;
     setActionLoading(`delete:${message.waMessageId}`);
     try {
       await deleteWaMessage(session, message.waMessageId, scope);
-      await loadConversations();
-      await loadDetail();
+      // Optimistic in-place update so the action is reflected immediately without
+      // a full reload. The backend emits wa.conversation.updated which drives a
+      // background loadDetail() via the socket handler to confirm the final state.
+      setDetail((current) => {
+        if (!current) return current;
+        if (scope === "everyone") {
+          return {
+            ...current,
+            messages: current.messages.map((m) =>
+              m.waMessageId === message.waMessageId
+                ? { ...m, deliveryStatus: "revoked", bodyText: null, revokedAt: new Date().toISOString() }
+                : m
+            )
+          };
+        }
+        // scope === "me": hide the message locally
+        return {
+          ...current,
+          messages: current.messages.filter((m) => m.waMessageId !== message.waMessageId)
+        };
+      });
     } finally {
       setActionLoading(null);
     }
-  }, [loadConversations, loadDetail, session]);
+  }, [session]);
 
   // Wraps setSelectedConversationId so we can capture the conversation's
   // current unread count before detail loading resets it on the server.

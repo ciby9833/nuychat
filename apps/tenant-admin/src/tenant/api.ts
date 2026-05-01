@@ -885,6 +885,8 @@ function buildWaMonitorReportQuery(input: WaMonitorReportQuery) {
   params.set("endAt", input.endAt);
   if (input.waAccountId) params.set("waAccountId", input.waAccountId);
   if (input.membershipId) params.set("membershipId", input.membershipId);
+  if (input.requiresReply != null) params.set("requiresReply", String(input.requiresReply));
+  if (input.isReplied != null) params.set("isReplied", String(input.isReplied));
   if (input.page) params.set("page", String(input.page));
   if (input.pageSize) params.set("pageSize", String(input.pageSize));
   if (input.granularity) params.set("granularity", input.granularity);

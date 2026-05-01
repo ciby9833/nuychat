@@ -482,13 +482,50 @@ export async function sendBaileysMessage(input: {
     if (!input.emoji || !input.reactionTargetId) {
       throw new Error("emoji and reactionTargetId are required");
     }
+    // Look up the target message so we can set `fromMe` and `participant`
+    // correctly in the reaction key.  WhatsApp requires:
+    //   - fromMe = true  when reacting to a message WE sent
+    //   - participant = sender JID for group messages (regardless of fromMe)
+    // Without these the reaction is silently dropped by WhatsApp servers.
+    let reactionTargetFromMe = false;
+    let reactionTargetParticipant: string | undefined;
+    try {
+      const targetRow = await withTenantTransaction(input.tenantId, async (trx) =>
+        trx("wa_messages")
+          .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
+          .where("provider_message_id", input.reactionTargetId)
+          .select("direction", "participant_jid", "sender_jid", "provider_payload")
+          .orderBy("created_at", "desc")
+          .first<Record<string, unknown> | undefined>()
+      );
+      if (targetRow) {
+        reactionTargetFromMe = String(targetRow.direction) === "outbound";
+        if (input.chatJid.endsWith("@g.us")) {
+          // For group chats the key MUST contain the original sender's participant JID.
+          // Prefer the stored provider-payload key, fall back to stored columns.
+          const storedPayload = typeof targetRow.provider_payload === "string"
+            ? (() => { try { return JSON.parse(String(targetRow.provider_payload)); } catch { return null; } })()
+            : (targetRow.provider_payload as Record<string, unknown> | null);
+          const storedKeyParticipant = storedPayload?.key && typeof storedPayload.key === "object"
+            ? (String((storedPayload.key as Record<string, unknown>).participant ?? "") || null)
+            : null;
+          const fallbackParticipant =
+            (targetRow.participant_jid ? String(targetRow.participant_jid) : null)
+            ?? (reactionTargetFromMe ? null : (targetRow.sender_jid ? String(targetRow.sender_jid) : null));
+          reactionTargetParticipant = storedKeyParticipant ?? fallbackParticipant ?? undefined;
+        }
+      }
+    } catch {
+      // Non-fatal: fall through with fromMe=false and no participant.
+    }
     content = {
       react: {
         text: input.emoji,
         key: {
           remoteJid: input.chatJid,
           id: input.reactionTargetId,
-          fromMe: false
+          fromMe: reactionTargetFromMe,
+          ...(reactionTargetParticipant ? { participant: reactionTargetParticipant } : {})
         }
       }
     };

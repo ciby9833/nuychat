@@ -115,6 +115,8 @@ export function WaMonitorTab() {
   const [range, setRange] = useState<[Dayjs, Dayjs]>(defaultRange);
   const [waAccountId, setWaAccountId] = useState<string | null>(null);
   const [membershipId, setMembershipId] = useState<string | null>(null);
+  const [requiresReply, setRequiresReply] = useState<boolean | null>(null);
+  const [isReplied, setIsReplied] = useState<boolean | null>(null);
   const [granularity, setGranularity] = useState<"hour" | "day">("hour");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -155,10 +157,12 @@ export function WaMonitorTab() {
     endAt: toApiTime(range[1].endOf("second")),
     waAccountId,
     membershipId,
+    requiresReply,
+    isReplied,
     granularity,
     page,
     pageSize
-  }), [granularity, membershipId, page, pageSize, range, waAccountId]);
+  }), [granularity, isReplied, membershipId, page, pageSize, range, requiresReply, waAccountId]);
 
   const loadReport = useCallback(async () => {
     if (activeTab === "health") return;
@@ -262,17 +266,49 @@ export function WaMonitorTab() {
   ], [t]);
 
   const messageColumns = useMemo<ColumnsType<WaMonitorMessageDetailReportRow>>(() => [
-    { title: t("waMonitor.report.account"), dataIndex: "accountDisplayName", width: 160 },
-    { title: t("waMonitor.report.conversation"), dataIndex: "displayName", width: 180 },
-    { title: t("waMonitor.report.customerMessageAt"), dataIndex: "customerMessageAt", width: 170, render: (value: string | null) => value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "-" },
-    { title: t("waMonitor.report.customerMessage"), dataIndex: "bodyText", ellipsis: true, width: 260 },
-    { title: t("waMonitor.report.requiresReply"), dataIndex: "requiresReply", width: 100, render: (value: boolean) => <Tag color={value ? "orange" : "default"}>{value ? t("waMonitor.report.yes") : t("waMonitor.report.no")}</Tag> },
-    { title: t("waMonitor.report.analysisReason"), dataIndex: "reason", ellipsis: true, width: 240 },
+    { title: t("waMonitor.report.account"), dataIndex: "accountDisplayName", width: 180, fixed: "left" },
+    { title: t("waMonitor.report.conversation"), dataIndex: "displayName", width: 220 },
+    { title: t("waMonitor.report.sender"), width: 220, render: (_, row) => (
+      <Space direction="vertical" size={0}>
+        <Typography.Text>{row.senderDisplayName ?? row.senderPhoneE164 ?? row.senderJid ?? "-"}</Typography.Text>
+        {row.senderPhoneE164 && row.senderPhoneE164 !== row.senderDisplayName ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{row.senderPhoneE164}</Typography.Text>
+        ) : null}
+      </Space>
+    ) },
+    { title: t("waMonitor.report.customerMessageAt"), dataIndex: "customerMessageAt", width: 180, render: (value: string | null) => value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "-" },
+    { title: t("waMonitor.report.customerMessage"), dataIndex: "bodyText", width: 420, render: (value: string) => (
+      <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>{value || "-"}</Typography.Paragraph>
+    ) },
+    { title: t("waMonitor.report.context"), width: 520, render: (_, row) => (
+      <Space direction="vertical" size={6} style={{ width: "100%" }}>
+        {row.contextMessages.map((item) => (
+          <div
+            key={item.waMessageId}
+            style={{
+              padding: "6px 8px",
+              borderRadius: 6,
+              background: item.waMessageId === row.waMessageId ? "#fff7e6" : "#fafafa",
+              border: "1px solid #f0f0f0"
+            }}
+          >
+            <Typography.Text type="secondary" style={{ display: "block", fontSize: 12 }}>
+              {[item.messageAt ? dayjs(item.messageAt).format("HH:mm:ss") : null, item.direction === "outbound" ? t("waMonitor.report.agent") : item.senderName].filter(Boolean).join(" · ")}
+            </Typography.Text>
+            <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>
+              {item.bodyText || `(${item.messageType})`}
+            </Typography.Paragraph>
+          </div>
+        ))}
+      </Space>
+    ) },
+    { title: t("waMonitor.report.requiresReply"), dataIndex: "requiresReply", width: 110, render: (value: boolean) => <Tag color={value ? "orange" : "default"}>{value ? t("waMonitor.report.yes") : t("waMonitor.report.no")}</Tag> },
+    { title: t("waMonitor.report.analysisReason"), dataIndex: "reason", width: 280, render: (value: string) => <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>{value || "-"}</Typography.Paragraph> },
     { title: t("waMonitor.report.confidence"), dataIndex: "confidence", width: 100, render: (value: number) => `${Math.round(value * 100)}%` },
     { title: t("waMonitor.report.replied"), dataIndex: "isReplied", width: 100, render: (value: boolean) => <Tag color={value ? "green" : "red"}>{value ? t("waMonitor.report.yes") : t("waMonitor.report.no")}</Tag> },
     { title: t("waMonitor.report.firstReplyAt"), dataIndex: "firstReplyAt", width: 170, render: (value: string | null) => value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "-" },
     { title: t("waMonitor.report.member"), dataIndex: "repliedByName", width: 140, render: (value: string | null) => value ?? "-" },
-    { title: t("waMonitor.report.firstReplyText"), dataIndex: "firstReplyText", ellipsis: true, width: 240 }
+    { title: t("waMonitor.report.firstReplyText"), dataIndex: "firstReplyText", width: 320, render: (value: string) => <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>{value || "-"}</Typography.Paragraph> }
   ], [t]);
 
   const fetchAllRows = useCallback(async (): Promise<AnyReportRow[]> => {
@@ -367,8 +403,14 @@ export function WaMonitorTab() {
           (rows as WaMonitorMessageDetailReportRow[]).map((row) => [
             row.accountDisplayName,
             row.displayName,
+            row.senderDisplayName ?? row.senderPhoneE164 ?? row.senderJid ?? "",
             row.customerMessageAt ? dayjs(row.customerMessageAt).format("YYYY-MM-DD HH:mm:ss") : "",
             row.bodyText,
+            row.contextMessages.map((item) => {
+              const sender = item.direction === "outbound" ? t("waMonitor.report.agent") : (item.senderName ?? "");
+              const time = item.messageAt ? dayjs(item.messageAt).format("HH:mm:ss") : "";
+              return `[${time} ${sender}] ${item.bodyText || `(${item.messageType})`}`;
+            }).join("\n"),
             row.requiresReply ? t("waMonitor.report.yes") : t("waMonitor.report.no"),
             row.reason,
             `${Math.round(row.confidence * 100)}%`,
@@ -436,6 +478,38 @@ export function WaMonitorTab() {
               { label: t("waMonitor.report.byDay"), value: "day" }
             ]}
           />
+        ) : null}
+        {activeTab === "messages" ? (
+          <>
+            <Select
+              allowClear
+              placeholder={t("waMonitor.report.requiresReply")}
+              value={requiresReply == null ? undefined : String(requiresReply)}
+              onChange={(value) => {
+                setRequiresReply(value === undefined ? null : value === "true");
+                resetReportPage();
+              }}
+              style={{ width: 150 }}
+              options={[
+                { label: t("waMonitor.report.yes"), value: "true" },
+                { label: t("waMonitor.report.no"), value: "false" }
+              ]}
+            />
+            <Select
+              allowClear
+              placeholder={t("waMonitor.report.replied")}
+              value={isReplied == null ? undefined : String(isReplied)}
+              onChange={(value) => {
+                setIsReplied(value === undefined ? null : value === "true");
+                resetReportPage();
+              }}
+              style={{ width: 150 }}
+              options={[
+                { label: t("waMonitor.report.yes"), value: "true" },
+                { label: t("waMonitor.report.no"), value: "false" }
+              ]}
+            />
+          </>
         ) : null}
         <Button icon={<ReloadOutlined />} onClick={() => void loadReport()} loading={reportLoading}>
           {t("waMonitor.refresh")}
@@ -591,7 +665,7 @@ export function WaMonitorTab() {
                   dataSource={messageReport?.rows ?? []}
                   pagination={commonPagination(messageReport?.pagination.total)}
                   onChange={handleTableChange}
-                  scroll={{ x: 1900 }}
+                  scroll={{ x: 3300 }}
                 />
               </Space>
             )

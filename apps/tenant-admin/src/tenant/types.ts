@@ -678,6 +678,8 @@ export type WaMonitorReportQuery = {
   endAt: string;
   waAccountId?: string | null;
   membershipId?: string | null;
+  requiresReply?: boolean | null;
+  isReplied?: boolean | null;
   page?: number;
   pageSize?: number;
   granularity?: "hour" | "day";
@@ -741,8 +743,19 @@ export type WaMonitorMessageDetailReportRow = {
   conversationType: string;
   customerMessageAt: string | null;
   senderJid: string | null;
+  senderDisplayName: string | null;
+  senderPhoneE164: string | null;
   messageType: string;
   bodyText: string;
+  contextMessages: Array<{
+    waMessageId: string;
+    direction: string;
+    bodyText: string;
+    messageType: string;
+    senderName: string | null;
+    senderJid: string | null;
+    messageAt: string | null;
+  }>;
   requiresReply: boolean;
   reason: string;
   confidence: number;

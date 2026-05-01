@@ -47,6 +47,8 @@ function parseReportQuery(req: { query: unknown }, tenantId: string) {
     endAt?: string;
     waAccountId?: string;
     membershipId?: string;
+    requiresReply?: string;
+    isReplied?: string;
     page?: string;
     pageSize?: string;
     granularity?: string;
@@ -62,6 +64,8 @@ function parseReportQuery(req: { query: unknown }, tenantId: string) {
     endAt,
     waAccountId: typeof query.waAccountId === "string" && query.waAccountId.trim() ? query.waAccountId.trim() : null,
     membershipId: typeof query.membershipId === "string" && query.membershipId.trim() ? query.membershipId.trim() : null,
+    requiresReply: query.requiresReply === "true" ? true : query.requiresReply === "false" ? false : null,
+    isReplied: query.isReplied === "true" ? true : query.isReplied === "false" ? false : null,
     page: query.page ? Number(query.page) : undefined,
     pageSize: query.pageSize ? Number(query.pageSize) : undefined,
     granularity: query.granularity === "day" ? "day" as const : "hour" as const
