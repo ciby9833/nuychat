@@ -294,9 +294,14 @@ export async function ingestBaileysMessagesUpsert(input: {
     });
     conversations.set(waConversationId, conversation);
   }
+  // Only send real-time "new message" notifications for live messages (type="notify").
+  // Historical messages delivered during a sync session (type="append", "historical", etc.)
+  // must never trigger browser/push notifications — they could spam the user with
+  // hundreds of alerts for old conversations during the initial WhatsApp connection.
+  const isLiveNotify = input.type === "notify";
   for (const result of touchedResults) {
     const conversation = conversations.get(result.waConversationId) ?? null;
-    if (result.direction === "inbound" && conversation) {
+    if (isLiveNotify && result.direction === "inbound" && conversation) {
       emitWaMessageReceived({
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,

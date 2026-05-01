@@ -235,7 +235,10 @@ function MessageText({
   onMentionClick?: (mention: WaMessageItem["mentions"][number]) => void;
 }) {
   return (
-    <div className="whitespace-pre-wrap text-[14px] leading-6">
+    // break-words (overflow-wrap: break-word) ensures that long tokens with no
+    // natural break points — e.g. JSON keys, base64 hashes, long URLs — wrap
+    // inside the bubble instead of overflowing it.
+    <div className="whitespace-pre-wrap break-words text-[14px] leading-6">
       <TextWithMentions text={text} mentions={mentions} onMentionClick={onMentionClick} />
     </div>
   );
@@ -273,7 +276,7 @@ function ImageBody({ att, caption, captionNode, mine, token }: { att: WaAttachme
           </div>
         </div>
       )}
-      {captionNode ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{captionNode}</div> : null}
+      {captionNode ? <div className="mt-2 whitespace-pre-wrap break-words text-[14px] leading-6">{captionNode}</div> : null}
     </div>
   );
 }
@@ -304,7 +307,7 @@ function VideoBody({ att, captionNode, token }: { att: WaAttachment; captionNode
         {duration !== "0:00" && <span>🎬 {duration}</span>}
         {att.fileSize ? <span>{fmtSize(att.fileSize)}</span> : null}
       </div>
-      {captionNode ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{captionNode}</div> : null}
+      {captionNode ? <div className="mt-2 whitespace-pre-wrap break-words text-[14px] leading-6">{captionNode}</div> : null}
     </div>
   );
 }
@@ -373,7 +376,7 @@ function DocumentBody({ att, captionNode, token }: { att: WaAttachment; captionN
           </a>
         ) : null}
       </div>
-      {captionNode ? <div className="mt-2 whitespace-pre-wrap text-[14px] leading-6">{captionNode}</div> : null}
+      {captionNode ? <div className="mt-2 whitespace-pre-wrap break-words text-[14px] leading-6">{captionNode}</div> : null}
     </div>
   );
 }

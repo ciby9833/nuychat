@@ -295,17 +295,28 @@ export function WaConversationList(props: WaConversationListProps) {
                       <div className="shrink-0 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <span className={`text-[11px] ${conversation.unreadCount > 0 ? "text-[#00a884]" : "text-[#667781]"}`}>{formatListTime(conversation.lastMessageAt)}</span>
-                          <button
-                            type="button"
-                            className={`rounded-full px-1.5 py-0.5 text-[13px] text-[#667781] transition-opacity hover:bg-[#e9edef] ${active ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                          {/* Must not be <button> — nesting interactive elements inside the outer
+                              <button> is invalid HTML. Browsers silently hoist the inner button
+                              out of the outer one, breaking stopPropagation. Use role="button". */}
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            className={`cursor-pointer rounded-full px-1.5 py-0.5 text-[13px] text-[#667781] transition-opacity hover:bg-[#e9edef] ${active ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               onArchiveConversation(conversation.waConversationId, !archivedOnly);
                             }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                onArchiveConversation(conversation.waConversationId, !archivedOnly);
+                              }
+                            }}
                             title={archivedOnly ? t("wa.conversationList.unarchive") : t("wa.conversationList.archive")}
                           >
                             ⋮
-                          </button>
+                          </div>
                         </div>
                         {conversation.unreadCount > 0 ? (
                           <div className="mt-2 inline-flex min-w-5 items-center justify-center rounded-full bg-[#25d366] px-1.5 py-0.5 text-[11px] font-semibold text-white">

@@ -21,7 +21,9 @@ export default {
       title: "Critical Alerts",
       empty: "No active alerts",
       critical: "Critical",
-      warning: "Warning"
+      warning: "Warning",
+      expand: "Show all {{count}}",
+      collapse: "Collapse"
     },
     health: {
       title: "Account Health Dashboard",

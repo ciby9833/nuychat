@@ -21,7 +21,9 @@ export default {
       title: "关键告警",
       empty: "当前没有活跃告警",
       critical: "严重",
-      warning: "提醒"
+      warning: "提醒",
+      expand: "展开全部 {{count}} 条",
+      collapse: "收起"
     },
     health: {
       title: "账号健康仪表盘",

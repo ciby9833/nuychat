@@ -21,7 +21,9 @@ export default {
       title: "Peringatan Kritis",
       empty: "Tidak ada peringatan aktif",
       critical: "Kritis",
-      warning: "Peringatan"
+      warning: "Peringatan",
+      expand: "Tampilkan semua {{count}}",
+      collapse: "Tutup"
     },
     health: {
       title: "Dasbor Kesehatan Akun",
