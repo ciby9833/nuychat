@@ -7,6 +7,19 @@ export default {
       button: "Analisis Incremental",
       success: "Dipindai {{scanned}}, diproses {{processed}}"
     },
+    judgment: {
+      button: "Penilaian Cerdas WA",
+      title: "Penilaian Percakapan Cerdas WA",
+      enabled: "Aktifkan penilaian AI",
+      prompt: "Instruksi Penilaian",
+      promptRequired: "Masukkan instruksi penilaian",
+      conditions: "Kondisi Identifikasi",
+      conditionsRequired: "Masukkan kondisi identifikasi",
+      save: "Simpan",
+      cancel: "Batal",
+      saveSuccess: "Konfigurasi penilaian cerdas WA tersimpan",
+      updatedAt: "Diperbarui {{value}}"
+    },
     providerUnavailable: "Provider WhatsApp tidak tersedia",
     providerUnavailableDesc: "Periksa konfigurasi runtime WA terlebih dahulu.",
     stats: {

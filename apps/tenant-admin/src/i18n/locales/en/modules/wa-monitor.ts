@@ -7,6 +7,19 @@ export default {
       button: "Analyze Incrementally",
       success: "Scanned {{scanned}}, processed {{processed}}"
     },
+    judgment: {
+      button: "WA Smart Judgment",
+      title: "WA Smart Conversation Judgment",
+      enabled: "Enable AI judgment",
+      prompt: "Judgment Instructions",
+      promptRequired: "Enter judgment instructions",
+      conditions: "Recognition Conditions",
+      conditionsRequired: "Enter recognition conditions",
+      save: "Save",
+      cancel: "Cancel",
+      saveSuccess: "WA smart judgment config saved",
+      updatedAt: "Updated at {{value}}"
+    },
     providerUnavailable: "WhatsApp provider is unavailable",
     providerUnavailableDesc: "Check the WA runtime configuration first.",
     stats: {

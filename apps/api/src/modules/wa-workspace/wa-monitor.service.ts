@@ -7,6 +7,7 @@ import {
   getWaConversationById,
   listWaConversations
 } from "./wa-conversation.repository.js";
+import { resolveTenantAISettings } from "../ai/provider-config.service.js";
 
 type AlertSeverity = "warning" | "critical";
 type WaMonitorReportQuery = {
@@ -24,6 +25,27 @@ type WaMonitorReportQuery = {
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const THIRTY_MIN_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_JUDGMENT_PROMPT = [
+  "你是 WA 客服对话监控助手，需要判断客户入站消息是否需要客服人工回复。",
+  "请结合当前消息、群聊/私聊类型、上下文和业务条件判断。",
+  "判断要偏向人工复核：不确定但可能需要客服跟进时，应标记为需要回复。"
+].join("\n");
+const DEFAULT_JUDGMENT_CONDITION = [
+  "需要回复：客户提出问题、咨询价格/库存/物流/订单/售后、要求确认或处理、投诉、异常、催促、@客服或明确希望有人响应。",
+  "无需回复：纯表情/反应、无业务含义的闲聊、系统通知、其他成员之间不需要客服介入的对话。",
+  "群聊必须识别实际发言人和上下文，不能只凭单句关键词判断。"
+].join("\n");
+
+type WaMonitorJudgmentConfigRow = {
+  config_id: string;
+  tenant_id: string;
+  is_enabled: boolean | null;
+  judgment_prompt: string | null;
+  condition_text: string | null;
+  created_by_membership_id: string | null;
+  created_at: string | Date | null;
+  updated_at: string | Date | null;
+};
 
 function toStatusCode(statusCode: string) {
   if (statusCode === "connected") return "ready";
@@ -94,6 +116,25 @@ function normalizeConfidence(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
+function mapJudgmentConfig(row: WaMonitorJudgmentConfigRow | undefined) {
+  return {
+    configId: row?.config_id ?? null,
+    tenantId: row?.tenant_id ?? null,
+    isEnabled: row?.is_enabled ?? true,
+    judgmentPrompt: row?.judgment_prompt ?? DEFAULT_JUDGMENT_PROMPT,
+    conditionText: row?.condition_text ?? DEFAULT_JUDGMENT_CONDITION,
+    createdByMembershipId: row?.created_by_membership_id ?? null,
+    createdAt: toIso(row?.created_at),
+    updatedAt: toIso(row?.updated_at)
+  };
+}
+
+function normalizeJudgmentText(value: unknown, fallback: string) {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 8000) : fallback;
+}
+
 function analyzeRequiresReply(input: {
   conversationType: string;
   bodyText: string | null;
@@ -126,6 +167,153 @@ function analyzeRequiresReply(input: {
     reason: requiresReply ? "群聊消息包含问题或明确业务处理意图" : "群聊消息未识别出明确客服回复诉求",
     confidence: normalizeConfidence(requiresReply ? (hasQuestion ? 0.84 : 0.76) : 0.68)
   };
+}
+
+function parseAIJudgmentResponse(content: string) {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const requiresReply = parsed.requiresReply;
+    if (typeof requiresReply !== "boolean") return null;
+    return {
+      requiresReply,
+      reason: asString(parsed.reason) ?? (requiresReply ? "AI判断需要客服回复" : "AI判断无需客服回复"),
+      confidence: normalizeConfidence(typeof parsed.confidence === "number" ? parsed.confidence : 0.75)
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function loadJudgmentContext(
+  trx: Knex.Transaction,
+  input: { tenantId: string; waConversationId: string; logicalSeq: number | null }
+) {
+  if (input.logicalSeq == null || !Number.isFinite(input.logicalSeq)) return [];
+  const messageTs = buildMessageTimestampSql("m");
+  const rows = await trx("wa_messages as m")
+    .leftJoin("wa_message_participants as p", function joinParticipant() {
+      this.on("p.wa_message_id", "=", "m.wa_message_id").andOn("p.tenant_id", "=", "m.tenant_id");
+    })
+    .where("m.tenant_id", input.tenantId)
+    .where("m.wa_conversation_id", input.waConversationId)
+    .whereBetween("m.logical_seq", [input.logicalSeq - 4, input.logicalSeq + 2])
+    .whereNull("m.deleted_for_me_at")
+    .select(
+      "m.wa_message_id",
+      "m.direction",
+      "m.body_text",
+      "m.message_type",
+      "m.logical_seq",
+      "p.participant_jid",
+      "p.display_name",
+      "p.phone_e164",
+      trx.raw(`${messageTs} as message_at`)
+    )
+    .orderBy("m.logical_seq", "asc");
+
+  return (rows as Array<Record<string, unknown>>).map((row) => ({
+    direction: String(row.direction),
+    messageType: String(row.message_type),
+    bodyText: asString(row.body_text) ?? "",
+    senderName: asString(row.display_name),
+    senderPhone: asString(row.phone_e164),
+    senderJid: asString(row.participant_jid),
+    messageAt: toIso(row.message_at as string | Date | null)
+  }));
+}
+
+async function analyzeRequiresReplyForTenant(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waConversationId: string;
+    logicalSeq: number | null;
+    conversationType: string;
+    bodyText: string | null;
+    messageType: string;
+  }
+) {
+  const fallback = analyzeRequiresReply({
+    conversationType: input.conversationType,
+    bodyText: input.bodyText,
+    messageType: input.messageType
+  });
+  const config = await getAdminWaMonitorJudgmentConfig(trx, input.tenantId);
+  if (!config.isEnabled) {
+    return { ...fallback, modelProvider: "heuristic", modelName: "wa-monitor-v1", inputTokens: 0, outputTokens: 0 };
+  }
+
+  const aiSettings = await resolveTenantAISettings(trx, input.tenantId);
+  if (!aiSettings) {
+    return {
+      ...fallback,
+      reason: `AI配置不可用，使用兜底规则: ${fallback.reason}`,
+      modelProvider: "heuristic",
+      modelName: "wa-monitor-v1",
+      inputTokens: 0,
+      outputTokens: 0
+    };
+  }
+
+  try {
+    const context = await loadJudgmentContext(trx, {
+      tenantId: input.tenantId,
+      waConversationId: input.waConversationId,
+      logicalSeq: input.logicalSeq
+    });
+    const completion = await aiSettings.provider.complete({
+      tenantId: input.tenantId,
+      model: aiSettings.model,
+      temperature: 0,
+      maxTokens: 300,
+      responseFormat: "json_object",
+      messages: [
+        {
+          role: "system",
+          content: [
+            "你必须只输出 JSON 对象，不要输出解释性前后缀。",
+            "JSON 格式: {\"requiresReply\": boolean, \"reason\": string, \"confidence\": number}",
+            "confidence 必须是 0 到 1 的数字。",
+            "",
+            "判断说明:",
+            config.judgmentPrompt,
+            "",
+            "判断条件:",
+            config.conditionText
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            conversationType: input.conversationType,
+            messageType: input.messageType,
+            currentMessage: input.bodyText ?? "",
+            contextMessages: context
+          })
+        }
+      ]
+    });
+    const parsed = parseAIJudgmentResponse(completion.content);
+    if (!parsed) throw new Error("Invalid AI judgment response");
+    return {
+      ...parsed,
+      modelProvider: aiSettings.providerName,
+      modelName: completion.model || aiSettings.model,
+      inputTokens: completion.inputTokens,
+      outputTokens: completion.outputTokens
+    };
+  } catch {
+    return {
+      ...fallback,
+      reason: `AI判断失败，使用兜底规则: ${fallback.reason}`,
+      modelProvider: "heuristic",
+      modelName: "wa-monitor-v1",
+      inputTokens: 0,
+      outputTokens: 0
+    };
+  }
 }
 
 function mapMonitorTarget(row: Record<string, unknown>) {
@@ -172,6 +360,47 @@ export async function listAdminWaMonitorTargets(
     })
     .orderBy("updated_at", "desc");
   return (rows as Array<Record<string, unknown>>).map((row) => mapMonitorTarget(row));
+}
+
+export async function getAdminWaMonitorJudgmentConfig(
+  trx: Knex.Transaction,
+  tenantId: string
+) {
+  const row = await trx<WaMonitorJudgmentConfigRow>("wa_monitor_judgment_configs")
+    .where("tenant_id", tenantId)
+    .first();
+  return mapJudgmentConfig(row);
+}
+
+export async function updateAdminWaMonitorJudgmentConfig(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    membershipId: string | null;
+    isEnabled?: boolean;
+    judgmentPrompt?: string;
+    conditionText?: string;
+  }
+) {
+  const current = await getAdminWaMonitorJudgmentConfig(trx, input.tenantId);
+  const [row] = await trx("wa_monitor_judgment_configs")
+    .insert({
+      tenant_id: input.tenantId,
+      is_enabled: input.isEnabled ?? current.isEnabled,
+      judgment_prompt: normalizeJudgmentText(input.judgmentPrompt, current.judgmentPrompt),
+      condition_text: normalizeJudgmentText(input.conditionText, current.conditionText),
+      created_by_membership_id: input.membershipId,
+      updated_at: trx.fn.now()
+    })
+    .onConflict(["tenant_id"])
+    .merge({
+      is_enabled: input.isEnabled ?? current.isEnabled,
+      judgment_prompt: normalizeJudgmentText(input.judgmentPrompt, current.judgmentPrompt),
+      condition_text: normalizeJudgmentText(input.conditionText, current.conditionText),
+      updated_at: trx.fn.now()
+    })
+    .returning("*");
+  return mapJudgmentConfig(row as WaMonitorJudgmentConfigRow);
 }
 
 export async function setAdminWaMonitorTarget(
@@ -235,6 +464,7 @@ export async function processWaMonitorMessage(
       "m.sender_member_id",
       "m.body_text",
       "m.message_type",
+      "m.logical_seq",
       "c.conversation_type",
       trx.raw(`${messageTs} as message_at`)
     )
@@ -244,7 +474,10 @@ export async function processWaMonitorMessage(
   const direction = String(row.direction);
   const messageAt = new Date(String(row.message_at));
   if (direction === "inbound") {
-    const analysis = analyzeRequiresReply({
+    const analysis = await analyzeRequiresReplyForTenant(trx, {
+      tenantId: input.tenantId,
+      waConversationId: String(row.wa_conversation_id),
+      logicalSeq: row.logical_seq == null ? null : Number(row.logical_seq),
       conversationType: String(row.conversation_type),
       bodyText: row.body_text ? String(row.body_text) : null,
       messageType: String(row.message_type)
@@ -259,16 +492,20 @@ export async function processWaMonitorMessage(
         requires_reply: analysis.requiresReply,
         reason: analysis.reason,
         confidence: analysis.confidence,
-        model_provider: "heuristic",
-        model_name: "wa-monitor-v1"
+        model_provider: analysis.modelProvider,
+        model_name: analysis.modelName,
+        input_tokens: analysis.inputTokens,
+        output_tokens: analysis.outputTokens
       })
       .onConflict(["tenant_id", "wa_message_id"])
       .merge({
         requires_reply: analysis.requiresReply,
         reason: analysis.reason,
         confidence: analysis.confidence,
-        model_provider: "heuristic",
-        model_name: "wa-monitor-v1"
+        model_provider: analysis.modelProvider,
+        model_name: analysis.modelName,
+        input_tokens: analysis.inputTokens,
+        output_tokens: analysis.outputTokens
       });
 
     const replyTs = buildMessageTimestampSql("r");

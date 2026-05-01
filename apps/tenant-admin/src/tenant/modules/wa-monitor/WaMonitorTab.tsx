@@ -1,17 +1,21 @@
-import { AlertOutlined, DownloadOutlined, MessageOutlined, ReloadOutlined } from "@ant-design/icons";
+import { AlertOutlined, DownloadOutlined, MessageOutlined, ReloadOutlined, SettingOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
   Card,
   Col,
   DatePicker,
+  Drawer,
   Empty,
+  Form,
+  Input,
   List,
   Radio,
   Row,
   Select,
   Space,
   Statistic,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -26,19 +30,22 @@ import { useTranslation } from "react-i18next";
 import {
   backfillWaMonitorFacts,
   getAdminWaRuntimeStatus,
+  getWaMonitorJudgmentConfig,
   getWaMonitorDashboard,
   listMembers,
   listWaMonitorAccountReport,
   listWaMonitorMessageDetailReport,
   listWaMonitorMemberReport,
   listWaMonitorTimeReport,
-  listWaMonitorUnrepliedReport
+  listWaMonitorUnrepliedReport,
+  updateWaMonitorJudgmentConfig
 } from "../../api";
 import type {
   MemberListItem,
   PagedResponse,
   WaMonitorAccountReportRow,
   WaMonitorDashboard,
+  WaMonitorJudgmentConfig,
   WaMonitorMessageDetailReportRow,
   WaMonitorMemberReportRow,
   WaMonitorReportQuery,
@@ -108,6 +115,11 @@ function exportExcel(filename: string, headers: string[], rows: Array<Array<unkn
 
 export function WaMonitorTab() {
   const { t } = useTranslation();
+  const [judgmentForm] = Form.useForm<{
+    isEnabled: boolean;
+    judgmentPrompt: string;
+    conditionText: string;
+  }>();
   const [runtime, setRuntime] = useState<WaRuntimeStatus | null>(null);
   const [members, setMembers] = useState<MemberListItem[]>([]);
   const [dashboard, setDashboard] = useState<WaMonitorDashboard | null>(null);
@@ -124,6 +136,10 @@ export function WaMonitorTab() {
   const [reportLoading, setReportLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [backfillLoading, setBackfillLoading] = useState(false);
+  const [judgmentDrawerOpen, setJudgmentDrawerOpen] = useState(false);
+  const [judgmentLoading, setJudgmentLoading] = useState(false);
+  const [judgmentSaving, setJudgmentSaving] = useState(false);
+  const [judgmentConfig, setJudgmentConfig] = useState<WaMonitorJudgmentConfig | null>(null);
   const [accountReport, setAccountReport] = useState<PagedResponse<WaMonitorAccountReportRow> | null>(null);
   const [memberReport, setMemberReport] = useState<PagedResponse<WaMonitorMemberReportRow> | null>(null);
   const [timeReport, setTimeReport] = useState<PagedResponse<WaMonitorTimeReportRow> | null>(null);
@@ -208,6 +224,44 @@ export function WaMonitorTab() {
       setBackfillLoading(false);
     }
   }, [loadReport, t, waAccountId]);
+
+  const openJudgmentDrawer = useCallback(async () => {
+    setJudgmentDrawerOpen(true);
+    setJudgmentLoading(true);
+    try {
+      const nextConfig = await getWaMonitorJudgmentConfig();
+      setJudgmentConfig(nextConfig);
+      judgmentForm.setFieldsValue({
+        isEnabled: nextConfig.isEnabled,
+        judgmentPrompt: nextConfig.judgmentPrompt,
+        conditionText: nextConfig.conditionText
+      });
+    } catch (error) {
+      void message.error((error as Error).message);
+    } finally {
+      setJudgmentLoading(false);
+    }
+  }, [judgmentForm]);
+
+  const saveJudgmentConfig = useCallback(async () => {
+    setJudgmentSaving(true);
+    try {
+      const values = await judgmentForm.validateFields();
+      const nextConfig = await updateWaMonitorJudgmentConfig(values);
+      setJudgmentConfig(nextConfig);
+      judgmentForm.setFieldsValue({
+        isEnabled: nextConfig.isEnabled,
+        judgmentPrompt: nextConfig.judgmentPrompt,
+        conditionText: nextConfig.conditionText
+      });
+      void message.success(t("waMonitor.judgment.saveSuccess"));
+      setJudgmentDrawerOpen(false);
+    } catch (error) {
+      if (error instanceof Error) void message.error(error.message);
+    } finally {
+      setJudgmentSaving(false);
+    }
+  }, [judgmentForm, t]);
 
   const accountOptions = useMemo(() => (dashboard?.accounts ?? []).map((item) => ({
     label: `${item.displayName} (${item.phoneE164 ?? item.instanceKey})`,
@@ -512,9 +566,14 @@ export function WaMonitorTab() {
           <Typography.Title level={3} style={{ margin: 0 }}>{t("waMonitor.pageTitle")}</Typography.Title>
         </Col>
         <Col>
-          <Button icon={<ReloadOutlined />} onClick={() => void loadBase()} loading={loading}>
-            {t("waMonitor.refresh")}
-          </Button>
+          <Space>
+            <Button icon={<SettingOutlined />} onClick={() => void openJudgmentDrawer()}>
+              {t("waMonitor.judgment.button")}
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={() => void loadBase()} loading={loading}>
+              {t("waMonitor.refresh")}
+            </Button>
+          </Space>
         </Col>
       </Row>
 
@@ -712,6 +771,58 @@ export function WaMonitorTab() {
           }
         ]}
       />
+      <Drawer
+        title={t("waMonitor.judgment.title")}
+        open={judgmentDrawerOpen}
+        width={640}
+        onClose={() => setJudgmentDrawerOpen(false)}
+        extra={judgmentConfig?.updatedAt ? (
+          <Typography.Text type="secondary">
+            {t("waMonitor.judgment.updatedAt", { value: dayjs(judgmentConfig.updatedAt).format("YYYY-MM-DD HH:mm:ss") })}
+          </Typography.Text>
+        ) : null}
+        footer={(
+          <Row justify="end">
+            <Space>
+              <Button onClick={() => setJudgmentDrawerOpen(false)}>
+                {t("waMonitor.judgment.cancel")}
+              </Button>
+              <Button type="primary" onClick={() => void saveJudgmentConfig()} loading={judgmentSaving}>
+                {t("waMonitor.judgment.save")}
+              </Button>
+            </Space>
+          </Row>
+        )}
+      >
+        <Form
+          form={judgmentForm}
+          layout="vertical"
+          disabled={judgmentLoading}
+          initialValues={{ isEnabled: true }}
+        >
+          <Form.Item
+            name="isEnabled"
+            label={t("waMonitor.judgment.enabled")}
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            name="judgmentPrompt"
+            label={t("waMonitor.judgment.prompt")}
+            rules={[{ required: true, message: t("waMonitor.judgment.promptRequired") }]}
+          >
+            <Input.TextArea rows={7} maxLength={8000} showCount />
+          </Form.Item>
+          <Form.Item
+            name="conditionText"
+            label={t("waMonitor.judgment.conditions")}
+            rules={[{ required: true, message: t("waMonitor.judgment.conditionsRequired") }]}
+          >
+            <Input.TextArea rows={10} maxLength={8000} showCount />
+          </Form.Item>
+        </Form>
+      </Drawer>
     </Space>
   );
 }

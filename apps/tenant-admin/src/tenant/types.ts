@@ -664,6 +664,17 @@ export type WaMonitorTarget = {
   updatedAt: string | null;
 };
 
+export type WaMonitorJudgmentConfig = {
+  configId: string | null;
+  tenantId: string | null;
+  isEnabled: boolean;
+  judgmentPrompt: string;
+  conditionText: string;
+  createdByMembershipId: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type PagedResponse<T> = {
   rows: T[];
   pagination: {

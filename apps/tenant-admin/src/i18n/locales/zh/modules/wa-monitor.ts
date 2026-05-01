@@ -7,6 +7,19 @@ export default {
       button: "增量分析",
       success: "已扫描 {{scanned}} 条，处理 {{processed}} 条"
     },
+    judgment: {
+      button: "WA智能对话判断",
+      title: "WA智能对话判断",
+      enabled: "启用 AI 判断",
+      prompt: "判断说明",
+      promptRequired: "请输入判断说明",
+      conditions: "识别条件",
+      conditionsRequired: "请输入识别条件",
+      save: "保存",
+      cancel: "取消",
+      saveSuccess: "WA智能对话判断配置已保存",
+      updatedAt: "更新于 {{value}}"
+    },
     providerUnavailable: "WhatsApp provider 当前不可用",
     providerUnavailableDesc: "请先检查 WA 运行时配置。",
     stats: {

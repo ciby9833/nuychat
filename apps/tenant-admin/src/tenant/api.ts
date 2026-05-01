@@ -68,6 +68,7 @@ import type {
   WaMonitorAccountReportRow,
   WaMonitorMessageDetailReportRow,
   WaMonitorMemberReportRow,
+  WaMonitorJudgmentConfig,
   WaMonitorReportQuery,
   WaMonitorTarget,
   WaMonitorTimeReportRow,
@@ -919,6 +920,21 @@ export function listWaMonitorTargets(input?: { waAccountId?: string; activeOnly?
   if (input?.activeOnly) params.set("activeOnly", "true");
   const query = params.toString();
   return api<WaMonitorTarget[]>(`/api/admin/wa/monitor/targets${query ? `?${query}` : ""}`);
+}
+
+export function getWaMonitorJudgmentConfig() {
+  return api<WaMonitorJudgmentConfig>("/api/admin/wa/monitor/judgment-config");
+}
+
+export function updateWaMonitorJudgmentConfig(input: {
+  isEnabled: boolean;
+  judgmentPrompt: string;
+  conditionText: string;
+}) {
+  return api<WaMonitorJudgmentConfig>("/api/admin/wa/monitor/judgment-config", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
 }
 
 export function setWaMonitorTarget(input: { waAccountId: string; waConversationId: string; isActive: boolean }) {

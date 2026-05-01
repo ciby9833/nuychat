@@ -28,6 +28,7 @@ import {
   getAdminWaDailyReport,
   getAdminWaMonitorConversationDetail,
   getAdminWaMonitorDashboard,
+  getAdminWaMonitorJudgmentConfig,
   listAdminWaMonitorAccountReport,
   listAdminWaMonitorMessageDetailReport,
   listAdminWaMonitorMemberReport,
@@ -37,7 +38,8 @@ import {
   loadMoreAdminWaMonitorMessages,
   listAdminWaMonitorConversations,
   listAdminWaReplyPool,
-  setAdminWaMonitorTarget
+  setAdminWaMonitorTarget,
+  updateAdminWaMonitorJudgmentConfig
 } from "./wa-monitor.service.js";
 import { getWaRuntimeStatus } from "./wa-runtime.service.js";
 
@@ -114,6 +116,37 @@ export async function waAdminRoutes(app: FastifyInstance) {
         tenantId,
         waAccountId: typeof waAccountId === "string" && waAccountId.trim() ? waAccountId.trim() : null,
         activeOnly: activeOnly === "true"
+      })
+    );
+  });
+
+  app.get("/api/admin/wa/monitor/judgment-config", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    return withTenantTransaction(tenantId, async (trx) => getAdminWaMonitorJudgmentConfig(trx, tenantId));
+  });
+
+  app.put("/api/admin/wa/monitor/judgment-config", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    const membershipId = req.auth?.membershipId ?? null;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const body = req.body as { isEnabled?: boolean; judgmentPrompt?: string; conditionText?: string };
+    if (body.isEnabled != null && typeof body.isEnabled !== "boolean") {
+      throw app.httpErrors.badRequest("isEnabled must be boolean");
+    }
+    if (body.judgmentPrompt != null && typeof body.judgmentPrompt !== "string") {
+      throw app.httpErrors.badRequest("judgmentPrompt must be string");
+    }
+    if (body.conditionText != null && typeof body.conditionText !== "string") {
+      throw app.httpErrors.badRequest("conditionText must be string");
+    }
+    return withTenantTransaction(tenantId, async (trx) =>
+      updateAdminWaMonitorJudgmentConfig(trx, {
+        tenantId,
+        membershipId,
+        isEnabled: body.isEnabled,
+        judgmentPrompt: body.judgmentPrompt,
+        conditionText: body.conditionText
       })
     );
   });
