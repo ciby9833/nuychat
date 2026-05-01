@@ -344,6 +344,31 @@ export async function getWorkbenchConversationDetail(
   if (!conversation) throw new Error("Conversation not found");
   await assertConversationAccessible(trx, input);
 
+  // Load messages first (with members in parallel for efficiency).
+  let [messages, members] = await Promise.all([
+    getConversationMessages(trx, input.tenantId, input.waConversationId),
+    getConversationMembers(trx, input.tenantId, input.waConversationId)
+  ]);
+
+  // Auto-backfill: if there are no local messages, try to recover from the in-memory
+  // runtime snapshot. This handles conversations whose historical messages were lost due
+  // to past transaction failures (e.g. the newsletter JID crash bug).
+  if (messages.length === 0) {
+    const inserted = await backfillConversationMessagesFromProviderHistory(trx, {
+      tenantId: input.tenantId,
+      waConversationId: input.waConversationId,
+      waAccountId: conversation.waAccountId,
+      chatJid: conversation.chatJid,
+      limit: 100
+    });
+    if (inserted > 0) {
+      messages = await getConversationMessages(trx, input.tenantId, input.waConversationId);
+    }
+  }
+
+  // Mark the conversation as read on WhatsApp after we have messages in the DB.
+  // Doing this after the backfill ensures we can always supply valid message keys
+  // even for conversations that previously had 0 local messages.
   if (conversation.unreadCount > 0) {
     const account = await trx("wa_accounts")
       .where({
@@ -414,10 +439,6 @@ export async function getWorkbenchConversationDetail(
     }
   }
 
-  const [messages, members] = await Promise.all([
-    getConversationMessages(trx, input.tenantId, input.waConversationId),
-    getConversationMembers(trx, input.tenantId, input.waConversationId)
-  ]);
   return {
     conversation,
     messages,

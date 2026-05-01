@@ -1,6 +1,6 @@
 // 功能菜单
 import { ReloadOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Empty, Input, List, Row, Segmented, Select, Space, Tag, Typography, message } from "antd";
+import { Button, Card, Col, Empty, Input, List, Row, Segmented, Select, Space, Switch, Tag, Typography, message } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -8,7 +8,8 @@ import {
   getWaMonitorConversationDetail,
   getWaMonitorDashboard,
   listWaMonitorConversations,
-  loadMoreWaMonitorMessages
+  loadMoreWaMonitorMessages,
+  setWaMonitorTarget
 } from "../../api";
 import type { WaMonitorConversationDetail, WaMonitorConversationItem, WaMonitorDashboard } from "../../types";
 
@@ -142,6 +143,7 @@ export function WaConversationsTab() {
   const [conversationLoading, setConversationLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
+  const [targetUpdatingId, setTargetUpdatingId] = useState<string | null>(null);
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
   const keepScrollOffsetRef = useRef<number | null>(null);
 
@@ -243,6 +245,35 @@ export function WaConversationsTab() {
       setLoadingMoreMessages(false);
     }
   }, [detail, loadingMoreMessages, selectedConversationId]);
+
+  const toggleMonitorTarget = useCallback(async (row: WaMonitorConversationItem, checked: boolean) => {
+    setTargetUpdatingId(row.waConversationId);
+    try {
+      const target = await setWaMonitorTarget({
+        waAccountId: row.waAccountId,
+        waConversationId: row.waConversationId,
+        isActive: checked
+      });
+      setConversations((current) => current.map((item) => item.waConversationId === row.waConversationId
+        ? { ...item, monitorTargetId: target.targetId, monitorEnabled: target.isActive }
+        : item));
+      setDetail((current) => current?.conversation.waConversationId === row.waConversationId
+        ? {
+            ...current,
+            conversation: {
+              ...current.conversation,
+              monitorTargetId: target.targetId,
+              monitorEnabled: target.isActive
+            }
+          }
+        : current);
+      void message.success(checked ? t("waConversations.monitor.enabled") : t("waConversations.monitor.disabled"));
+    } catch (error) {
+      void message.error((error as Error).message);
+    } finally {
+      setTargetUpdatingId(null);
+    }
+  }, [t]);
 
   const selectedAccount = useMemo(
     () => dashboard?.accounts.find((item) => item.waAccountId === selectedAccountId) ?? null,
@@ -354,6 +385,17 @@ export function WaConversationsTab() {
                           </Space>
                           <Space direction="vertical" size={4} align="end">
                             <Tag>{row.conversationType === "group" ? t("waConversations.filter.group") : t("waConversations.filter.direct")}</Tag>
+                            <Switch
+                              size="small"
+                              checked={Boolean(row.monitorEnabled)}
+                              loading={targetUpdatingId === row.waConversationId}
+                              checkedChildren={t("waConversations.monitor.on")}
+                              unCheckedChildren={t("waConversations.monitor.off")}
+                              onClick={(checked, event) => {
+                                event.stopPropagation();
+                                void toggleMonitorTarget(row, checked);
+                              }}
+                            />
                             {row.unreadCount > 0 ? <Tag color="blue">{row.unreadCount}</Tag> : null}
                           </Space>
                         </Space>
@@ -388,6 +430,9 @@ export function WaConversationsTab() {
                   <Tag>{detail.conversation.conversationType === "group" ? t("waConversations.filter.group") : t("waConversations.filter.direct")}</Tag>
                   <Tag>{t("waConversations.detail.members", { count: detail.members.length })}</Tag>
                   <Tag>{t("waConversations.detail.unread", { count: detail.conversation.unreadCount })}</Tag>
+                  <Tag color={detail.conversation.monitorEnabled ? "green" : "default"}>
+                    {detail.conversation.monitorEnabled ? t("waConversations.monitor.enabledTag") : t("waConversations.monitor.disabledTag")}
+                  </Tag>
                 </Space>
 
                 <div

@@ -10,6 +10,14 @@ export default {
       placeholder: "请选择要查看的WA账号"
     },
     searchPlaceholder: "搜索名称、号码、JID、最近消息",
+    monitor: {
+      on: "监控",
+      off: "关闭",
+      enabled: "已加入监控",
+      disabled: "已关闭监控",
+      enabledTag: "监控中",
+      disabledTag: "未监控"
+    },
     filter: {
       all: "全部",
       group: "群聊",

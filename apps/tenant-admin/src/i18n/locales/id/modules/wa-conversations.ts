@@ -10,6 +10,14 @@ export default {
       placeholder: "Pilih akun WA"
     },
     searchPlaceholder: "Cari nama, nomor, JID, pesan terbaru",
+    monitor: {
+      on: "Pantau",
+      off: "Mati",
+      enabled: "Pemantauan aktif",
+      disabled: "Pemantauan dimatikan",
+      enabledTag: "Dipantau",
+      disabledTag: "Tidak dipantau"
+    },
     filter: {
       all: "Semua",
       group: "Grup",

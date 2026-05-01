@@ -24,14 +24,49 @@ import {
   updateAdminWaAccountOwner
 } from "./wa-admin.service.js";
 import {
+  backfillAdminWaMonitorFacts,
   getAdminWaDailyReport,
   getAdminWaMonitorConversationDetail,
   getAdminWaMonitorDashboard,
+  listAdminWaMonitorAccountReport,
+  listAdminWaMonitorMessageDetailReport,
+  listAdminWaMonitorMemberReport,
+  listAdminWaMonitorTimeReport,
+  listAdminWaMonitorUnrepliedReport,
+  listAdminWaMonitorTargets,
   loadMoreAdminWaMonitorMessages,
   listAdminWaMonitorConversations,
-  listAdminWaReplyPool
+  listAdminWaReplyPool,
+  setAdminWaMonitorTarget
 } from "./wa-monitor.service.js";
 import { getWaRuntimeStatus } from "./wa-runtime.service.js";
+
+function parseReportQuery(req: { query: unknown }, tenantId: string) {
+  const query = req.query as {
+    startAt?: string;
+    endAt?: string;
+    waAccountId?: string;
+    membershipId?: string;
+    page?: string;
+    pageSize?: string;
+    granularity?: string;
+  };
+  const startAt = query.startAt ? new Date(query.startAt) : new Date(new Date().setHours(0, 0, 0, 0));
+  const endAt = query.endAt ? new Date(query.endAt) : new Date(new Date().setHours(23, 59, 59, 999));
+  if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())) {
+    throw new Error("Invalid time range");
+  }
+  return {
+    tenantId,
+    startAt,
+    endAt,
+    waAccountId: typeof query.waAccountId === "string" && query.waAccountId.trim() ? query.waAccountId.trim() : null,
+    membershipId: typeof query.membershipId === "string" && query.membershipId.trim() ? query.membershipId.trim() : null,
+    page: query.page ? Number(query.page) : undefined,
+    pageSize: query.pageSize ? Number(query.pageSize) : undefined,
+    granularity: query.granularity === "day" ? "day" as const : "hour" as const
+  };
+}
 
 export async function waAdminRoutes(app: FastifyInstance) {
   attachTenantAdminGuard(app);
@@ -62,6 +97,42 @@ export async function waAdminRoutes(app: FastifyInstance) {
         search: typeof search === "string" ? search : null,
         type: type === "group" || type === "direct" ? type : null,
         limit: typeof limit === "string" ? Number(limit) : undefined
+      })
+    );
+  });
+
+  app.get("/api/admin/wa/monitor/targets", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waAccountId, activeOnly } = req.query as { waAccountId?: string; activeOnly?: string };
+    return withTenantTransaction(tenantId, async (trx) =>
+      listAdminWaMonitorTargets(trx, {
+        tenantId,
+        waAccountId: typeof waAccountId === "string" && waAccountId.trim() ? waAccountId.trim() : null,
+        activeOnly: activeOnly === "true"
+      })
+    );
+  });
+
+  app.put("/api/admin/wa/monitor/conversations/:waConversationId/target", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    const membershipId = req.auth?.membershipId ?? null;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waConversationId } = req.params as { waConversationId: string };
+    const body = req.body as { waAccountId?: string; isActive?: boolean };
+    if (typeof body.waAccountId !== "string" || !body.waAccountId.trim()) {
+      throw app.httpErrors.badRequest("waAccountId is required");
+    }
+    if (typeof body.isActive !== "boolean") {
+      throw app.httpErrors.badRequest("isActive must be boolean");
+    }
+    return withTenantTransaction(tenantId, async (trx) =>
+      setAdminWaMonitorTarget(trx, {
+        tenantId,
+        waAccountId: body.waAccountId!.trim(),
+        waConversationId,
+        isActive: body.isActive!,
+        membershipId
       })
     );
   });
@@ -104,6 +175,79 @@ export async function waAdminRoutes(app: FastifyInstance) {
       : new Date().toISOString().slice(0, 10);
     return withTenantTransaction(tenantId, async (trx) =>
       getAdminWaDailyReport(trx, { tenantId, date: reportDate })
+    );
+  });
+
+  app.get("/api/admin/wa/monitor/reports/accounts", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    let query: ReturnType<typeof parseReportQuery>;
+    try {
+      query = parseReportQuery(req, tenantId);
+    } catch {
+      throw app.httpErrors.badRequest("Invalid time range");
+    }
+    return withTenantTransaction(tenantId, async (trx) => listAdminWaMonitorAccountReport(trx, query));
+  });
+
+  app.get("/api/admin/wa/monitor/reports/members", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    let query: ReturnType<typeof parseReportQuery>;
+    try {
+      query = parseReportQuery(req, tenantId);
+    } catch {
+      throw app.httpErrors.badRequest("Invalid time range");
+    }
+    return withTenantTransaction(tenantId, async (trx) => listAdminWaMonitorMemberReport(trx, query));
+  });
+
+  app.get("/api/admin/wa/monitor/reports/time", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    let query: ReturnType<typeof parseReportQuery>;
+    try {
+      query = parseReportQuery(req, tenantId);
+    } catch {
+      throw app.httpErrors.badRequest("Invalid time range");
+    }
+    return withTenantTransaction(tenantId, async (trx) => listAdminWaMonitorTimeReport(trx, query));
+  });
+
+  app.get("/api/admin/wa/monitor/reports/unreplied", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    let query: ReturnType<typeof parseReportQuery>;
+    try {
+      query = parseReportQuery(req, tenantId);
+    } catch {
+      throw app.httpErrors.badRequest("Invalid time range");
+    }
+    return withTenantTransaction(tenantId, async (trx) => listAdminWaMonitorUnrepliedReport(trx, query));
+  });
+
+  app.get("/api/admin/wa/monitor/reports/messages", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    let query: ReturnType<typeof parseReportQuery>;
+    try {
+      query = parseReportQuery(req, tenantId);
+    } catch {
+      throw app.httpErrors.badRequest("Invalid time range");
+    }
+    return withTenantTransaction(tenantId, async (trx) => listAdminWaMonitorMessageDetailReport(trx, query));
+  });
+
+  app.post("/api/admin/wa/monitor/backfill", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const body = req.body as { waAccountId?: string | null; limit?: number };
+    return withTenantTransaction(tenantId, async (trx) =>
+      backfillAdminWaMonitorFacts(trx, {
+        tenantId,
+        waAccountId: typeof body.waAccountId === "string" && body.waAccountId.trim() ? body.waAccountId.trim() : null,
+        limit: Number(body.limit) || undefined
+      })
     );
   });
 

@@ -9,6 +9,7 @@
 import { withTenantTransaction } from "../../infra/db/client.js";
 import { waWorkspaceOutboundQueue, type WaWorkspaceOutboundJobPayload } from "../../infra/queue/queues.js";
 import { waProviderAdapter } from "./provider/provider-registry.js";
+import { processWaMonitorMessage } from "./wa-monitor.service.js";
 import { emitWaMessageUpdated } from "./wa-realtime.service.js";
 
 export async function enqueueWaOutboundJob(payload: WaWorkspaceOutboundJobPayload) {
@@ -127,6 +128,13 @@ export async function processWaOutboundJob(payload: WaWorkspaceOutboundJobPayloa
           sender_member_id: payload.createdByMembershipId ?? existingJob.created_by_membership_id ?? null,
           updated_at: trx.fn.now()
         });
+
+      await processWaMonitorMessage(trx, {
+        tenantId: payload.tenantId,
+        waMessageId: payload.waMessageId
+      }).catch((error) => {
+        console.warn("[wa-monitor] failed to resolve reply facts:", error);
+      });
     });
 
     emitWaMessageUpdated({

@@ -443,6 +443,8 @@ export function useWaWorkspace(session: Session | null) {
       waMessageId: string;
       providerMessageId: string | null;
       deliveryStatus: string;
+      bodyText?: string | null;
+      revokedAt?: string | null;
       receiptSummary: { totalReceipts: number; latestStatus: string | null; latestAt: string | null; statusCounts: Record<string, number> } | null;
     }) => {
       if (event.waConversationId !== selectedConversationIdRef.current) return;
@@ -450,11 +452,19 @@ export function useWaWorkspace(session: Session | null) {
         if (!current || current.conversation.waConversationId !== event.waConversationId) return current;
         return {
           ...current,
-          messages: current.messages.map((message) =>
-            message.waMessageId === event.waMessageId || message.providerMessageId === event.providerMessageId
-              ? { ...message, deliveryStatus: event.deliveryStatus, receiptSummary: event.receiptSummary ?? message.receiptSummary }
-              : message
-          )
+          messages: current.messages.map((message) => {
+            if (message.waMessageId !== event.waMessageId && message.providerMessageId !== event.providerMessageId) {
+              return message;
+            }
+            return {
+              ...message,
+              deliveryStatus: event.deliveryStatus,
+              // Update body text for edits and clears for revokes from WhatsApp.
+              ...(event.bodyText !== undefined ? { bodyText: event.bodyText } : {}),
+              ...(event.revokedAt !== undefined ? { revokedAt: event.revokedAt } : {}),
+              receiptSummary: event.receiptSummary ?? message.receiptSummary
+            };
+          })
         };
       });
     });

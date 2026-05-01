@@ -118,6 +118,8 @@ type WaMessageUpdatedEvent = RealtimeEventBase & {
   waMessageId: string;
   providerMessageId: string | null;
   deliveryStatus: string;
+  bodyText?: string | null;
+  revokedAt?: string | null;
   receiptSummary: Record<string, unknown> | null;
   occurredAt: string;
 };

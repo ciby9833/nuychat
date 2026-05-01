@@ -28,6 +28,7 @@ import {
   upsertWaConversationMember
 } from "./wa-conversation.repository.js";
 import { emitWaConversationProjection } from "./wa-conversation-projection.service.js";
+import { processWaMonitorMessage } from "./wa-monitor.service.js";
 import { createMissingReferenceGap, resolveGapsForArrivedMessage } from "./wa-reconcile.service.js";
 import { emitWaMessageReceived, emitWaMessageUpdated } from "./wa-realtime.service.js";
 
@@ -227,6 +228,13 @@ export async function ingestSingleBaileysMessage(
     }
   }
 
+  await processWaMonitorMessage(trx, {
+    tenantId: input.tenantId,
+    waMessageId: String(savedMessage.wa_message_id)
+  }).catch((error) => {
+    console.warn("[wa-monitor] failed to process monitor facts:", error);
+  });
+
   return {
     waConversationId: conversation.waConversationId,
     waMessageId: String(savedMessage.wa_message_id),
@@ -314,35 +322,66 @@ export async function ingestBaileysMessagesUpdate(input: {
   waAccountId: string;
   updates: WAMessageUpdate[];
 }) {
-  return withTenantTransaction(input.tenantId, async (trx) => {
-    for (const item of input.updates) {
-      const mapped = mapBaileysMessageUpdate(item);
-      if (!mapped) continue;
+  // Process each update in its own transaction so one bad item cannot roll back the batch.
+  const affectedConversationIds = new Set<string>();
 
-      await updateWaMessageByProviderId(trx, {
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        providerMessageId: mapped.providerMessageId,
-        deliveryStatus: mapped.deliveryStatus,
-        bodyText: mapped.bodyText ?? undefined,
-        providerPayload: item as unknown as Record<string, unknown>
-      });
+  for (const item of input.updates) {
+    try {
+      await withTenantTransaction(input.tenantId, async (trx) => {
+        const mapped = mapBaileysMessageUpdate(item);
+        if (!mapped) return;
 
-      const target = await findWaMessageByProviderId(trx, {
-        tenantId: input.tenantId,
-        waAccountId: input.waAccountId,
-        providerMessageId: mapped.providerMessageId
-      });
-      if (target && mapped.deliveryStatus) {
-        emitWaMessageUpdated({
+        // For revoked messages, explicitly clear body_text so the DB matches the WA state.
+        const bodyText = mapped.deliveryStatus === "revoked" ? null : (mapped.bodyText || undefined);
+        const revokedAt = mapped.deliveryStatus === "revoked" ? new Date().toISOString() : undefined;
+
+        await updateWaMessageByProviderId(trx, {
           tenantId: input.tenantId,
-          waConversationId: target.waConversationId,
-          waMessageId: target.waMessageId,
+          waAccountId: input.waAccountId,
           providerMessageId: mapped.providerMessageId,
-          deliveryStatus: mapped.deliveryStatus
+          deliveryStatus: mapped.deliveryStatus,
+          bodyText,
+          providerPayload: item as unknown as Record<string, unknown>
         });
-      }
+
+        const target = await findWaMessageByProviderId(trx, {
+          tenantId: input.tenantId,
+          waAccountId: input.waAccountId,
+          providerMessageId: mapped.providerMessageId
+        });
+        if (!target) return;
+
+        affectedConversationIds.add(target.waConversationId);
+
+        // Emit for: delivery status changes, edits (bodyText), and revokes.
+        const hasDeliveryChange = Boolean(mapped.deliveryStatus);
+        const hasBodyChange = bodyText !== undefined;
+        if (hasDeliveryChange || hasBodyChange) {
+          emitWaMessageUpdated({
+            tenantId: input.tenantId,
+            waConversationId: target.waConversationId,
+            waMessageId: target.waMessageId,
+            providerMessageId: mapped.providerMessageId,
+            deliveryStatus: mapped.deliveryStatus ?? "",
+            bodyText: hasBodyChange ? (bodyText ?? null) : undefined,
+            revokedAt
+          });
+        }
+      });
+    } catch (err) {
+      const jid = (item.key?.remoteJid ?? "unknown");
+      console.warn(`[ingestBaileysMessagesUpdate] skipping update for jid=${jid}:`, err);
     }
-    return { ok: true, count: input.updates.length };
-  });
+  }
+
+  // Refresh conversation projections so last-message preview stays accurate after edits/revokes.
+  for (const waConversationId of affectedConversationIds) {
+    await emitWaConversationProjection({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId,
+      waConversationId
+    });
+  }
+
+  return { ok: true, count: input.updates.length };
 }

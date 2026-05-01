@@ -65,6 +65,14 @@ import type {
   WaMonitorConversationDetail,
   WaMonitorConversationItem,
   WaMonitorDashboard,
+  WaMonitorAccountReportRow,
+  WaMonitorMessageDetailReportRow,
+  WaMonitorMemberReportRow,
+  WaMonitorReportQuery,
+  WaMonitorTarget,
+  WaMonitorTimeReportRow,
+  WaMonitorUnrepliedReportRow,
+  PagedResponse,
   WaReplyPoolItem,
   WaRuntimeStatus
 } from "./types";
@@ -869,6 +877,63 @@ export function getWaDailyMonitorReport(date: string) {
 
 export function listWaReplyPool() {
   return api<WaReplyPoolItem[]>("/api/admin/wa/monitor/reply-pool");
+}
+
+function buildWaMonitorReportQuery(input: WaMonitorReportQuery) {
+  const params = new URLSearchParams();
+  params.set("startAt", input.startAt);
+  params.set("endAt", input.endAt);
+  if (input.waAccountId) params.set("waAccountId", input.waAccountId);
+  if (input.membershipId) params.set("membershipId", input.membershipId);
+  if (input.page) params.set("page", String(input.page));
+  if (input.pageSize) params.set("pageSize", String(input.pageSize));
+  if (input.granularity) params.set("granularity", input.granularity);
+  return params.toString();
+}
+
+export function listWaMonitorAccountReport(input: WaMonitorReportQuery) {
+  return api<PagedResponse<WaMonitorAccountReportRow>>(`/api/admin/wa/monitor/reports/accounts?${buildWaMonitorReportQuery(input)}`);
+}
+
+export function listWaMonitorMemberReport(input: WaMonitorReportQuery) {
+  return api<PagedResponse<WaMonitorMemberReportRow>>(`/api/admin/wa/monitor/reports/members?${buildWaMonitorReportQuery(input)}`);
+}
+
+export function listWaMonitorTimeReport(input: WaMonitorReportQuery) {
+  return api<PagedResponse<WaMonitorTimeReportRow>>(`/api/admin/wa/monitor/reports/time?${buildWaMonitorReportQuery(input)}`);
+}
+
+export function listWaMonitorUnrepliedReport(input: WaMonitorReportQuery) {
+  return api<PagedResponse<WaMonitorUnrepliedReportRow>>(`/api/admin/wa/monitor/reports/unreplied?${buildWaMonitorReportQuery(input)}`);
+}
+
+export function listWaMonitorMessageDetailReport(input: WaMonitorReportQuery) {
+  return api<PagedResponse<WaMonitorMessageDetailReportRow>>(`/api/admin/wa/monitor/reports/messages?${buildWaMonitorReportQuery(input)}`);
+}
+
+export function listWaMonitorTargets(input?: { waAccountId?: string; activeOnly?: boolean }) {
+  const params = new URLSearchParams();
+  if (input?.waAccountId) params.set("waAccountId", input.waAccountId);
+  if (input?.activeOnly) params.set("activeOnly", "true");
+  const query = params.toString();
+  return api<WaMonitorTarget[]>(`/api/admin/wa/monitor/targets${query ? `?${query}` : ""}`);
+}
+
+export function setWaMonitorTarget(input: { waAccountId: string; waConversationId: string; isActive: boolean }) {
+  return api<WaMonitorTarget>(`/api/admin/wa/monitor/conversations/${input.waConversationId}/target`, {
+    method: "PUT",
+    body: JSON.stringify({
+      waAccountId: input.waAccountId,
+      isActive: input.isActive
+    })
+  });
+}
+
+export function backfillWaMonitorFacts(input?: { waAccountId?: string | null; limit?: number }) {
+  return api<{ scanned: number; processed: number }>("/api/admin/wa/monitor/backfill", {
+    method: "POST",
+    body: JSON.stringify(input ?? {})
+  });
 }
 
 export function createWaAccount(input: {

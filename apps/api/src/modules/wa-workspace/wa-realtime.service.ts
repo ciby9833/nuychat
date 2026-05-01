@@ -53,6 +53,8 @@ export function emitWaMessageUpdated(input: {
   waMessageId: string;
   providerMessageId?: string | null;
   deliveryStatus: string;
+  bodyText?: string | null;
+  revokedAt?: string | null;
   receiptSummary?: Record<string, unknown> | null;
   occurredAt?: string;
 }) {
@@ -62,6 +64,8 @@ export function emitWaMessageUpdated(input: {
     waMessageId: input.waMessageId,
     providerMessageId: input.providerMessageId ?? null,
     deliveryStatus: input.deliveryStatus,
+    bodyText: input.bodyText ?? undefined,
+    revokedAt: input.revokedAt ?? undefined,
     receiptSummary: input.receiptSummary ?? null,
     occurredAt: input.occurredAt ?? new Date().toISOString()
   });

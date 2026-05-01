@@ -1,39 +1,62 @@
-import { AlertOutlined, MessageOutlined, ReloadOutlined } from "@ant-design/icons";
+import { AlertOutlined, DownloadOutlined, MessageOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
   Card,
   Col,
+  DatePicker,
   Empty,
   List,
+  Radio,
   Row,
+  Select,
   Space,
   Statistic,
+  Table,
   Tabs,
   Tag,
   Typography,
   message
 } from "antd";
+import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
+import dayjs, { type Dayjs } from "dayjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  backfillWaMonitorFacts,
   getAdminWaRuntimeStatus,
-  getWaDailyMonitorReport,
   getWaMonitorDashboard,
   listMembers,
-  listWaReplyPool
+  listWaMonitorAccountReport,
+  listWaMonitorMessageDetailReport,
+  listWaMonitorMemberReport,
+  listWaMonitorTimeReport,
+  listWaMonitorUnrepliedReport
 } from "../../api";
 import type {
   MemberListItem,
-  WaDailyMonitorReport,
+  PagedResponse,
+  WaMonitorAccountReportRow,
   WaMonitorDashboard,
-  WaReplyPoolItem,
+  WaMonitorMessageDetailReportRow,
+  WaMonitorMemberReportRow,
+  WaMonitorReportQuery,
+  WaMonitorTimeReportRow,
+  WaMonitorUnrepliedReportRow,
   WaRuntimeStatus
 } from "../../types";
 import { WaAccountsPane } from "../agents/components/WaAccountsPane";
 
-type InsightTab = "report" | "reply-pool";
+const { RangePicker } = DatePicker;
+
+type ReportTab = "health" | "accounts" | "members" | "time" | "messages" | "unreplied";
+type AnyReportRow =
+  | WaMonitorAccountReportRow
+  | WaMonitorMessageDetailReportRow
+  | WaMonitorMemberReportRow
+  | WaMonitorTimeReportRow
+  | WaMonitorUnrepliedReportRow;
 
 function formatDuration(seconds: number | null | undefined) {
   if (!seconds || seconds <= 0) return "0m";
@@ -46,24 +69,68 @@ function mapSeverityColor(severity: "warning" | "critical") {
   return severity === "critical" ? "red" : "orange";
 }
 
+function defaultRange(): [Dayjs, Dayjs] {
+  return [dayjs().startOf("day"), dayjs().endOf("day")];
+}
+
+function toApiTime(value: Dayjs) {
+  return value.format("YYYY-MM-DDTHH:mm:ss.SSS");
+}
+
+function escapeExcelCell(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function exportExcel(filename: string, headers: string[], rows: Array<Array<unknown>>) {
+  const html = `
+    <html>
+      <head><meta charset="UTF-8" /></head>
+      <body>
+        <table>
+          <thead><tr>${headers.map((item) => `<th>${escapeExcelCell(item)}</th>`).join("")}</tr></thead>
+          <tbody>
+            ${rows.map((row) => `<tr>${row.map((item) => `<td>${escapeExcelCell(item)}</td>`).join("")}</tr>`).join("")}
+          </tbody>
+        </table>
+      </body>
+    </html>`;
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename.endsWith(".xls") ? filename : `${filename}.xls`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export function WaMonitorTab() {
   const { t } = useTranslation();
   const [runtime, setRuntime] = useState<WaRuntimeStatus | null>(null);
   const [members, setMembers] = useState<MemberListItem[]>([]);
   const [dashboard, setDashboard] = useState<WaMonitorDashboard | null>(null);
-  const [report, setReport] = useState<WaDailyMonitorReport | null>(null);
-  const [replyPool, setReplyPool] = useState<WaReplyPoolItem[]>([]);
-  const [activeInsightTab, setActiveInsightTab] = useState<InsightTab>("report");
+  const [activeTab, setActiveTab] = useState<ReportTab>("health");
+  const [range, setRange] = useState<[Dayjs, Dayjs]>(defaultRange);
+  const [waAccountId, setWaAccountId] = useState<string | null>(null);
+  const [membershipId, setMembershipId] = useState<string | null>(null);
+  const [granularity, setGranularity] = useState<"hour" | "day">("hour");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
-  const [replyPoolLoading, setReplyPoolLoading] = useState(false);
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [exporting, setExporting] = useState(false);
+  const [backfillLoading, setBackfillLoading] = useState(false);
+  const [accountReport, setAccountReport] = useState<PagedResponse<WaMonitorAccountReportRow> | null>(null);
+  const [memberReport, setMemberReport] = useState<PagedResponse<WaMonitorMemberReportRow> | null>(null);
+  const [timeReport, setTimeReport] = useState<PagedResponse<WaMonitorTimeReportRow> | null>(null);
+  const [messageReport, setMessageReport] = useState<PagedResponse<WaMonitorMessageDetailReportRow> | null>(null);
+  const [unrepliedReport, setUnrepliedReport] = useState<PagedResponse<WaMonitorUnrepliedReportRow> | null>(null);
 
   const loadBase = useCallback(async () => {
     setLoading(true);
     try {
-      setReport(null);
-      setReplyPool([]);
       const [nextRuntime, nextMembers, nextDashboard] = await Promise.all([
         getAdminWaRuntimeStatus(),
         listMembers(),
@@ -79,41 +146,309 @@ export function WaMonitorTab() {
     }
   }, []);
 
+  useEffect(() => {
+    void loadBase();
+  }, [loadBase]);
+
+  const reportQuery = useMemo<WaMonitorReportQuery>(() => ({
+    startAt: toApiTime(range[0].startOf("second")),
+    endAt: toApiTime(range[1].endOf("second")),
+    waAccountId,
+    membershipId,
+    granularity,
+    page,
+    pageSize
+  }), [granularity, membershipId, page, pageSize, range, waAccountId]);
+
   const loadReport = useCallback(async () => {
-    if (reportLoading || report) return;
+    if (activeTab === "health") return;
     setReportLoading(true);
     try {
-      setReport(await getWaDailyMonitorReport(today));
+      if (activeTab === "accounts") setAccountReport(await listWaMonitorAccountReport(reportQuery));
+      if (activeTab === "members") setMemberReport(await listWaMonitorMemberReport(reportQuery));
+      if (activeTab === "time") setTimeReport(await listWaMonitorTimeReport(reportQuery));
+      if (activeTab === "messages") setMessageReport(await listWaMonitorMessageDetailReport(reportQuery));
+      if (activeTab === "unreplied") setUnrepliedReport(await listWaMonitorUnrepliedReport(reportQuery));
     } catch (error) {
       void message.error((error as Error).message);
     } finally {
       setReportLoading(false);
     }
-  }, [report, reportLoading, today]);
+  }, [activeTab, reportQuery]);
 
-  const loadReplyPool = useCallback(async () => {
-    if (replyPoolLoading || replyPool.length > 0) return;
-    setReplyPoolLoading(true);
+  useEffect(() => {
+    void loadReport();
+  }, [loadReport]);
+
+  const resetReportPage = useCallback(() => {
+    setPage(1);
+  }, []);
+
+  const handleTableChange = useCallback((pagination: TablePaginationConfig) => {
+    setPage(pagination.current ?? 1);
+    setPageSize(pagination.pageSize ?? 20);
+  }, []);
+
+  const runBackfill = useCallback(async () => {
+    setBackfillLoading(true);
     try {
-      setReplyPool(await listWaReplyPool());
+      const result = await backfillWaMonitorFacts({ waAccountId, limit: 500 });
+      void message.success(t("waMonitor.backfill.success", { scanned: result.scanned, processed: result.processed }));
+      void loadReport();
     } catch (error) {
       void message.error((error as Error).message);
     } finally {
-      setReplyPoolLoading(false);
+      setBackfillLoading(false);
     }
-  }, [replyPool.length, replyPoolLoading]);
+  }, [loadReport, t, waAccountId]);
 
-  useEffect(() => {
-    void loadBase();
-  }, [loadBase]);
+  const accountOptions = useMemo(() => (dashboard?.accounts ?? []).map((item) => ({
+    label: `${item.displayName} (${item.phoneE164 ?? item.instanceKey})`,
+    value: item.waAccountId
+  })), [dashboard?.accounts]);
 
-  useEffect(() => {
-    if (activeInsightTab === "report") {
-      void loadReport();
-    } else if (activeInsightTab === "reply-pool") {
-      void loadReplyPool();
+  const memberOptions = useMemo(() => members.map((item) => ({
+    label: item.displayName ?? item.email,
+    value: item.membershipId
+  })), [members]);
+
+  const commonPagination = useCallback((total?: number): TablePaginationConfig => ({
+    current: page,
+    pageSize,
+    total: total ?? 0,
+    showSizeChanger: true,
+    pageSizeOptions: [10, 20, 50, 100],
+    showTotal: (count) => t("waMonitor.report.paginationTotal", { count })
+  }), [page, pageSize, t]);
+
+  const accountColumns = useMemo<ColumnsType<WaMonitorAccountReportRow>>(() => [
+    { title: t("waMonitor.report.account"), dataIndex: "accountDisplayName" },
+    { title: t("waMonitor.report.monitoredConversations"), dataIndex: "monitoredConversationCount" },
+    { title: t("waMonitor.report.totalMessages"), dataIndex: "totalMessages" },
+    { title: t("waMonitor.report.customerMessages"), dataIndex: "customerMessageCount" },
+    { title: t("waMonitor.report.serviceMessages"), dataIndex: "serviceMessageCount" },
+    { title: t("waMonitor.report.requiresReply"), dataIndex: "requiresReplyCount" },
+    { title: t("waMonitor.report.replied"), dataIndex: "repliedCount" },
+    { title: t("waMonitor.report.unreplied"), dataIndex: "unrepliedCount" },
+    { title: t("waMonitor.report.avgResponse"), dataIndex: "averageResponseSeconds", render: formatDuration }
+  ], [t]);
+
+  const memberColumns = useMemo<ColumnsType<WaMonitorMemberReportRow>>(() => [
+    { title: t("waMonitor.report.member"), dataIndex: "displayName", render: (value: string | null) => value ?? t("waMonitor.report.unknownMember") },
+    { title: t("waMonitor.report.firstReplies"), dataIndex: "firstReplyCount" },
+    { title: t("waMonitor.report.avgFirstReply"), dataIndex: "averageFirstReplySeconds", render: formatDuration },
+    { title: t("waMonitor.report.participatedConversations"), dataIndex: "participatedConversationCount" }
+  ], [t]);
+
+  const timeColumns = useMemo<ColumnsType<WaMonitorTimeReportRow>>(() => [
+    { title: t("waMonitor.report.timeBucket"), dataIndex: "bucketAt", render: (value: string) => dayjs(value).format(granularity === "day" ? "YYYY-MM-DD" : "YYYY-MM-DD HH:00") },
+    { title: t("waMonitor.report.totalMessages"), dataIndex: "totalMessages" },
+    { title: t("waMonitor.report.customerMessages"), dataIndex: "customerMessageCount" },
+    { title: t("waMonitor.report.serviceMessages"), dataIndex: "serviceMessageCount" },
+    { title: t("waMonitor.report.requiresReply"), dataIndex: "requiresReplyCount" },
+    { title: t("waMonitor.report.replied"), dataIndex: "repliedCount" },
+    { title: t("waMonitor.report.unreplied"), dataIndex: "unrepliedCount" },
+    { title: t("waMonitor.report.avgResponse"), dataIndex: "averageResponseSeconds", render: formatDuration }
+  ], [granularity, t]);
+
+  const unrepliedColumns = useMemo<ColumnsType<WaMonitorUnrepliedReportRow>>(() => [
+    { title: t("waMonitor.report.account"), dataIndex: "accountDisplayName" },
+    { title: t("waMonitor.report.conversation"), dataIndex: "displayName" },
+    { title: t("waMonitor.report.type"), dataIndex: "conversationType", render: (value: string) => value === "group" ? t("waMonitor.replyPool.group") : t("waMonitor.replyPool.direct") },
+    { title: t("waMonitor.report.customerMessageAt"), dataIndex: "customerMessageAt", render: (value: string) => dayjs(value).format("YYYY-MM-DD HH:mm:ss") },
+    { title: t("waMonitor.replyPool.waiting"), dataIndex: "waitingSeconds", render: formatDuration },
+    { title: t("waMonitor.replyPool.unread"), dataIndex: "unreadCount" },
+    { title: t("waMonitor.report.preview"), dataIndex: "lastMessagePreview", ellipsis: true }
+  ], [t]);
+
+  const messageColumns = useMemo<ColumnsType<WaMonitorMessageDetailReportRow>>(() => [
+    { title: t("waMonitor.report.account"), dataIndex: "accountDisplayName", width: 160 },
+    { title: t("waMonitor.report.conversation"), dataIndex: "displayName", width: 180 },
+    { title: t("waMonitor.report.customerMessageAt"), dataIndex: "customerMessageAt", width: 170, render: (value: string | null) => value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "-" },
+    { title: t("waMonitor.report.customerMessage"), dataIndex: "bodyText", ellipsis: true, width: 260 },
+    { title: t("waMonitor.report.requiresReply"), dataIndex: "requiresReply", width: 100, render: (value: boolean) => <Tag color={value ? "orange" : "default"}>{value ? t("waMonitor.report.yes") : t("waMonitor.report.no")}</Tag> },
+    { title: t("waMonitor.report.analysisReason"), dataIndex: "reason", ellipsis: true, width: 240 },
+    { title: t("waMonitor.report.confidence"), dataIndex: "confidence", width: 100, render: (value: number) => `${Math.round(value * 100)}%` },
+    { title: t("waMonitor.report.replied"), dataIndex: "isReplied", width: 100, render: (value: boolean) => <Tag color={value ? "green" : "red"}>{value ? t("waMonitor.report.yes") : t("waMonitor.report.no")}</Tag> },
+    { title: t("waMonitor.report.firstReplyAt"), dataIndex: "firstReplyAt", width: 170, render: (value: string | null) => value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "-" },
+    { title: t("waMonitor.report.member"), dataIndex: "repliedByName", width: 140, render: (value: string | null) => value ?? "-" },
+    { title: t("waMonitor.report.firstReplyText"), dataIndex: "firstReplyText", ellipsis: true, width: 240 }
+  ], [t]);
+
+  const fetchAllRows = useCallback(async (): Promise<AnyReportRow[]> => {
+    const rows: AnyReportRow[] = [];
+    let nextPage = 1;
+    let total = 0;
+    do {
+      const query = { ...reportQuery, page: nextPage, pageSize: 500 };
+      const result =
+        activeTab === "accounts" ? await listWaMonitorAccountReport(query) :
+          activeTab === "members" ? await listWaMonitorMemberReport(query) :
+            activeTab === "time" ? await listWaMonitorTimeReport(query) :
+              activeTab === "messages" ? await listWaMonitorMessageDetailReport(query) :
+              activeTab === "unreplied" ? await listWaMonitorUnrepliedReport(query) :
+                { rows: [], pagination: { page: 1, pageSize: 500, total: 0 } };
+      rows.push(...result.rows);
+      total = result.pagination.total;
+      nextPage += 1;
+    } while (rows.length < total);
+    return rows;
+  }, [activeTab, reportQuery]);
+
+  const exportCurrentReport = useCallback(async () => {
+    if (activeTab === "health") return;
+    setExporting(true);
+    try {
+      const rows = await fetchAllRows();
+      if (activeTab === "accounts") {
+        exportExcel(
+          `wa-account-report-${dayjs().format("YYYYMMDDHHmmss")}.xls`,
+          accountColumns.map((item) => String(item.title)),
+          (rows as WaMonitorAccountReportRow[]).map((row) => [
+            row.accountDisplayName,
+            row.monitoredConversationCount,
+            row.totalMessages,
+            row.customerMessageCount,
+            row.serviceMessageCount,
+            row.requiresReplyCount,
+            row.repliedCount,
+            row.unrepliedCount,
+            formatDuration(row.averageResponseSeconds)
+          ])
+        );
+      }
+      if (activeTab === "members") {
+        exportExcel(
+          `wa-member-report-${dayjs().format("YYYYMMDDHHmmss")}.xls`,
+          memberColumns.map((item) => String(item.title)),
+          (rows as WaMonitorMemberReportRow[]).map((row) => [
+            row.displayName ?? t("waMonitor.report.unknownMember"),
+            row.firstReplyCount,
+            formatDuration(row.averageFirstReplySeconds),
+            row.participatedConversationCount
+          ])
+        );
+      }
+      if (activeTab === "time") {
+        exportExcel(
+          `wa-time-report-${dayjs().format("YYYYMMDDHHmmss")}.xls`,
+          timeColumns.map((item) => String(item.title)),
+          (rows as WaMonitorTimeReportRow[]).map((row) => [
+            dayjs(row.bucketAt).format(granularity === "day" ? "YYYY-MM-DD" : "YYYY-MM-DD HH:00"),
+            row.totalMessages,
+            row.customerMessageCount,
+            row.serviceMessageCount,
+            row.requiresReplyCount,
+            row.repliedCount,
+            row.unrepliedCount,
+            formatDuration(row.averageResponseSeconds)
+          ])
+        );
+      }
+      if (activeTab === "unreplied") {
+        exportExcel(
+          `wa-unreplied-report-${dayjs().format("YYYYMMDDHHmmss")}.xls`,
+          unrepliedColumns.map((item) => String(item.title)),
+          (rows as WaMonitorUnrepliedReportRow[]).map((row) => [
+            row.accountDisplayName,
+            row.displayName,
+            row.conversationType,
+            dayjs(row.customerMessageAt).format("YYYY-MM-DD HH:mm:ss"),
+            formatDuration(row.waitingSeconds),
+            row.unreadCount,
+            row.lastMessagePreview
+          ])
+        );
+      }
+      if (activeTab === "messages") {
+        exportExcel(
+          `wa-message-detail-report-${dayjs().format("YYYYMMDDHHmmss")}.xls`,
+          messageColumns.map((item) => String(item.title)),
+          (rows as WaMonitorMessageDetailReportRow[]).map((row) => [
+            row.accountDisplayName,
+            row.displayName,
+            row.customerMessageAt ? dayjs(row.customerMessageAt).format("YYYY-MM-DD HH:mm:ss") : "",
+            row.bodyText,
+            row.requiresReply ? t("waMonitor.report.yes") : t("waMonitor.report.no"),
+            row.reason,
+            `${Math.round(row.confidence * 100)}%`,
+            row.isReplied ? t("waMonitor.report.yes") : t("waMonitor.report.no"),
+            row.firstReplyAt ? dayjs(row.firstReplyAt).format("YYYY-MM-DD HH:mm:ss") : "",
+            row.repliedByName ?? "",
+            row.firstReplyText
+          ])
+        );
+      }
+    } catch (error) {
+      void message.error((error as Error).message);
+    } finally {
+      setExporting(false);
     }
-  }, [activeInsightTab, loadReport, loadReplyPool]);
+  }, [accountColumns, activeTab, fetchAllRows, granularity, memberColumns, messageColumns, t, timeColumns, unrepliedColumns]);
+
+  const reportToolbar = activeTab === "health" ? null : (
+    <Card>
+      <Space wrap size={12}>
+        <RangePicker
+          showTime
+          value={range}
+          onChange={(value) => {
+            if (!value?.[0] || !value?.[1]) return;
+            setRange([value[0], value[1]]);
+            resetReportPage();
+          }}
+        />
+        <Select
+          allowClear
+          showSearch
+          placeholder={t("waMonitor.report.account")}
+          options={accountOptions}
+          value={waAccountId ?? undefined}
+          onChange={(value) => {
+            setWaAccountId(value ?? null);
+            resetReportPage();
+          }}
+          style={{ width: 260 }}
+        />
+        {(activeTab === "members" || activeTab === "time" || activeTab === "messages") ? (
+          <Select
+            allowClear
+            showSearch
+            placeholder={t("waMonitor.report.member")}
+            options={memberOptions}
+            value={membershipId ?? undefined}
+            onChange={(value) => {
+              setMembershipId(value ?? null);
+              resetReportPage();
+            }}
+            style={{ width: 220 }}
+          />
+        ) : null}
+        {activeTab === "time" ? (
+          <Radio.Group
+            value={granularity}
+            onChange={(event) => {
+              setGranularity(event.target.value as "hour" | "day");
+              resetReportPage();
+            }}
+            options={[
+              { label: t("waMonitor.report.byHour"), value: "hour" },
+              { label: t("waMonitor.report.byDay"), value: "day" }
+            ]}
+          />
+        ) : null}
+        <Button icon={<ReloadOutlined />} onClick={() => void loadReport()} loading={reportLoading}>
+          {t("waMonitor.refresh")}
+        </Button>
+        <Button onClick={() => void runBackfill()} loading={backfillLoading}>
+          {t("waMonitor.backfill.button")}
+        </Button>
+        <Button icon={<DownloadOutlined />} onClick={() => void exportCurrentReport()} loading={exporting}>
+          {t("waMonitor.report.exportExcel")}
+        </Button>
+      </Space>
+    </Card>
+  );
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -137,110 +472,147 @@ export function WaMonitorTab() {
         />
       ) : null}
 
-      <Row gutter={16}>
-        <Col span={4}><Card><Statistic title={t("waMonitor.stats.accountCount")} value={dashboard?.summary.accountCount ?? 0} /></Card></Col>
-        <Col span={4}><Card><Statistic title={t("waMonitor.stats.online")} value={dashboard?.summary.readyCount ?? 0} /></Card></Col>
-        <Col span={4}><Card><Statistic title={t("waMonitor.stats.connecting")} value={dashboard?.summary.connectingCount ?? 0} /></Card></Col>
-        <Col span={4}><Card><Statistic title={t("waMonitor.stats.offline")} value={dashboard?.summary.offlineCount ?? 0} /></Card></Col>
-        <Col span={4}><Card><Statistic title={t("waMonitor.stats.criticalAlert")} value={dashboard?.summary.criticalAlertCount ?? 0} /></Card></Col>
-        <Col span={4}><Card><Statistic title={t("waMonitor.stats.warningAlert")} value={dashboard?.summary.warningAlertCount ?? 0} /></Card></Col>
-      </Row>
-
-      <Card title={t("waMonitor.alerts.title")} extra={<AlertOutlined />}>
-        {dashboard?.alerts.length ? (
-          <List
-            dataSource={dashboard.alerts}
-            renderItem={(item) => (
-              <List.Item>
-                <Space direction="vertical" size={0}>
-                  <Space>
-                    <Tag color={mapSeverityColor(item.severity)}>
-                      {item.severity === "critical" ? t("waMonitor.alerts.critical") : t("waMonitor.alerts.warning")}
-                    </Tag>
-                    <Typography.Text strong>{item.title}</Typography.Text>
-                  </Space>
-                  <Typography.Text type="secondary">{item.detail}</Typography.Text>
-                </Space>
-              </List.Item>
-            )}
-          />
-        ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("waMonitor.alerts.empty")} />
-        )}
-      </Card>
-
-      <Card title={t("waMonitor.health.title")}>
-        <WaAccountsPane
-          waAccounts={(dashboard?.accounts ?? [])}
-          members={members}
-          loading={loading}
-          onReload={() => void loadBase()}
-        />
-      </Card>
-
       <Tabs
-        activeKey={activeInsightTab}
-        onChange={(key) => setActiveInsightTab(key as InsightTab)}
+        activeKey={activeTab}
+        onChange={(key) => {
+          setActiveTab(key as ReportTab);
+          setPage(1);
+        }}
         items={[
           {
-            key: "report",
-            label: t("waMonitor.insightTabs.report"),
+            key: "health",
+            label: t("waMonitor.reportTabs.health"),
             children: (
-              <Card title={t("waMonitor.report.title", { date: report?.date ?? today })} loading={reportLoading}>
+              <Space direction="vertical" size={16} style={{ width: "100%" }}>
                 <Row gutter={16}>
-                  <Col span={8}><Statistic title={t("waMonitor.report.totalMessages")} value={report?.summary.totalMessages ?? 0} /></Col>
-                  <Col span={8}><Statistic title={t("waMonitor.report.manualReplies")} value={report?.summary.manualReplyCount ?? 0} /></Col>
-                  <Col span={8}><Statistic title={t("waMonitor.report.avgResponse")} value={formatDuration(report?.summary.averageResponseSeconds)} /></Col>
+                  <Col span={4}><Card><Statistic title={t("waMonitor.stats.accountCount")} value={dashboard?.summary.accountCount ?? 0} /></Card></Col>
+                  <Col span={4}><Card><Statistic title={t("waMonitor.stats.online")} value={dashboard?.summary.readyCount ?? 0} /></Card></Col>
+                  <Col span={4}><Card><Statistic title={t("waMonitor.stats.connecting")} value={dashboard?.summary.connectingCount ?? 0} /></Card></Col>
+                  <Col span={4}><Card><Statistic title={t("waMonitor.stats.offline")} value={dashboard?.summary.offlineCount ?? 0} /></Card></Col>
+                  <Col span={4}><Card><Statistic title={t("waMonitor.stats.criticalAlert")} value={dashboard?.summary.criticalAlertCount ?? 0} /></Card></Col>
+                  <Col span={4}><Card><Statistic title={t("waMonitor.stats.warningAlert")} value={dashboard?.summary.warningAlertCount ?? 0} /></Card></Col>
                 </Row>
-                <Typography.Title level={5} style={{ marginTop: 16 }}>{t("waMonitor.report.unrepliedTop10")}</Typography.Title>
-                <List
-                  dataSource={report?.unrepliedTop10 ?? []}
-                  locale={{ emptyText: t("waMonitor.report.noUnreplied") }}
-                  renderItem={(item) => (
-                    <List.Item>
-                      <Space direction="vertical" size={0}>
-                        <Typography.Text strong>{item.displayName}</Typography.Text>
-                        <Typography.Text type="secondary">{item.lastMessagePreview || item.chatJid}</Typography.Text>
-                        <Typography.Text type="secondary">
-                          {t("waMonitor.report.waiting", { value: formatDuration(item.waitingSeconds) })}
-                        </Typography.Text>
-                      </Space>
-                    </List.Item>
+
+                <Card title={t("waMonitor.alerts.title")} extra={<AlertOutlined />}>
+                  {dashboard?.alerts.length ? (
+                    <List
+                      dataSource={dashboard.alerts}
+                      renderItem={(item) => (
+                        <List.Item>
+                          <Space direction="vertical" size={0}>
+                            <Space>
+                              <Tag color={mapSeverityColor(item.severity)}>
+                                {item.severity === "critical" ? t("waMonitor.alerts.critical") : t("waMonitor.alerts.warning")}
+                              </Tag>
+                              <Typography.Text strong>{item.title}</Typography.Text>
+                            </Space>
+                            <Typography.Text type="secondary">{item.detail}</Typography.Text>
+                          </Space>
+                        </List.Item>
+                      )}
+                    />
+                  ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("waMonitor.alerts.empty")} />
                   )}
-                />
-              </Card>
+                </Card>
+
+                <Card title={t("waMonitor.health.title")}>
+                  <WaAccountsPane
+                    waAccounts={(dashboard?.accounts ?? [])}
+                    members={members}
+                    loading={loading}
+                    onReload={() => void loadBase()}
+                  />
+                </Card>
+              </Space>
             )
           },
           {
-            key: "reply-pool",
-            label: t("waMonitor.insightTabs.replyPool"),
+            key: "accounts",
+            label: t("waMonitor.reportTabs.accounts"),
             children: (
-              <Card title={t("waMonitor.replyPool.title")} extra={<MessageOutlined />} loading={replyPoolLoading}>
-                <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
-                  {t("waMonitor.replyPool.description")}
-                </Typography.Text>
-                <List
-                  dataSource={replyPool}
-                  locale={{ emptyText: t("waMonitor.replyPool.empty") }}
-                  renderItem={(row) => (
-                    <List.Item>
-                      <Space direction="vertical" size={2} style={{ width: "100%" }}>
-                        <Space style={{ width: "100%", justifyContent: "space-between" }}>
-                          <Typography.Text strong>{row.displayName}</Typography.Text>
-                          <Tag>{row.conversationType === "group" ? t("waMonitor.replyPool.group") : t("waMonitor.replyPool.direct")}</Tag>
-                        </Space>
-                        <Typography.Text type="secondary">{row.accountDisplayName}</Typography.Text>
-                        <Typography.Text type="secondary">{row.lastMessagePreview || row.chatJid}</Typography.Text>
-                        <Space size={8}>
-                          <Tag>{t("waMonitor.replyPool.unread", { count: row.unreadCount })}</Tag>
-                          <Tag>{t("waMonitor.replyPool.waiting", { value: formatDuration(row.waitingSeconds) })}</Tag>
-                          <Typography.Text type="secondary">{row.currentReplierName ?? t("waMonitor.replyPool.unassigned")}</Typography.Text>
-                        </Space>
-                      </Space>
-                    </List.Item>
-                  )}
+              <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                {reportToolbar}
+                <Table
+                  rowKey="waAccountId"
+                  loading={reportLoading}
+                  columns={accountColumns}
+                  dataSource={accountReport?.rows ?? []}
+                  pagination={commonPagination(accountReport?.pagination.total)}
+                  onChange={handleTableChange}
                 />
-              </Card>
+              </Space>
+            )
+          },
+          {
+            key: "members",
+            label: t("waMonitor.reportTabs.members"),
+            children: (
+              <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                {reportToolbar}
+                <Table
+                  rowKey={(row) => row.membershipId ?? "unknown"}
+                  loading={reportLoading}
+                  columns={memberColumns}
+                  dataSource={memberReport?.rows ?? []}
+                  pagination={commonPagination(memberReport?.pagination.total)}
+                  onChange={handleTableChange}
+                />
+              </Space>
+            )
+          },
+          {
+            key: "time",
+            label: t("waMonitor.reportTabs.time"),
+            children: (
+              <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                {reportToolbar}
+                <Table
+                  rowKey="bucketAt"
+                  loading={reportLoading}
+                  columns={timeColumns}
+                  dataSource={timeReport?.rows ?? []}
+                  pagination={commonPagination(timeReport?.pagination.total)}
+                  onChange={handleTableChange}
+                />
+              </Space>
+            )
+          },
+          {
+            key: "messages",
+            label: t("waMonitor.reportTabs.messages"),
+            children: (
+              <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                {reportToolbar}
+                <Table
+                  rowKey="analysisId"
+                  loading={reportLoading}
+                  columns={messageColumns}
+                  dataSource={messageReport?.rows ?? []}
+                  pagination={commonPagination(messageReport?.pagination.total)}
+                  onChange={handleTableChange}
+                  scroll={{ x: 1900 }}
+                />
+              </Space>
+            )
+          },
+          {
+            key: "unreplied",
+            label: t("waMonitor.reportTabs.unreplied"),
+            children: (
+              <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                {reportToolbar}
+                <Card title={t("waMonitor.replyPool.title")} extra={<MessageOutlined />}>
+                  <Table
+                    rowKey="factId"
+                    loading={reportLoading}
+                    columns={unrepliedColumns}
+                    dataSource={unrepliedReport?.rows ?? []}
+                    pagination={commonPagination(unrepliedReport?.pagination.total)}
+                    onChange={handleTableChange}
+                  />
+                </Card>
+              </Space>
             )
           }
         ]}

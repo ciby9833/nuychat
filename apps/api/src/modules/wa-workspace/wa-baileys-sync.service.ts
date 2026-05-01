@@ -382,6 +382,23 @@ export async function ingestBaileysChatsUpdate(input: {
           unreadCount: chat.unreadCount
         });
       }
+      // Sync archive/unarchive from the WhatsApp app.
+      // When a user archives a chat on their phone, Baileys fires chats.update with
+      // { archive: true }. When a new message arrives on an archived chat (and "Keep
+      // chats archived" is off), Baileys fires { archive: false } to unarchive it.
+      if (typeof chat.archived === "boolean") {
+        await trx("wa_conversations")
+          .where({
+            tenant_id: input.tenantId,
+            wa_conversation_id: conversation.waConversationId
+          })
+          .update({
+            archived_at: chat.archived ? trx.fn.now() : null,
+            // Clear the membership reference — this archive came from the WA app, not a member action.
+            archived_by_membership_id: null,
+            updated_at: trx.fn.now()
+          });
+      }
       await refreshWaConversationProjection(trx, {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,

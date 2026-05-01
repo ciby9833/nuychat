@@ -10,6 +10,14 @@ export default {
       placeholder: "Select a WA account"
     },
     searchPlaceholder: "Search name, phone, JID, recent message",
+    monitor: {
+      on: "Monitor",
+      off: "Off",
+      enabled: "Monitoring enabled",
+      disabled: "Monitoring disabled",
+      enabledTag: "Monitored",
+      disabledTag: "Not monitored"
+    },
     filter: {
       all: "All",
       group: "Groups",

@@ -567,6 +567,8 @@ export type WaMonitorConversationItem = {
   currentReplierMembershipId: string | null;
   currentReplierName: string | null;
   accountDisplayName: string;
+  monitorTargetId?: string | null;
+  monitorEnabled?: boolean;
 };
 
 export type WaMonitorMessageItem = {
@@ -611,9 +613,33 @@ export type WaDailyMonitorReport = {
   date: string;
   summary: {
     totalMessages: number;
+    customerMessageCount: number;
     manualReplyCount: number;
+    requiresReplyCount: number;
+    repliedCount: number;
+    unrepliedCount: number;
     averageResponseSeconds: number | null;
   };
+  accountReports: Array<{
+    waAccountId: string;
+    accountDisplayName: string;
+    monitoredConversationCount: number;
+    totalMessages: number;
+    customerMessageCount: number;
+    serviceMessageCount: number;
+    requiresReplyCount: number;
+    repliedCount: number;
+    unrepliedCount: number;
+    averageResponseSeconds: number | null;
+  }>;
+  memberReports: Array<{
+    membershipId: string | null;
+    displayName: string | null;
+    replyMessageCount: number;
+    firstReplyCount: number;
+    averageFirstReplySeconds: number | null;
+    participatedConversationCount: number;
+  }>;
   unrepliedTop10: Array<{
     waConversationId: string;
     waAccountId: string;
@@ -624,6 +650,110 @@ export type WaDailyMonitorReport = {
     unreadCount: number;
     lastMessagePreview: string;
   }>;
+};
+
+export type WaMonitorTarget = {
+  targetId: string;
+  tenantId: string;
+  waAccountId: string;
+  waConversationId: string;
+  conversationType: string;
+  isActive: boolean;
+  createdByMembershipId: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type PagedResponse<T> = {
+  rows: T[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+  };
+};
+
+export type WaMonitorReportQuery = {
+  startAt: string;
+  endAt: string;
+  waAccountId?: string | null;
+  membershipId?: string | null;
+  page?: number;
+  pageSize?: number;
+  granularity?: "hour" | "day";
+};
+
+export type WaMonitorAccountReportRow = {
+  waAccountId: string;
+  accountDisplayName: string;
+  monitoredConversationCount: number;
+  totalMessages: number;
+  customerMessageCount: number;
+  serviceMessageCount: number;
+  requiresReplyCount: number;
+  repliedCount: number;
+  unrepliedCount: number;
+  averageResponseSeconds: number | null;
+};
+
+export type WaMonitorMemberReportRow = {
+  membershipId: string | null;
+  displayName: string | null;
+  replyMessageCount: number;
+  firstReplyCount: number;
+  averageFirstReplySeconds: number | null;
+  participatedConversationCount: number;
+};
+
+export type WaMonitorTimeReportRow = {
+  bucketAt: string;
+  totalMessages: number;
+  customerMessageCount: number;
+  serviceMessageCount: number;
+  requiresReplyCount: number;
+  repliedCount: number;
+  unrepliedCount: number;
+  averageResponseSeconds: number | null;
+};
+
+export type WaMonitorUnrepliedReportRow = {
+  factId: string;
+  waAccountId: string;
+  accountDisplayName: string;
+  waConversationId: string;
+  displayName: string;
+  chatJid: string;
+  conversationType: string;
+  customerMessageAt: string;
+  waitingSeconds: number;
+  unreadCount: number;
+  lastMessagePreview: string;
+};
+
+export type WaMonitorMessageDetailReportRow = {
+  analysisId: string;
+  waAccountId: string;
+  accountDisplayName: string;
+  waConversationId: string;
+  waMessageId: string;
+  displayName: string;
+  chatJid: string;
+  conversationType: string;
+  customerMessageAt: string | null;
+  senderJid: string | null;
+  messageType: string;
+  bodyText: string;
+  requiresReply: boolean;
+  reason: string;
+  confidence: number;
+  isReplied: boolean;
+  firstReplyAt: string | null;
+  replyDurationSeconds: number | null;
+  repliedByMembershipId: string | null;
+  repliedByName: string | null;
+  firstReplyText: string;
+  modelProvider: string;
+  modelName: string;
 };
 
 export type WaReplyPoolItem = {

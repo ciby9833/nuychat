@@ -887,6 +887,7 @@ export async function updateWaMessageByProviderId(
     deliveryStatus?: string | null;
     providerPayload?: Record<string, unknown>;
     bodyText?: string | null;
+    revokedAt?: string | null;
   }
 ) {
   const updates: Record<string, unknown> = {
@@ -898,6 +899,12 @@ export async function updateWaMessageByProviderId(
   }
   if (input.bodyText !== undefined) {
     updates.body_text = input.bodyText ?? null;
+  }
+  if (input.revokedAt !== undefined && input.revokedAt !== null) {
+    updates.revoked_at = input.revokedAt;
+  } else if (input.deliveryStatus === "revoked") {
+    // Ensure revoked_at is set even when not explicitly provided.
+    updates.revoked_at = trx.fn.now();
   }
   if (input.providerPayload) {
     updates.provider_payload = JSON.stringify(input.providerPayload);
