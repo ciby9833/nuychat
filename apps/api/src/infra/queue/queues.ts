@@ -139,6 +139,6 @@ export type WaWorkspaceOutboundJobPayload = {
 };
 
 export type WaMonitorAnalysisJobPayload = {
-  tenantId?: string | null;
+  tenantId: string;
   waAccountId?: string | null;
 };

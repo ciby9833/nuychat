@@ -18,6 +18,7 @@ import { customerProfileRefreshQueue, waMonitorAnalysisQueue } from "./infra/que
 import { recoverOverdueAssignmentAcceptTimeouts, recoverOverdueFollowUpTimeouts } from "./modules/sla/conversation-sla.service.js";
 import { registerServiceModeNoticeSubscriber } from "./modules/service-mode/service-mode-notice.subscriber.js";
 import { runWaStartup } from "./modules/wa-workspace/wa-startup.service.js";
+import { recoverWaMonitorAnalysisRepeats } from "./modules/wa-workspace/wa-monitor.service.js";
 
 const port = readRequiredIntEnv("PORT");
 const host = readRequiredEnv("HOST");
@@ -62,16 +63,20 @@ void customerProfileRefreshQueue.add(
     removeOnFail: 20
   }
 );
-void waMonitorAnalysisQueue.add(
+void waMonitorAnalysisQueue.removeRepeatable(
   "wa.monitor.analysis",
-  {},
-  {
-    jobId: "wa-monitor.scan.default",
-    repeat: { every: 60 * 1000 },
-    removeOnComplete: true,
-    removeOnFail: 100
-  }
-);
+  { every: 60 * 1000 },
+  "wa-monitor.scan.default"
+).catch((error) => {
+  app.log.warn({ err: error }, "Failed to remove legacy global WA monitor scan repeat job");
+});
+void recoverWaMonitorAnalysisRepeats()
+  .then((result) => {
+    if (result.recovered > 0) app.log.info({ recovered: result.recovered }, "Recovered tenant WA monitor scan timers");
+  })
+  .catch((error) => {
+    app.log.warn({ err: error }, "Failed to recover tenant WA monitor scan timers");
+  });
 
 try {
   await app.listen({ port, host });

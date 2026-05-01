@@ -30,13 +30,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const BACKFILL_BATCH_LIMIT = 10;
 const DEFAULT_JUDGMENT_PROMPT = [
   "你是 WA 客服对话监控助手，需要判断客户入站消息是否需要客服人工回复。",
-  "请结合当前消息、群聊/私聊类型、上下文和业务条件判断。",
-  "判断要偏向人工复核：不确定但可能需要客服跟进时，应标记为需要回复。"
+  "请结合当前消息、群聊/私聊类型、上下文和前端维护的识别条件判断。",
+  "业务判断口径以前端配置为准；代码只提供 direction、senderMemberId、isSystemSide、senderJid 和上下文消息等系统事实。"
 ].join("\n");
 const DEFAULT_JUDGMENT_CONDITION = [
-  "需要回复：客户提出问题、咨询价格/库存/物流/订单/售后、要求确认或处理、投诉、异常、催促、@客服或明确希望有人响应。",
-  "无需回复：纯表情/反应、无业务含义的闲聊、系统通知、其他成员之间不需要客服介入的对话。",
-  "群聊必须识别实际发言人和上下文，不能只凭单句关键词判断。"
+  "请在前端 WA智能对话判断 中维护具体识别条件。",
+  "未维护前仅使用最小兜底判断；生产建议保存正式判断说明和识别条件。"
 ].join("\n");
 
 type WaMonitorJudgmentConfigRow = {
@@ -51,45 +50,24 @@ type WaMonitorJudgmentConfigRow = {
 };
 
 export async function processWaMonitorAnalysisJob(input: WaMonitorAnalysisJobPayload) {
-  if (input.tenantId) {
-    return backfillAdminWaMonitorFacts({
-      tenantId: input.tenantId,
-      waAccountId: input.waAccountId ?? null,
-      limit: BACKFILL_BATCH_LIMIT
-    });
+  if (!input.tenantId) {
+    return {
+      skipped: true,
+      reason: "wa monitor analysis requires tenantId"
+    };
   }
-
-  const tenantRows = await db("tenants")
-    .select("tenant_id")
-    .orderBy("created_at", "asc")
-    .limit(50);
-  let scanned = 0;
-  let processed = 0;
-  let failed = 0;
-  for (const tenant of tenantRows) {
-    try {
-      const result = await backfillAdminWaMonitorFacts({
-        tenantId: String(tenant.tenant_id),
-        limit: BACKFILL_BATCH_LIMIT
-      });
-      scanned += result.scanned;
-      processed += result.processed;
-      failed += result.failed;
-    } catch (error) {
-      failed += 1;
-      console.warn("[wa-monitor] failed to scan tenant:", tenant.tenant_id, error);
-    }
-  }
-  return {
-    scanned,
-    processed,
-    failed,
-    tenantCount: tenantRows.length
-  };
+  return backfillAdminWaMonitorFacts({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId ?? null,
+    limit: BACKFILL_BATCH_LIMIT
+  });
 }
 
-export async function triggerWaMonitorAnalysisScan(input: WaMonitorAnalysisJobPayload = {}) {
-  const tenantScope = input.tenantId ?? "all";
+export async function triggerWaMonitorAnalysisScan(input: WaMonitorAnalysisJobPayload) {
+  if (!input.tenantId) {
+    throw new Error("tenantId is required for WA monitor analysis scan");
+  }
+  const tenantScope = input.tenantId;
   const accountScope = input.waAccountId ?? "all";
   await waMonitorAnalysisQueue.add("wa.monitor.analysis", input, {
     jobId: `wa-monitor:scan:${tenantScope}:${accountScope}`,
@@ -99,6 +77,49 @@ export async function triggerWaMonitorAnalysisScan(input: WaMonitorAnalysisJobPa
     removeOnFail: 500
   });
   return { queued: true };
+}
+
+export async function ensureWaMonitorAnalysisRepeatForTenant(tenantId: string) {
+  await waMonitorAnalysisQueue.add("wa.monitor.analysis", { tenantId }, {
+    jobId: `wa-monitor:scan:repeat:${tenantId}`,
+    repeat: { every: 60 * 1000 },
+    removeOnComplete: true,
+    removeOnFail: 100
+  });
+  return { queued: true };
+}
+
+async function removeWaMonitorAnalysisRepeatForTenant(tenantId: string) {
+  await waMonitorAnalysisQueue.removeRepeatable(
+    "wa.monitor.analysis",
+    { every: 60 * 1000 },
+    `wa-monitor:scan:repeat:${tenantId}`
+  );
+  return { removed: true };
+}
+
+export async function syncWaMonitorAnalysisRepeatForTenant(tenantId: string) {
+  const activeTarget = await db("wa_monitor_targets")
+    .where({ tenant_id: tenantId, is_active: true })
+    .select("target_id")
+    .first();
+  return activeTarget
+    ? ensureWaMonitorAnalysisRepeatForTenant(tenantId)
+    : removeWaMonitorAnalysisRepeatForTenant(tenantId);
+}
+
+export async function recoverWaMonitorAnalysisRepeats() {
+  const rows = await db("wa_monitor_targets")
+    .where("is_active", true)
+    .distinct("tenant_id");
+  let recovered = 0;
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const tenantId = asString(row.tenant_id);
+    if (!tenantId) continue;
+    await ensureWaMonitorAnalysisRepeatForTenant(tenantId);
+    recovered += 1;
+  }
+  return { recovered };
 }
 
 function toStatusCode(statusCode: string) {
@@ -228,12 +249,17 @@ function parseAIJudgmentResponse(content: string) {
   if (!trimmed) return null;
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    const requiresReply = parsed.requiresReply;
+    const requiresReply = typeof parsed.requiresReply === "boolean"
+      ? parsed.requiresReply
+      : (typeof parsed.needs_response === "boolean" ? parsed.needs_response : null);
     if (typeof requiresReply !== "boolean") return null;
+    const confidence = typeof parsed.confidence === "number"
+      ? parsed.confidence
+      : (typeof parsed.confidence === "string" ? Number(parsed.confidence) : 0.75);
     return {
       requiresReply,
       reason: asString(parsed.reason) ?? (requiresReply ? "AI判断需要客服回复" : "AI判断无需客服回复"),
-      confidence: normalizeConfidence(typeof parsed.confidence === "number" ? parsed.confidence : 0.75)
+      confidence: normalizeConfidence(Number.isFinite(confidence) ? confidence : 0.75)
     };
   } catch {
     return null;
@@ -274,6 +300,7 @@ async function loadJudgmentContext(
 
   return (rows as Array<Record<string, unknown>>).map((row) => ({
     direction: String(row.direction),
+    isSystemSide: String(row.direction) === "outbound",
     messageType: String(row.message_type),
     bodyText: asString(row.body_text) ?? "",
     senderName: asString(row.display_name),
@@ -292,6 +319,25 @@ async function analyzeRequiresReplyForTenant(
     conversationType: string;
     bodyText: string | null;
     messageType: string;
+    direction: string;
+    senderMemberId: string | null;
+    senderJid: string | null;
+    participantJid: string | null;
+  }
+) {
+  const prepared = await prepareRequiresReplyForTenant(trx, input);
+  return completeRequiresReplyAnalysis(input, prepared);
+}
+
+async function prepareRequiresReplyForTenant(
+  trx: Knex.Transaction,
+  input: {
+    tenantId: string;
+    waConversationId: string;
+    logicalSeq: number | null;
+    conversationType: string;
+    bodyText: string | null;
+    messageType: string;
   }
 ) {
   const fallback = analyzeRequiresReply({
@@ -300,11 +346,40 @@ async function analyzeRequiresReplyForTenant(
     messageType: input.messageType
   });
   const config = await getAdminWaMonitorJudgmentConfig(trx, input.tenantId);
+  const aiSettings = config.isEnabled ? await resolveTenantAISettings(trx, input.tenantId) : null;
+  const context = config.isEnabled && aiSettings
+    ? await loadJudgmentContext(trx, {
+        tenantId: input.tenantId,
+        waConversationId: input.waConversationId,
+        logicalSeq: input.logicalSeq
+      })
+    : [];
+
+  return {
+    fallback,
+    config,
+    aiSettings,
+    context
+  };
+}
+
+async function completeRequiresReplyAnalysis(
+  input: {
+    tenantId: string;
+    conversationType: string;
+    bodyText: string | null;
+    messageType: string;
+    direction: string;
+    senderMemberId: string | null;
+    senderJid: string | null;
+    participantJid: string | null;
+  },
+  prepared: Awaited<ReturnType<typeof prepareRequiresReplyForTenant>>
+) {
+  const { fallback, config, aiSettings, context } = prepared;
   if (!config.isEnabled) {
     return { ...fallback, modelProvider: "heuristic", modelName: "wa-monitor-v1", inputTokens: 0, outputTokens: 0 };
   }
-
-  const aiSettings = await resolveTenantAISettings(trx, input.tenantId);
   if (!aiSettings) {
     return {
       ...fallback,
@@ -315,12 +390,6 @@ async function analyzeRequiresReplyForTenant(
       outputTokens: 0
     };
   }
-
-  const context = await loadJudgmentContext(trx, {
-    tenantId: input.tenantId,
-    waConversationId: input.waConversationId,
-    logicalSeq: input.logicalSeq
-  });
 
   try {
     const completion = await aiSettings.provider.complete({
@@ -334,7 +403,8 @@ async function analyzeRequiresReplyForTenant(
           role: "system",
           content: [
             "你必须只输出 JSON 对象，不要输出解释性前后缀。",
-            "JSON 格式: {\"requiresReply\": boolean, \"reason\": string, \"confidence\": number}",
+            "JSON 格式: {\"requiresReply\": boolean, \"reason\": string, \"confidence\": number}。",
+            "如果配置文档要求输出 needs_response，请将 needs_response 的判断映射到 requiresReply。",
             "confidence 必须是 0 到 1 的数字。",
             "",
             "判断说明:",
@@ -349,6 +419,12 @@ async function analyzeRequiresReplyForTenant(
           content: JSON.stringify({
             conversationType: input.conversationType,
             messageType: input.messageType,
+            currentSender: {
+              direction: input.direction,
+              isSystemSide: input.direction === "outbound" || Boolean(input.senderMemberId),
+              senderMemberId: input.senderMemberId,
+              senderJid: input.participantJid ?? input.senderJid
+            },
             currentMessage: input.bodyText ?? "",
             contextMessages: context
           })
@@ -525,6 +601,8 @@ export async function processWaMonitorMessage(
       "m.wa_conversation_id",
       "m.direction",
       "m.sender_member_id",
+      "m.sender_jid",
+      "m.participant_jid",
       "m.body_text",
       "m.message_type",
       "m.logical_seq",
@@ -537,15 +615,92 @@ export async function processWaMonitorMessage(
   const direction = String(row.direction);
   const messageAt = new Date(String(row.message_at));
   if (direction === "inbound") {
-    const analysis = await analyzeRequiresReplyForTenant(trx, {
-      tenantId: input.tenantId,
-      waConversationId: String(row.wa_conversation_id),
-      logicalSeq: row.logical_seq == null ? null : Number(row.logical_seq),
-      conversationType: String(row.conversation_type),
-      bodyText: row.body_text ? String(row.body_text) : null,
-      messageType: String(row.message_type)
-    });
+    return { skipped: true, reason: "inbound monitor analysis is handled by detached worker" };
+  }
 
+  if (direction === "outbound" && row.sender_member_id) {
+    const unresolved = await trx("wa_conversation_reply_facts")
+      .where({
+        tenant_id: input.tenantId,
+        wa_conversation_id: row.wa_conversation_id,
+        requires_reply: true
+      })
+      .whereNull("first_reply_at")
+      .where("customer_message_at", "<", messageAt)
+      .select("fact_id", "customer_message_at");
+
+    for (const fact of unresolved) {
+      const customerAt = new Date(String(fact.customer_message_at));
+      await trx("wa_conversation_reply_facts")
+        .where({ tenant_id: input.tenantId, fact_id: fact.fact_id })
+        .update({
+          first_reply_wa_message_id: row.wa_message_id,
+          first_reply_at: messageAt,
+          replied_by_membership_id: row.sender_member_id,
+          reply_duration_sec: Math.max(0, Math.round((messageAt.getTime() - customerAt.getTime()) / 1000)),
+          updated_at: trx.fn.now()
+        });
+    }
+    return { processed: true, resolvedFacts: unresolved.length };
+  }
+
+  return { skipped: true };
+}
+
+async function processWaMonitorInboundMessageDetached(
+  input: { tenantId: string; waMessageId: string }
+) {
+  const row = await withTenantTransaction(input.tenantId, async (trx) => {
+    const messageTs = buildMessageTimestampSql("m");
+    return trx("wa_messages as m")
+      .join("wa_conversations as c", function joinConversation() {
+        this.on("c.wa_conversation_id", "=", "m.wa_conversation_id").andOn("c.tenant_id", "=", "m.tenant_id");
+      })
+      .join("wa_monitor_targets as t", function joinTarget() {
+        this.on("t.wa_conversation_id", "=", "m.wa_conversation_id").andOn("t.tenant_id", "=", "m.tenant_id");
+      })
+      .where("m.tenant_id", input.tenantId)
+      .where("m.wa_message_id", input.waMessageId)
+      .where("m.direction", "inbound")
+      .where("t.is_active", true)
+      .whereNull("m.deleted_for_me_at")
+      .select(
+        "m.wa_message_id",
+        "m.wa_account_id",
+        "m.wa_conversation_id",
+        "m.direction",
+        "m.sender_member_id",
+        "m.sender_jid",
+        "m.participant_jid",
+        "m.body_text",
+        "m.message_type",
+        "m.logical_seq",
+        "c.conversation_type",
+        trx.raw(`${messageTs} as message_at`)
+      )
+      .first<Record<string, unknown> | undefined>();
+  });
+  if (!row) return { skipped: true };
+
+  const analysisInput = {
+    tenantId: input.tenantId,
+    waConversationId: String(row.wa_conversation_id),
+    logicalSeq: row.logical_seq == null ? null : Number(row.logical_seq),
+    conversationType: String(row.conversation_type),
+    bodyText: row.body_text ? String(row.body_text) : null,
+    messageType: String(row.message_type),
+    direction: String(row.direction),
+    senderMemberId: row.sender_member_id ? String(row.sender_member_id) : null,
+    senderJid: asString(row.sender_jid),
+    participantJid: asString(row.participant_jid)
+  };
+  const prepared = await withTenantTransaction(input.tenantId, async (trx) =>
+    prepareRequiresReplyForTenant(trx, analysisInput)
+  );
+  const analysis = await completeRequiresReplyAnalysis(analysisInput, prepared);
+  const messageAt = new Date(String(row.message_at));
+
+  await withTenantTransaction(input.tenantId, async (trx) => {
     await trx("wa_message_monitor_analysis")
       .insert({
         tenant_id: input.tenantId,
@@ -608,37 +763,9 @@ export async function processWaMonitorMessage(
         reply_duration_sec: replyAt ? Math.max(0, Math.round((replyAt.getTime() - messageAt.getTime()) / 1000)) : null,
         updated_at: trx.fn.now()
       });
+  });
 
-    return { processed: true, requiresReply: analysis.requiresReply };
-  }
-
-  if (direction === "outbound" && row.sender_member_id) {
-    const unresolved = await trx("wa_conversation_reply_facts")
-      .where({
-        tenant_id: input.tenantId,
-        wa_conversation_id: row.wa_conversation_id,
-        requires_reply: true
-      })
-      .whereNull("first_reply_at")
-      .where("customer_message_at", "<", messageAt)
-      .select("fact_id", "customer_message_at");
-
-    for (const fact of unresolved) {
-      const customerAt = new Date(String(fact.customer_message_at));
-      await trx("wa_conversation_reply_facts")
-        .where({ tenant_id: input.tenantId, fact_id: fact.fact_id })
-        .update({
-          first_reply_wa_message_id: row.wa_message_id,
-          first_reply_at: messageAt,
-          replied_by_membership_id: row.sender_member_id,
-          reply_duration_sec: Math.max(0, Math.round((messageAt.getTime() - customerAt.getTime()) / 1000)),
-          updated_at: trx.fn.now()
-        });
-    }
-    return { processed: true, resolvedFacts: unresolved.length };
-  }
-
-  return { skipped: true };
+  return { processed: true, requiresReply: analysis.requiresReply };
 }
 
 export async function backfillAdminWaMonitorFacts(
@@ -657,7 +784,14 @@ export async function backfillAdminWaMonitorFacts(
       .where("m.tenant_id", input.tenantId)
       .where("t.is_active", true)
       .where("m.direction", "inbound")
-      .whereNull("a.analysis_id")
+      .where((qb) => {
+        qb.whereNull("a.analysis_id")
+          .orWhere((failedQb) => {
+            failedQb
+              .where("a.model_provider", "heuristic")
+              .where("a.reason", "like", "AI判断失败%");
+          });
+      })
       .modify((qb) => {
         if (input.waAccountId) qb.where("m.wa_account_id", input.waAccountId);
       })
@@ -670,12 +804,10 @@ export async function backfillAdminWaMonitorFacts(
   let failed = 0;
   for (const row of rows) {
     try {
-      const result = await withTenantTransaction(input.tenantId, async (messageTrx) =>
-        processWaMonitorMessage(messageTrx, {
-          tenantId: input.tenantId,
-          waMessageId: String(row.wa_message_id)
-        })
-      );
+      const result = await processWaMonitorInboundMessageDetached({
+        tenantId: input.tenantId,
+        waMessageId: String(row.wa_message_id)
+      });
       if ("processed" in result) processed += 1;
     } catch (error) {
       failed += 1;

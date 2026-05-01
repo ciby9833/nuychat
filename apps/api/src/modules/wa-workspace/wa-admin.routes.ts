@@ -38,6 +38,7 @@ import {
   listAdminWaMonitorConversations,
   listAdminWaReplyPool,
   setAdminWaMonitorTarget,
+  syncWaMonitorAnalysisRepeatForTenant,
   triggerWaMonitorAnalysisScan,
   updateAdminWaMonitorJudgmentConfig
 } from "./wa-monitor.service.js";
@@ -163,7 +164,7 @@ export async function waAdminRoutes(app: FastifyInstance) {
     if (typeof body.isActive !== "boolean") {
       throw app.httpErrors.badRequest("isActive must be boolean");
     }
-    return withTenantTransaction(tenantId, async (trx) =>
+    const target = await withTenantTransaction(tenantId, async (trx) =>
       setAdminWaMonitorTarget(trx, {
         tenantId,
         waAccountId: body.waAccountId!.trim(),
@@ -172,6 +173,8 @@ export async function waAdminRoutes(app: FastifyInstance) {
         membershipId
       })
     );
+    await syncWaMonitorAnalysisRepeatForTenant(tenantId);
+    return target;
   });
 
   app.get("/api/admin/wa/monitor/conversations/:waConversationId", async (req) => {
