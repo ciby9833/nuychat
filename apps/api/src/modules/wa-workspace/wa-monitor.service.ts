@@ -193,8 +193,13 @@ async function loadJudgmentContext(
   if (input.logicalSeq == null || !Number.isFinite(input.logicalSeq)) return [];
   const messageTs = buildMessageTimestampSql("m");
   const rows = await trx("wa_messages as m")
-    .leftJoin("wa_message_participants as p", function joinParticipant() {
-      this.on("p.wa_message_id", "=", "m.wa_message_id").andOn("p.tenant_id", "=", "m.tenant_id");
+    .leftJoin("wa_conversation_members as cm", function joinConversationMember() {
+      this.on("cm.tenant_id", "=", "m.tenant_id")
+        .andOn("cm.wa_conversation_id", "=", "m.wa_conversation_id")
+        .andOn(function joinSender() {
+          this.on("cm.participant_jid", "=", "m.participant_jid")
+            .orOn("cm.participant_jid", "=", "m.sender_jid");
+        });
     })
     .where("m.tenant_id", input.tenantId)
     .where("m.wa_conversation_id", input.waConversationId)
@@ -206,9 +211,9 @@ async function loadJudgmentContext(
       "m.body_text",
       "m.message_type",
       "m.logical_seq",
-      "p.participant_jid",
-      "p.display_name",
-      "p.phone_e164",
+      "m.participant_jid",
+      "m.sender_jid",
+      "cm.display_name",
       trx.raw(`${messageTs} as message_at`)
     )
     .orderBy("m.logical_seq", "asc");
@@ -218,8 +223,8 @@ async function loadJudgmentContext(
     messageType: String(row.message_type),
     bodyText: asString(row.body_text) ?? "",
     senderName: asString(row.display_name),
-    senderPhone: asString(row.phone_e164),
-    senderJid: asString(row.participant_jid),
+    senderPhone: derivePhoneE164FromJid(asString(row.participant_jid) ?? asString(row.sender_jid)),
+    senderJid: asString(row.participant_jid) ?? asString(row.sender_jid),
     messageAt: toIso(row.message_at as string | Date | null)
   }));
 }
@@ -257,12 +262,13 @@ async function analyzeRequiresReplyForTenant(
     };
   }
 
+  const context = await loadJudgmentContext(trx, {
+    tenantId: input.tenantId,
+    waConversationId: input.waConversationId,
+    logicalSeq: input.logicalSeq
+  });
+
   try {
-    const context = await loadJudgmentContext(trx, {
-      tenantId: input.tenantId,
-      waConversationId: input.waConversationId,
-      logicalSeq: input.logicalSeq
-    });
     const completion = await aiSettings.provider.complete({
       tenantId: input.tenantId,
       model: aiSettings.model,
@@ -605,15 +611,23 @@ export async function backfillAdminWaMonitorFacts(
     .limit(limit);
 
   let processed = 0;
+  let failed = 0;
   for (const row of rows) {
-    const result = await processWaMonitorMessage(trx, {
-      tenantId: input.tenantId,
-      waMessageId: String(row.wa_message_id)
-    });
-    if ("processed" in result) processed += 1;
+    try {
+      const result = await trx.transaction(async (messageTrx) =>
+        processWaMonitorMessage(messageTrx, {
+          tenantId: input.tenantId,
+          waMessageId: String(row.wa_message_id)
+        })
+      );
+      if ("processed" in result) processed += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn("[wa-monitor] failed to backfill message:", row.wa_message_id, error);
+    }
   }
 
-  return { scanned: rows.length, processed };
+  return { scanned: rows.length, processed, failed };
 }
 
 async function listLatestHumanReplyGaps(
