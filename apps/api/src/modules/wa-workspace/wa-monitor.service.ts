@@ -383,20 +383,23 @@ export async function updateAdminWaMonitorJudgmentConfig(
   }
 ) {
   const current = await getAdminWaMonitorJudgmentConfig(trx, input.tenantId);
+  const nextIsEnabled = input.isEnabled ?? current.isEnabled;
+  const nextJudgmentPrompt = normalizeJudgmentText(input.judgmentPrompt, current.judgmentPrompt);
+  const nextConditionText = normalizeJudgmentText(input.conditionText, current.conditionText);
   const [row] = await trx("wa_monitor_judgment_configs")
     .insert({
       tenant_id: input.tenantId,
-      is_enabled: input.isEnabled ?? current.isEnabled,
-      judgment_prompt: normalizeJudgmentText(input.judgmentPrompt, current.judgmentPrompt),
-      condition_text: normalizeJudgmentText(input.conditionText, current.conditionText),
+      is_enabled: nextIsEnabled,
+      judgment_prompt: nextJudgmentPrompt,
+      condition_text: nextConditionText,
       created_by_membership_id: input.membershipId,
       updated_at: trx.fn.now()
     })
     .onConflict(["tenant_id"])
     .merge({
-      is_enabled: input.isEnabled ?? current.isEnabled,
-      judgment_prompt: normalizeJudgmentText(input.judgmentPrompt, current.judgmentPrompt),
-      condition_text: normalizeJudgmentText(input.conditionText, current.conditionText),
+      is_enabled: nextIsEnabled,
+      judgment_prompt: nextJudgmentPrompt,
+      condition_text: nextConditionText,
       updated_at: trx.fn.now()
     })
     .returning("*");

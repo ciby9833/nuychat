@@ -228,13 +228,6 @@ export async function ingestSingleBaileysMessage(
     }
   }
 
-  await processWaMonitorMessage(trx, {
-    tenantId: input.tenantId,
-    waMessageId: String(savedMessage.wa_message_id)
-  }).catch((error) => {
-    console.warn("[wa-monitor] failed to process monitor facts:", error);
-  });
-
   return {
     waConversationId: conversation.waConversationId,
     waMessageId: String(savedMessage.wa_message_id),
@@ -318,6 +311,17 @@ export async function ingestBaileysMessagesUpsert(input: {
         unreadCount: conversation.unreadCount
       });
     }
+  }
+  for (const result of touchedResults) {
+    if (!isLiveNotify || result.direction !== "inbound") continue;
+    await withTenantTransaction(input.tenantId, async (trx) =>
+      processWaMonitorMessage(trx, {
+        tenantId: input.tenantId,
+        waMessageId: result.waMessageId
+      })
+    ).catch((error) => {
+      console.warn("[wa-monitor] failed to process monitor facts:", error);
+    });
   }
   return { ok: true, count: input.messages.length };
 }
