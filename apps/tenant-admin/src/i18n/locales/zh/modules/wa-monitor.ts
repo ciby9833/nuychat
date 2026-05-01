@@ -3,10 +3,6 @@ export default {
     tab: "WA监控",
     pageTitle: "WA账号监控",
     refresh: "刷新",
-    backfill: {
-      button: "增量分析",
-      success: "已扫描 {{scanned}} 条，处理 {{processed}} 条"
-    },
     judgment: {
       button: "WA智能对话判断",
       title: "WA智能对话判断",

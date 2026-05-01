@@ -28,7 +28,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  backfillWaMonitorFacts,
   getAdminWaRuntimeStatus,
   getWaMonitorJudgmentConfig,
   getWaMonitorDashboard,
@@ -135,7 +134,6 @@ export function WaMonitorTab() {
   const [loading, setLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [backfillLoading, setBackfillLoading] = useState(false);
   const [judgmentDrawerOpen, setJudgmentDrawerOpen] = useState(false);
   const [judgmentLoading, setJudgmentLoading] = useState(false);
   const [judgmentSaving, setJudgmentSaving] = useState(false);
@@ -211,19 +209,6 @@ export function WaMonitorTab() {
     setPageSize(pagination.pageSize ?? 20);
     setExpandedMessageRowKeys([]);
   }, []);
-
-  const runBackfill = useCallback(async () => {
-    setBackfillLoading(true);
-    try {
-      const result = await backfillWaMonitorFacts({ waAccountId, limit: 500 });
-      void message.success(t("waMonitor.backfill.success", { scanned: result.scanned, processed: result.processed }));
-      void loadReport();
-    } catch (error) {
-      void message.error((error as Error).message);
-    } finally {
-      setBackfillLoading(false);
-    }
-  }, [loadReport, t, waAccountId]);
 
   const openJudgmentDrawer = useCallback(async () => {
     setJudgmentDrawerOpen(true);
@@ -548,9 +533,6 @@ export function WaMonitorTab() {
         ) : null}
         <Button icon={<ReloadOutlined />} onClick={() => void loadReport()} loading={reportLoading}>
           {t("waMonitor.refresh")}
-        </Button>
-        <Button onClick={() => void runBackfill()} loading={backfillLoading}>
-          {t("waMonitor.backfill.button")}
         </Button>
         <Button icon={<DownloadOutlined />} onClick={() => void exportCurrentReport()} loading={exporting}>
           {t("waMonitor.report.exportExcel")}

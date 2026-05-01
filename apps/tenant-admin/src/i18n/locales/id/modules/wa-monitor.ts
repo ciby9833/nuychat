@@ -3,10 +3,6 @@ export default {
     tab: "Monitor WA",
     pageTitle: "Monitor Akun WA",
     refresh: "Muat ulang",
-    backfill: {
-      button: "Analisis Incremental",
-      success: "Dipindai {{scanned}}, diproses {{processed}}"
-    },
     judgment: {
       button: "Penilaian Cerdas WA",
       title: "Penilaian Percakapan Cerdas WA",

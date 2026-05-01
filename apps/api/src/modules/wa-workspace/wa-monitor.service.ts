@@ -1,5 +1,7 @@
 import type { Knex } from "knex";
 
+import { db, withTenantTransaction } from "../../infra/db/client.js";
+import { waMonitorAnalysisQueue, type WaMonitorAnalysisJobPayload } from "../../infra/queue/queues.js";
 import { listWaAccounts } from "./wa-account.repository.js";
 import {
   getConversationMembers,
@@ -25,6 +27,7 @@ type WaMonitorReportQuery = {
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const THIRTY_MIN_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const BACKFILL_BATCH_LIMIT = 10;
 const DEFAULT_JUDGMENT_PROMPT = [
   "你是 WA 客服对话监控助手，需要判断客户入站消息是否需要客服人工回复。",
   "请结合当前消息、群聊/私聊类型、上下文和业务条件判断。",
@@ -46,6 +49,57 @@ type WaMonitorJudgmentConfigRow = {
   created_at: string | Date | null;
   updated_at: string | Date | null;
 };
+
+export async function processWaMonitorAnalysisJob(input: WaMonitorAnalysisJobPayload) {
+  if (input.tenantId) {
+    return backfillAdminWaMonitorFacts({
+      tenantId: input.tenantId,
+      waAccountId: input.waAccountId ?? null,
+      limit: BACKFILL_BATCH_LIMIT
+    });
+  }
+
+  const tenantRows = await db("tenants")
+    .select("tenant_id")
+    .orderBy("created_at", "asc")
+    .limit(50);
+  let scanned = 0;
+  let processed = 0;
+  let failed = 0;
+  for (const tenant of tenantRows) {
+    try {
+      const result = await backfillAdminWaMonitorFacts({
+        tenantId: String(tenant.tenant_id),
+        limit: BACKFILL_BATCH_LIMIT
+      });
+      scanned += result.scanned;
+      processed += result.processed;
+      failed += result.failed;
+    } catch (error) {
+      failed += 1;
+      console.warn("[wa-monitor] failed to scan tenant:", tenant.tenant_id, error);
+    }
+  }
+  return {
+    scanned,
+    processed,
+    failed,
+    tenantCount: tenantRows.length
+  };
+}
+
+export async function triggerWaMonitorAnalysisScan(input: WaMonitorAnalysisJobPayload = {}) {
+  const tenantScope = input.tenantId ?? "all";
+  const accountScope = input.waAccountId ?? "all";
+  await waMonitorAnalysisQueue.add("wa.monitor.analysis", input, {
+    jobId: `wa-monitor:scan:${tenantScope}:${accountScope}`,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 5000 },
+    removeOnComplete: true,
+    removeOnFail: 500
+  });
+  return { queued: true };
+}
 
 function toStatusCode(statusCode: string) {
   if (statusCode === "connected") return "ready";
@@ -588,33 +642,35 @@ export async function processWaMonitorMessage(
 }
 
 export async function backfillAdminWaMonitorFacts(
-  trx: Knex.Transaction,
   input: { tenantId: string; waAccountId?: string | null; limit?: number }
 ) {
-  const limit = Math.max(1, Math.min(input.limit ?? 300, 1000));
-  const rows = await trx("wa_messages as m")
-    .join("wa_monitor_targets as t", function joinTarget() {
-      this.on("t.wa_conversation_id", "=", "m.wa_conversation_id").andOn("t.tenant_id", "=", "m.tenant_id");
-    })
-    .leftJoin("wa_message_monitor_analysis as a", function joinAnalysis() {
-      this.on("a.wa_message_id", "=", "m.wa_message_id").andOn("a.tenant_id", "=", "m.tenant_id");
-    })
-    .where("m.tenant_id", input.tenantId)
-    .where("t.is_active", true)
-    .where("m.direction", "inbound")
-    .whereNull("a.analysis_id")
-    .modify((qb) => {
-      if (input.waAccountId) qb.where("m.wa_account_id", input.waAccountId);
-    })
-    .select("m.wa_message_id")
-    .orderBy("m.created_at", "desc")
-    .limit(limit);
+  const requestedLimit = Math.max(1, Math.min(input.limit ?? BACKFILL_BATCH_LIMIT, 500));
+  const limit = Math.min(requestedLimit, BACKFILL_BATCH_LIMIT);
+  const rows = await withTenantTransaction(input.tenantId, async (trx) =>
+    trx("wa_messages as m")
+      .join("wa_monitor_targets as t", function joinTarget() {
+        this.on("t.wa_conversation_id", "=", "m.wa_conversation_id").andOn("t.tenant_id", "=", "m.tenant_id");
+      })
+      .leftJoin("wa_message_monitor_analysis as a", function joinAnalysis() {
+        this.on("a.wa_message_id", "=", "m.wa_message_id").andOn("a.tenant_id", "=", "m.tenant_id");
+      })
+      .where("m.tenant_id", input.tenantId)
+      .where("t.is_active", true)
+      .where("m.direction", "inbound")
+      .whereNull("a.analysis_id")
+      .modify((qb) => {
+        if (input.waAccountId) qb.where("m.wa_account_id", input.waAccountId);
+      })
+      .select("m.wa_message_id")
+      .orderBy("m.created_at", "desc")
+      .limit(limit)
+  );
 
   let processed = 0;
   let failed = 0;
   for (const row of rows) {
     try {
-      const result = await trx.transaction(async (messageTrx) =>
+      const result = await withTenantTransaction(input.tenantId, async (messageTrx) =>
         processWaMonitorMessage(messageTrx, {
           tenantId: input.tenantId,
           waMessageId: String(row.wa_message_id)
@@ -627,7 +683,14 @@ export async function backfillAdminWaMonitorFacts(
     }
   }
 
-  return { scanned: rows.length, processed, failed };
+  return {
+    scanned: rows.length,
+    processed,
+    failed,
+    requestedLimit,
+    batchLimit: limit,
+    hasMore: rows.length === limit
+  };
 }
 
 async function listLatestHumanReplyGaps(

@@ -14,6 +14,7 @@ export const taskScriptQueue = new Queue("task-script", { connection: conn });
 export const customerProfileRefreshQueue = new Queue("customer-profile-refresh", { connection: conn });
 export const conversationTimeoutQueue = new Queue("conversation-timeout", { connection: conn });
 export const waWorkspaceOutboundQueue = new Queue("wa-workspace-outbound", { connection: conn });
+export const waMonitorAnalysisQueue = new Queue("wa-monitor-analysis", { connection: conn });
 
 export type InboundJobPayload = {
   tenantId: string;
@@ -135,4 +136,9 @@ export type WaWorkspaceOutboundJobPayload = {
   quotedMessageId?: string | null;
   mentionJids?: string[] | null;
   delayMs?: number;
+};
+
+export type WaMonitorAnalysisJobPayload = {
+  tenantId?: string | null;
+  waAccountId?: string | null;
 };

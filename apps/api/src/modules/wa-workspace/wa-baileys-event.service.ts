@@ -28,9 +28,19 @@ import {
   upsertWaConversationMember
 } from "./wa-conversation.repository.js";
 import { emitWaConversationProjection } from "./wa-conversation-projection.service.js";
-import { processWaMonitorMessage } from "./wa-monitor.service.js";
 import { createMissingReferenceGap, resolveGapsForArrivedMessage } from "./wa-reconcile.service.js";
 import { emitWaMessageReceived, emitWaMessageUpdated } from "./wa-realtime.service.js";
+
+type TouchedWaMessage = {
+  waConversationId: string;
+  waMessageId: string;
+  direction: string;
+  messageType: string;
+  bodyText: string | null;
+  senderDisplayName: string | null;
+  participantJid: string | null;
+  providerMessageId: string;
+};
 
 function asString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -248,16 +258,7 @@ export async function ingestBaileysMessagesUpsert(input: {
 }) {
   // Process each message in its own transaction so a single bad JID
   // (e.g. @newsletter) cannot roll back the entire batch.
-  const touchedResults: Array<{
-    waConversationId: string;
-    waMessageId: string;
-    direction: string;
-    messageType: string;
-    bodyText: string | null;
-    senderDisplayName: string | null;
-    participantJid: string | null;
-    providerMessageId: string;
-  }> = [];
+  const touchedResults: TouchedWaMessage[] = [];
   for (const message of input.messages) {
     try {
       const result = await withTenantTransaction(input.tenantId, async (trx) => {
@@ -311,17 +312,6 @@ export async function ingestBaileysMessagesUpsert(input: {
         unreadCount: conversation.unreadCount
       });
     }
-  }
-  for (const result of touchedResults) {
-    if (!isLiveNotify || result.direction !== "inbound") continue;
-    await withTenantTransaction(input.tenantId, async (trx) =>
-      processWaMonitorMessage(trx, {
-        tenantId: input.tenantId,
-        waMessageId: result.waMessageId
-      })
-    ).catch((error) => {
-      console.warn("[wa-monitor] failed to process monitor facts:", error);
-    });
   }
   return { ok: true, count: input.messages.length };
 }

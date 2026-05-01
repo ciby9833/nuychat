@@ -12,8 +12,9 @@ import {
 import { createCustomerProfileRefreshWorker } from "./workers/customer-profile-refresh.worker.js";
 import { createConversationTimeoutWorker } from "./workers/conversation-timeout.worker.js";
 import { createWaOutboundWorker } from "./workers/wa-outbound.worker.js";
+import { createWaMonitorAnalysisWorker } from "./workers/wa-monitor-analysis.worker.js";
 import { initClickhouseTables } from "./infra/clickhouse/client.js";
-import { customerProfileRefreshQueue } from "./infra/queue/queues.js";
+import { customerProfileRefreshQueue, waMonitorAnalysisQueue } from "./infra/queue/queues.js";
 import { recoverOverdueAssignmentAcceptTimeouts, recoverOverdueFollowUpTimeouts } from "./modules/sla/conversation-sla.service.js";
 import { registerServiceModeNoticeSubscriber } from "./modules/service-mode/service-mode-notice.subscriber.js";
 import { runWaStartup } from "./modules/wa-workspace/wa-startup.service.js";
@@ -31,6 +32,7 @@ const taskScriptWorker = createTaskScriptWorker();
 const customerProfileRefreshWorker = createCustomerProfileRefreshWorker();
 const conversationTimeoutWorker = createConversationTimeoutWorker();
 const waOutboundWorker = createWaOutboundWorker();
+const waMonitorAnalysisWorker = createWaMonitorAnalysisWorker();
 createRealtimeGateway(app);
 const unsubscribeServiceModeNotice = registerServiceModeNoticeSubscriber();
 
@@ -60,6 +62,16 @@ void customerProfileRefreshQueue.add(
     removeOnFail: 20
   }
 );
+void waMonitorAnalysisQueue.add(
+  "wa.monitor.analysis",
+  {},
+  {
+    jobId: "wa-monitor.scan.default",
+    repeat: { every: 60 * 1000 },
+    removeOnComplete: true,
+    removeOnFail: 100
+  }
+);
 
 try {
   await app.listen({ port, host });
@@ -76,6 +88,7 @@ try {
   await customerProfileRefreshWorker.close();
   await conversationTimeoutWorker.close();
   await waOutboundWorker.close();
+  await waMonitorAnalysisWorker.close();
   unsubscribeServiceModeNotice();
   process.exit(1);
 }
@@ -89,6 +102,7 @@ const shutdown = async () => {
   await customerProfileRefreshWorker.close();
   await conversationTimeoutWorker.close();
   await waOutboundWorker.close();
+  await waMonitorAnalysisWorker.close();
   unsubscribeServiceModeNotice();
   await app.close();
   process.exit(0);

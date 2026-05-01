@@ -24,7 +24,6 @@ import {
   updateAdminWaAccountOwner
 } from "./wa-admin.service.js";
 import {
-  backfillAdminWaMonitorFacts,
   getAdminWaDailyReport,
   getAdminWaMonitorConversationDetail,
   getAdminWaMonitorDashboard,
@@ -39,6 +38,7 @@ import {
   listAdminWaMonitorConversations,
   listAdminWaReplyPool,
   setAdminWaMonitorTarget,
+  triggerWaMonitorAnalysisScan,
   updateAdminWaMonitorJudgmentConfig
 } from "./wa-monitor.service.js";
 import { getWaRuntimeStatus } from "./wa-runtime.service.js";
@@ -278,14 +278,11 @@ export async function waAdminRoutes(app: FastifyInstance) {
   app.post("/api/admin/wa/monitor/backfill", async (req) => {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
-    const body = req.body as { waAccountId?: string | null; limit?: number };
-    return withTenantTransaction(tenantId, async (trx) =>
-      backfillAdminWaMonitorFacts(trx, {
-        tenantId,
-        waAccountId: typeof body.waAccountId === "string" && body.waAccountId.trim() ? body.waAccountId.trim() : null,
-        limit: Number(body.limit) || undefined
-      })
-    );
+    const body = req.body as { waAccountId?: string | null };
+    return triggerWaMonitorAnalysisScan({
+      tenantId,
+      waAccountId: typeof body.waAccountId === "string" && body.waAccountId.trim() ? body.waAccountId.trim() : null
+    });
   });
 
   app.get("/api/admin/wa/monitor/reply-pool", async (req) => {

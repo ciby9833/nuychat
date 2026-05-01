@@ -3,10 +3,6 @@ export default {
     tab: "WA Monitor",
     pageTitle: "WA Account Monitor",
     refresh: "Refresh",
-    backfill: {
-      button: "Analyze Incrementally",
-      success: "Scanned {{scanned}}, processed {{processed}}"
-    },
     judgment: {
       button: "WA Smart Judgment",
       title: "WA Smart Conversation Judgment",

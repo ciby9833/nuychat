@@ -947,13 +947,6 @@ export function setWaMonitorTarget(input: { waAccountId: string; waConversationI
   });
 }
 
-export function backfillWaMonitorFacts(input?: { waAccountId?: string | null; limit?: number }) {
-  return api<{ scanned: number; processed: number }>("/api/admin/wa/monitor/backfill", {
-    method: "POST",
-    body: JSON.stringify(input ?? {})
-  });
-}
-
 export function createWaAccount(input: {
   displayName: string;
   phoneE164?: string | null;
