@@ -8,10 +8,34 @@
 
 import { API_BASE_URL, apiFetch, apiPostJson } from "../api";
 import type { Session } from "../types";
-import type { WaAccountItem, WaContactItem, WaConversationDetail, WaConversationItem } from "./types";
+import type { WaAccountHealth, WaAccountItem, WaContactItem, WaConversationDetail, WaConversationItem, WaLoginTask } from "./types";
 
 export function listWaWorkbenchAccounts(session: Session) {
   return apiFetch<WaAccountItem[]>("/api/wa/workbench/accounts", session);
+}
+
+export async function createWaWorkbenchLoginTask(session: Session, waAccountId: string): Promise<WaLoginTask> {
+  const task = await apiPostJson<{
+    loginTaskId: string;
+    sessionRef: string;
+    qrCode: string | null;
+    status: WaLoginTask["status"];
+    expiresAt: string;
+    session?: { disconnectReason?: string | null } | null;
+  }>(`/api/wa/workbench/accounts/${waAccountId}/login-task`, {}, session);
+
+  return {
+    waAccountId,
+    accountName: "",
+    qrCode: task.qrCode ?? "",
+    expiresAt: task.expiresAt,
+    status: task.status,
+    disconnectReason: task.session?.disconnectReason ?? null
+  };
+}
+
+export function getWaWorkbenchAccountHealth(session: Session, waAccountId: string) {
+  return apiFetch<WaAccountHealth>(`/api/wa/workbench/accounts/${waAccountId}/health`, session);
 }
 
 export function listWaWorkbenchConversations(

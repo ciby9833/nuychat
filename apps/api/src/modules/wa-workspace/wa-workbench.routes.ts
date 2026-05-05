@@ -16,6 +16,7 @@ import {
   enqueueWorkbenchMediaMessage,
   enqueueWorkbenchReaction,
   createWorkbenchLoginTask,
+  getWorkbenchAccountHealth,
   archiveWorkbenchConversation,
   deleteWorkbenchMessage,
   editWorkbenchMessage,
@@ -79,6 +80,14 @@ export async function waWorkbenchRoutes(app: FastifyInstance) {
     const { waAccountId } = req.params as { waAccountId: string };
     return withTenantTransaction(auth.tenantId, async (trx) =>
       createWorkbenchLoginTask(trx, { ...auth, waAccountId })
+    );
+  });
+
+  app.get("/api/wa/workbench/accounts/:waAccountId/health", async (req) => {
+    const auth = requireWaSeatAccess(app, req);
+    const { waAccountId } = req.params as { waAccountId: string };
+    return withTenantTransaction(auth.tenantId, async (trx) =>
+      getWorkbenchAccountHealth(trx, { ...auth, waAccountId })
     );
   });
 

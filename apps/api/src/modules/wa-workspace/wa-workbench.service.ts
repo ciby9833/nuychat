@@ -18,6 +18,7 @@ import {
   listAccessibleWaAccounts,
   upsertWaAccountSession
 } from "./wa-account.repository.js";
+import { getAdminWaAccountHealth } from "./wa-admin.service.js";
 import {
   findWaMessageByProviderId,
   getConversationMembers,
@@ -242,6 +243,18 @@ export async function createWorkbenchLoginTask(
     })(),
     expiresAt: new Date(String(row.expires_at)).toISOString()
   };
+}
+
+export async function getWorkbenchAccountHealth(
+  trx: Knex.Transaction,
+  input: { tenantId: string; membershipId: string; role: string; waAccountId: string }
+) {
+  const accounts = await listWorkbenchAccounts(trx, input);
+  const account = accounts.find((item) => item.waAccountId === input.waAccountId);
+  if (!account) {
+    throw new Error("WA account not accessible");
+  }
+  return getAdminWaAccountHealth(trx, input.tenantId, input.waAccountId);
 }
 
 export async function listWorkbenchConversations(

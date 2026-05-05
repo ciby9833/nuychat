@@ -36,11 +36,49 @@ export type WaAccountItem = {
   };
   actions: {
     canStartLogin: boolean;
+    startLoginReason?: string | null;
     canManageMembers: boolean;
     canViewHealth: boolean;
     canReconnect: boolean;
     reconnectReason: string | null;
   };
+};
+
+export type WaLoginTaskStatus = {
+  code: string;
+  label: string;
+  detail: string;
+  tone: "default" | "warning" | "success" | "danger" | "processing";
+};
+
+export type WaLoginTask = {
+  waAccountId: string;
+  accountName: string;
+  qrCode: string;
+  expiresAt: string;
+  status: WaLoginTaskStatus;
+  disconnectReason: string | null;
+};
+
+export type WaAccountHealth = {
+  waAccountId: string;
+  providerKey: string;
+  lastConnectedAt: string | null;
+  lastDisconnectedAt: string | null;
+  session: {
+    connectionState: string;
+    sessionRef: string;
+    loginMode: string | null;
+    loginPhase: string | null;
+    heartbeatAt: string | null;
+    disconnectReason: string | null;
+    autoReconnectCount: number;
+    qrCode: string | null;
+    isOnline: boolean | null;
+    phoneConnected: boolean | null;
+    receivedPendingNotifications: boolean | null;
+  } | null;
+  status: WaLoginTaskStatus;
 };
 
 export type WaConversationItem = {

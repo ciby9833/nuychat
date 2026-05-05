@@ -95,7 +95,6 @@ export function WaAccountsPane({
   const [loginTask, setLoginTask] = useState<LoginTaskModalState>(null);
   const [saving, setSaving] = useState(false);
   const [refreshingLoginTask, setRefreshingLoginTask] = useState(false);
-  const [qrCountdownMs, setQrCountdownMs] = useState(0);
   const [createForm] = Form.useForm<CreateWaAccountForm>();
   const [accessForm] = Form.useForm<AccessForm>();
   const onReloadRef = useRef(onReload);
@@ -250,57 +249,6 @@ export function WaAccountsPane({
   }, [selectedAccount?.waAccountId]);
 
   useEffect(() => {
-    if (!loginTask) {
-      setQrCountdownMs(0);
-      return;
-    }
-
-    const tick = () => {
-      const remaining = new Date(loginTask.expiresAt).getTime() - Date.now();
-      setQrCountdownMs(Math.max(0, remaining));
-    };
-
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
-  }, [loginTask]);
-
-  useEffect(() => {
-    if (!loginTask || loginTask.status.code !== "qr_required" || refreshingLoginTask || qrCountdownMs > 0) return;
-
-    let cancelled = false;
-    setRefreshingLoginTask(true);
-    void (async () => {
-      try {
-        const nextTask = await createWaAccountLoginTask(loginTask.waAccountId);
-        if (!cancelled) {
-          setLoginTask((current) => current && current.waAccountId === loginTask.waAccountId
-            ? {
-                ...current,
-                qrCode: nextTask.qrCode ?? current.qrCode,
-                expiresAt: nextTask.expiresAt,
-                status: nextTask.status,
-                disconnectReason: null
-              }
-            : current);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          void message.error((err as Error).message);
-        }
-      } finally {
-        if (!cancelled) {
-          setRefreshingLoginTask(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loginTask, qrCountdownMs, refreshingLoginTask]);
-
-  useEffect(() => {
     if (!loginTask) return;
 
     let cancelled = false;
@@ -354,12 +302,6 @@ export function WaAccountsPane({
     };
   }, [loginTask]);
 
-  const countdownLabel = (() => {
-    const totalSeconds = Math.ceil(qrCountdownMs / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  })();
   const isImageQrCode = typeof loginTask?.qrCode === "string" && loginTask.qrCode.startsWith("data:image/");
   const shouldShowQr = loginTask?.status.code === "qr_required" && Boolean(loginTask.qrCode);
   const showLoadingState = Boolean(
@@ -644,11 +586,6 @@ export function WaAccountsPane({
             )}
             <Typography.Text strong>{loginTask.status.label}</Typography.Text>
             <Typography.Text type="secondary">{loginTask.status.detail}</Typography.Text>
-            {shouldShowQr ? (
-              <Tag color={refreshingLoginTask ? "processing" : qrCountdownMs <= 15000 ? "gold" : "default"}>
-                {refreshingLoginTask ? t("waMonitor.pane.loginModal.refreshingQr") : t("waMonitor.pane.loginModal.refreshAfter", { value: countdownLabel })}
-              </Tag>
-            ) : null}
             {loginTask.disconnectReason ? (
               <Typography.Text type="danger">{t("waMonitor.pane.loginModal.disconnectReason", { value: loginTask.disconnectReason })}</Typography.Text>
             ) : null}

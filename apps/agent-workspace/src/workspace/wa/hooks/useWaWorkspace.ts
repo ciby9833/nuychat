@@ -13,9 +13,11 @@ import type { Session } from "../../types";
 import { API_BASE_URL } from "../../api";
 import {
   archiveWaConversation,
+  createWaWorkbenchLoginTask,
   deleteWaMessage,
   editWaMessage,
   forceAssignWaConversation,
+  getWaWorkbenchAccountHealth,
   getWaWorkbenchConversationDetail,
   listWaWorkbenchAccounts,
   listWaWorkbenchContacts,
@@ -30,7 +32,7 @@ import {
   triggerWaAccountSync,
   uploadWaAttachment
 } from "../api";
-import type { WaAccountItem, WaContactItem, WaConversationDetail, WaConversationItem, WaMessageItem } from "../types";
+import type { WaAccountItem, WaContactItem, WaConversationDetail, WaConversationItem, WaLoginTask, WaMessageItem } from "../types";
 
 type UploadingAttachment = {
   localId: string;
@@ -147,10 +149,15 @@ export function useWaWorkspace(session: Session | null) {
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [loginTask, setLoginTask] = useState<WaLoginTask | null>(null);
+  const [refreshingLoginTask, setRefreshingLoginTask] = useState(false);
 
   // Stable refs so socket callbacks can read the latest values without triggering re-subscription.
   const selectedConversationIdRef = useRef<string | null>(null);
   const loadDetailRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const loadAccountsRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const loadConversationsRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const loadContactsRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const accountIdRef = useRef<string | null>(null);
   const accountsRef = useRef<WaAccountItem[]>([]);
   const conversationsRef = useRef<WaConversationItem[]>([]);
@@ -163,6 +170,8 @@ export function useWaWorkspace(session: Session | null) {
   const uploadingAttachmentsRef = useRef<UploadingAttachment[]>([]);
   const composerDraftsRef = useRef<Record<string, ComposerDraft>>({});
   const detailRequestSeqRef = useRef(0);
+  const loginTaskRef = useRef<WaLoginTask | null>(null);
+  const loginTaskRequestingRef = useRef(false);
 
   const activeDraftKey = accountId && selectedConversationId
     ? `${accountId}:${selectedConversationId}`
@@ -294,6 +303,9 @@ export function useWaWorkspace(session: Session | null) {
   // Keep refs in sync so socket callbacks always see the latest values.
   selectedConversationIdRef.current = selectedConversationId;
   loadDetailRef.current = loadDetail;
+  loadAccountsRef.current = loadAccounts;
+  loadConversationsRef.current = loadConversations;
+  loadContactsRef.current = loadContacts;
   accountIdRef.current = accountId;
   accountsRef.current = accounts;
   conversationsRef.current = conversations;
@@ -302,6 +314,7 @@ export function useWaWorkspace(session: Session | null) {
   selectedMentionsRef.current = selectedMentions;
   quotedMessageRef.current = quotedMessage;
   uploadingAttachmentsRef.current = uploadingAttachments;
+  loginTaskRef.current = loginTask;
 
   useEffect(() => {
     setSelectedMentions((current) => {
@@ -362,12 +375,55 @@ export function useWaWorkspace(session: Session | null) {
       waAccountId: string;
       status: { code: string; label: string; detail: string; tone: "default" | "warning" | "success" | "danger" | "processing" };
       connectionState: string;
+      loginPhase?: string | null;
+      qrCode?: string | null;
+      disconnectReason?: string | null;
     }) => {
       setAccounts((current) => current.map((item) =>
         item.waAccountId === event.waAccountId
-          ? { ...item, status: event.status, session: item.session ? { ...item.session, connectionState: event.connectionState } : item.session }
+          ? {
+              ...item,
+              status: event.status,
+              session: item.session
+                ? {
+                    ...item.session,
+                    connectionState: event.connectionState,
+                    loginPhase: event.loginPhase ?? item.session.loginPhase,
+                    disconnectReason: event.disconnectReason ?? item.session.disconnectReason,
+                    qrCodeAvailable: Boolean(event.qrCode) || item.session.qrCodeAvailable
+                  }
+                : item.session
+            }
           : item
       ));
+
+      setLoginTask((current) => {
+        if (!current || current.waAccountId !== event.waAccountId) return current;
+        if (event.status.code === "connected") {
+          return null;
+        }
+        const nextQrCode = event.qrCode ?? current.qrCode;
+        const nextDisconnectReason = event.disconnectReason ?? current.disconnectReason;
+        if (
+          nextQrCode === current.qrCode &&
+          event.status.code === current.status.code &&
+          nextDisconnectReason === current.disconnectReason
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          qrCode: nextQrCode,
+          status: event.status,
+          disconnectReason: nextDisconnectReason
+        };
+      });
+
+      if (event.status.code === "connected" && event.waAccountId === accountIdRef.current) {
+        void loadAccountsRef.current();
+        void loadConversationsRef.current();
+        void loadContactsRef.current();
+      }
     });
 
     socket.on("wa.conversation.updated", (event: {
@@ -482,6 +538,77 @@ export function useWaWorkspace(session: Session | null) {
     // Only reconnect when the session token changes — NOT on every conversation switch.
     // Conversation ID and loadDetail are accessed via refs to avoid this dependency.
   }, [session]);
+
+  const openLoginTask = useCallback(async (account: WaAccountItem) => {
+    if (!session || loginTaskRequestingRef.current) return;
+    loginTaskRequestingRef.current = true;
+    setRefreshingLoginTask(true);
+    setError("");
+    try {
+      const task = await createWaWorkbenchLoginTask(session, account.waAccountId);
+      setLoginTask({
+        ...task,
+        accountName: account.displayName
+      });
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      loginTaskRequestingRef.current = false;
+      setRefreshingLoginTask(false);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || !loginTask) return;
+
+    let cancelled = false;
+    const syncHealth = async () => {
+      try {
+        const next = await getWaWorkbenchAccountHealth(session, loginTask.waAccountId);
+        if (cancelled || !next.session) return;
+
+        if (next.status.code === "connected") {
+          setLoginTask((current) => current?.waAccountId === next.waAccountId ? null : current);
+          void loadAccountsRef.current();
+          void loadConversationsRef.current();
+          void loadContactsRef.current();
+          return;
+        }
+
+        setLoginTask((current) => current?.waAccountId === next.waAccountId
+          ? (() => {
+              const nextQrCode = next.session?.qrCode ?? current.qrCode;
+              const nextDisconnectReason = next.session?.disconnectReason ?? current.disconnectReason;
+              if (
+                nextQrCode === current.qrCode &&
+                next.status.code === current.status.code &&
+                nextDisconnectReason === current.disconnectReason
+              ) {
+                return current;
+              }
+              return {
+                ...current,
+                qrCode: nextQrCode,
+                status: next.status,
+                disconnectReason: nextDisconnectReason
+              };
+            })()
+          : current);
+      } catch {
+        // ignore polling failures and wait for next cycle
+      }
+    };
+
+    void syncHealth();
+    const timer = window.setInterval(() => {
+      void syncHealth();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loginTask, session]);
 
   const selectedConversation = useMemo(
     () => conversations.find((item) => item.waConversationId === selectedConversationId) ?? null,
@@ -805,6 +932,10 @@ export function useWaWorkspace(session: Session | null) {
     reactToMessage,
     syncing,
     triggerSync,
+    loginTask,
+    refreshingLoginTask,
+    openLoginTask,
+    closeLoginTask: () => setLoginTask(null),
     forceAssignWaConversation: async (memberId: string) => {
       if (!session || !selectedConversationId) return;
       setActionLoading("force-assign");

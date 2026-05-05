@@ -7,7 +7,17 @@ export default {
     },
     workspace: {
       offlineTitle: "Akun offline",
-      offlineDetail: "Akun WhatsApp ini sedang tidak terhubung. Minta admin untuk masuk ulang sebelum menggunakan workspace."
+      offlineDetail: "Akun WhatsApp ini sedang tidak terhubung. Silakan masuk lagi dengan memindai QR sebelum menggunakan workspace.",
+      scanLogin: "Scan untuk masuk",
+      loginModal: {
+        title: "Scan untuk masuk: {{name}}",
+        close: "Tutup",
+        retry: "Segarkan QR",
+        rescan: "Silakan scan ulang",
+        refreshingQr: "Menyegarkan QR…",
+        refreshAfter: "Akan diperbarui dalam {{value}}",
+        disconnectReason: "Alasan terputus: {{value}}"
+      }
     },
     conversationList: {
       tabs: {

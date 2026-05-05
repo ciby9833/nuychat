@@ -7,7 +7,17 @@ export default {
     },
     workspace: {
       offlineTitle: "Account offline",
-      offlineDetail: "This WhatsApp account is disconnected. Ask an admin to reconnect it before using the workspace."
+      offlineDetail: "This WhatsApp account is disconnected. Sign in again by scanning the QR code before using the workspace.",
+      scanLogin: "Scan to sign in",
+      loginModal: {
+        title: "Scan to sign in: {{name}}",
+        close: "Close",
+        retry: "Refresh QR code",
+        rescan: "Please scan again",
+        refreshingQr: "Refreshing QR code…",
+        refreshAfter: "Refreshes in {{value}}",
+        disconnectReason: "Disconnect reason: {{value}}"
+      }
     },
     conversationList: {
       tabs: {

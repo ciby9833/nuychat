@@ -8,6 +8,8 @@
 
 import type { Session } from "../../types";
 import { useState } from "react";
+import { Button, Modal, QRCode, Spin, Typography } from "antd";
+import { CheckCircleFilled, LoadingOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { useWaWorkspace } from "../hooks/useWaWorkspace";
 import { WaChatPanel } from "./WaChatPanel";
@@ -24,7 +26,17 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
   const [focusedParticipantJid, setFocusedParticipantJid] = useState<string | null>(null);
 
   const selectedAccount = vm.accounts.find((a) => a.waAccountId === vm.accountId) ?? null;
+  const loginTask = vm.loginTask;
+  const loginTaskAccount = loginTask ? vm.accounts.find((a) => a.waAccountId === loginTask.waAccountId) ?? null : null;
   const accountConnected = selectedAccount?.status.code === "connected";
+  const shouldShowQr = loginTask?.status.code === "qr_required" && Boolean(loginTask.qrCode);
+  const isImageQrCode = typeof loginTask?.qrCode === "string" && loginTask.qrCode.startsWith("data:image/");
+  const showLoadingState = Boolean(
+    loginTask?.status.code &&
+    ((loginTask.status.code === "qr_required" && !loginTask.qrCode) ||
+      ["qr_scanned", "connecting"].includes(loginTask.status.code))
+  );
+  const canOpenLogin = Boolean(selectedAccount) && !accountConnected;
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#efeae2]">
@@ -40,12 +52,22 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
                 </svg>
               </div>
-                <p className="text-sm font-medium text-[#111b21]">{t("wa.workspace.offlineTitle")}</p>
+              <p className="text-sm font-medium text-[#111b21]">{t("wa.workspace.offlineTitle")}</p>
+              {canOpenLogin ? (
+                <Button
+                  type="primary"
+                  loading={vm.refreshingLoginTask}
+                  onClick={() => { void vm.openLoginTask(selectedAccount); }}
+                >
+                  {t("wa.workspace.scanLogin")}
+                </Button>
+              ) : (
                 <p className="max-w-[260px] text-center text-xs leading-relaxed text-[#667781]">
                   {selectedAccount.status.detail || t("wa.workspace.offlineDetail")}
                 </p>
-              </div>
-            )}
+              )}
+            </div>
+          )}
           <div className="min-h-0 border-r border-[#d1d7db] bg-white">
             <WaConversationList
               accounts={vm.accounts}
@@ -108,6 +130,63 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
           </div>
         </div>
       </div>
+
+      <Modal
+        title={t("wa.workspace.loginModal.title", { name: loginTask?.accountName ?? "" })}
+        open={Boolean(loginTask)}
+        onCancel={vm.closeLoginTask}
+        destroyOnHidden
+        footer={loginTask ? (
+          <div className="flex items-center justify-end gap-2">
+            {["offline", "failed", "session_expired"].includes(loginTask.status.code) && loginTaskAccount ? (
+              <Button
+                type="primary"
+                loading={vm.refreshingLoginTask}
+                onClick={() => { void vm.openLoginTask(loginTaskAccount); }}
+              >
+                {t("wa.workspace.loginModal.retry")}
+              </Button>
+            ) : null}
+            <Button onClick={vm.closeLoginTask}>{t("wa.workspace.loginModal.close")}</Button>
+          </div>
+        ) : null}
+        width={520}
+      >
+        {loginTask ? (
+          <div className="flex flex-col items-center gap-4 pt-2">
+            {shouldShowQr ? (
+              isImageQrCode ? (
+                <img
+                  src={loginTask.qrCode}
+                  alt={`WA QR ${loginTask.accountName}`}
+                  className="h-[280px] w-[280px] rounded-xl border border-[#dfe5e7] bg-white p-2 object-contain"
+                />
+              ) : (
+                <QRCode value={loginTask.qrCode} size={280} />
+              )
+            ) : showLoadingState ? (
+              <div className="flex h-[280px] w-[280px] items-center justify-center rounded-xl border border-[#dfe5e7] bg-[#fafafa]">
+                <Spin indicator={<LoadingOutlined style={{ fontSize: 36 }} spin />} />
+              </div>
+            ) : loginTask.status.code === "connected" ? (
+              <div className="flex h-[280px] w-[280px] items-center justify-center rounded-xl border border-[#dfe5e7] bg-[#f6ffed]">
+                <CheckCircleFilled style={{ fontSize: 48, color: "#52c41a" }} />
+              </div>
+            ) : (
+              <div className="flex h-[280px] w-[280px] items-center justify-center rounded-xl border border-[#dfe5e7] bg-[#fff2f0]">
+                <Typography.Text type="danger">{t("wa.workspace.loginModal.rescan")}</Typography.Text>
+              </div>
+            )}
+            <Typography.Text strong>{loginTask.status.label}</Typography.Text>
+            <Typography.Text type="secondary">{loginTask.status.detail}</Typography.Text>
+            {loginTask.disconnectReason ? (
+              <Typography.Text type="danger">
+                {t("wa.workspace.loginModal.disconnectReason", { value: loginTask.disconnectReason })}
+              </Typography.Text>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
     </section>
   );
 }

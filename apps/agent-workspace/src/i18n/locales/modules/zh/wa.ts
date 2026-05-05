@@ -7,7 +7,17 @@ export default {
     },
     workspace: {
       offlineTitle: "账号已离线",
-      offlineDetail: "当前 WhatsApp 账号未连接，请联系管理员重新登录后再使用工作台。"
+      offlineDetail: "当前 WhatsApp 账号未连接，请重新扫码登录后再使用工作台。",
+      scanLogin: "扫码登录",
+      loginModal: {
+        title: "扫码登录：{{name}}",
+        close: "关闭",
+        retry: "刷新二维码",
+        rescan: "请重新扫码",
+        refreshingQr: "二维码刷新中…",
+        refreshAfter: "{{value}} 后自动刷新",
+        disconnectReason: "掉线原因：{{value}}"
+      }
     },
     conversationList: {
       tabs: {
