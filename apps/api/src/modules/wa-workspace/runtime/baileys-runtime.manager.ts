@@ -201,6 +201,14 @@ function deriveLoginPhase(
   }
 ): string {
   if (typeof update.qr === "string" && update.qr.length > 0) return "qr_required";
+  if (
+    !update.qr &&
+    current.loginPhase === "qr_required" &&
+    current.qrCode &&
+    update.connection !== "close"
+  ) {
+    return "qr_scanned";
+  }
   if (update.receivedPendingNotifications === true) return "connected";
   if (update.isNewLogin) return "syncing";
   if (update.connection === "close") return "failed";
@@ -483,6 +491,9 @@ async function buildSocket(input: {
   });
 
   socket.ev.on("connection.update", async (update) => {
+    const previousConnectionState = entry.connectionState;
+    const previousLoginPhase = entry.loginPhase;
+    const previousReceivedPendingNotifications = entry.receivedPendingNotifications;
     const nextConnectionState = mapConnectionState(update, entry);
     const nextQrCode = typeof update.qr === "string"
       ? update.qr
@@ -511,6 +522,28 @@ async function buildSocket(input: {
     entry.receivedPendingNotifications = nextReceivedPendingNotifications;
     const disconnectCode = Number(update.lastDisconnect?.error?.output?.statusCode ?? 0);
     entry.lastDisconnectReason = disconnectCode ? String(disconnectCode) : null;
+
+    const shouldReconnect =
+      update.connection === "close" &&
+      config.autoReconnect &&
+      disconnectCode !== DisconnectReason.loggedOut &&
+      !entry.restartRequested;
+    const shouldTreatAsTransientReconnect =
+      shouldReconnect && (
+        previousConnectionState === "open" ||
+        previousReceivedPendingNotifications === true ||
+        previousLoginPhase === "qr_scanned" ||
+        previousLoginPhase === "connecting" ||
+        previousLoginPhase === "syncing" ||
+        update.isNewLogin === true
+      );
+
+    if (shouldTreatAsTransientReconnect) {
+      entry.connectionState = "connecting";
+      entry.loginPhase = previousReceivedPendingNotifications === true ? "syncing" : "connecting";
+      entry.qrCode = null;
+      entry.lastDisconnectReason = null;
+    }
 
     await persistSessionState(input.tenantId, input.waAccountId, {
       sessionRef: entry.sessionRef,
@@ -594,10 +627,6 @@ async function buildSocket(input: {
       entry.postConnectSyncScheduled = false;
       entry.reconcileScheduled = false;
       entry.avatarSyncScheduled = false;
-      const shouldReconnect =
-        config.autoReconnect &&
-        disconnectCode !== DisconnectReason.loggedOut &&
-        !entry.restartRequested;
       if (shouldReconnect) {
         runtimes.delete(runtimeKey(input.tenantId, input.waAccountId));
         void ensureBaileysRuntime({
