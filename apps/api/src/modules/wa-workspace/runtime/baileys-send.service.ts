@@ -262,12 +262,12 @@ async function ensureOpenRuntimeForAction(input: {
   instanceKey: string;
 }) {
   let runtime = getBaileysRuntime(input.tenantId, input.waAccountId);
-  if (!runtime || runtime.connectionState === "close") {
+  if (!runtime) {
     runtime = await ensureBaileysRuntime({
       tenantId: input.tenantId,
       waAccountId: input.waAccountId,
       instanceKey: input.instanceKey,
-      loginMode: "worker_action"
+      loginMode: "auto_restore"
     });
   }
   if (runtime.connectionState !== "open") {
@@ -418,16 +418,16 @@ export async function sendBaileysMessage(input: {
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
         instanceKey: input.instanceKey,
-        loginMode: "worker_send_retry"
+        loginMode: "auto_restore"
       });
     }
     let runtime = getBaileysRuntime(input.tenantId, input.waAccountId);
-    if (!runtime || runtime.connectionState === "close") {
+    if (!runtime) {
       runtime = await ensureBaileysRuntime({
         tenantId: input.tenantId,
         waAccountId: input.waAccountId,
         instanceKey: input.instanceKey,
-        loginMode: "worker_send",
+        loginMode: "auto_restore",
         forceNew: forceRestart
       });
     }

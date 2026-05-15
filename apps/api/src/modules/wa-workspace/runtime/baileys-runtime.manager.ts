@@ -89,7 +89,26 @@ type LoginTicket = {
   expiresAt: string;
 };
 
+function shouldPromoteRuntimeLoginMode(currentMode: string, nextMode: string) {
+  const stickyModes = new Set([
+    "employee_scan",
+    "admin_scan",
+    "auto_restore",
+    "admin_logout"
+  ]);
+  if (stickyModes.has(nextMode)) return true;
+  if (!currentMode) return true;
+  return false;
+}
+
 const runtimes = new Map<string, RuntimeEntry>();
+/**
+ * In-flight buildSocket promises keyed by runtimeKey.
+ * When ensureBaileysRuntime is called concurrently for the same account
+ * (e.g. auto-reconnect + send worker racing during a brief disconnect),
+ * all callers share the same Promise instead of each spawning a new socket.
+ */
+const pendingBuilds = new Map<string, Promise<RuntimeEntry>>();
 const loggedBaileysErrors = new Map<string, number>();
 const postConnectTaskKeys = new Set<string>();
 const postConnectTaskQueue: Array<() => Promise<void>> = [];
@@ -545,6 +564,27 @@ async function buildSocket(input: {
       entry.lastDisconnectReason = null;
     }
 
+    // Orphan guard: if another runtime has already been registered for this
+    // account (different sessionRef), this one was superseded.  Letting it
+    // write to the DB or emit socket events causes the "online ↔ offline"
+    // flicker — the old "connecting" session overwrites the new "connected"
+    // one in the DB, and both emit wa.account.updated alternately.
+    // We suppress all side-effects and schedule the orphaned socket to close.
+    const canonicalEntry = runtimes.get(runtimeKey(input.tenantId, input.waAccountId));
+    if (canonicalEntry !== undefined && canonicalEntry.sessionRef !== entry.sessionRef) {
+      console.warn("[wa-baileys] orphaned runtime detected — suppressing DB writes and events", {
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        orphanedSessionRef: entry.sessionRef,
+        canonicalSessionRef: canonicalEntry.sessionRef
+      });
+      // Close in the next tick to avoid re-entrancy issues inside the event handler.
+      setImmediate(() => {
+        try { socket.end(new Error("orphaned runtime replaced by newer session")); } catch { /* ignore */ }
+      });
+      return;
+    }
+
     await persistSessionState(input.tenantId, input.waAccountId, {
       sessionRef: entry.sessionRef,
       connectionState: entry.connectionState,
@@ -883,19 +923,38 @@ export async function ensureBaileysRuntime(input: {
       }
       runtimes.delete(key);
     }
+    pendingBuilds.delete(key);
     await resetBaileysAuthState(input.tenantId, input.waAccountId);
   }
   if (!input.forceNew) {
     const existing = runtimes.get(key);
     if (existing) {
-      existing.activeLoginMode = input.loginMode;
+      if (shouldPromoteRuntimeLoginMode(existing.activeLoginMode, input.loginMode)) {
+        existing.activeLoginMode = input.loginMode;
+      }
       return existing;
     }
+    // Coalesce concurrent callers — if a build is already in flight, return the
+    // same promise so we never create two sockets for the same account.
+    const inFlight = pendingBuilds.get(key);
+    if (inFlight) return inFlight;
+  } else {
+    // forceNew: cancel any in-flight build so it won't overwrite the new entry.
+    pendingBuilds.delete(key);
   }
 
-  const runtime = await buildSocket(input);
-  runtimes.set(key, runtime);
-  return runtime;
+  const buildPromise: Promise<RuntimeEntry> = buildSocket(input)
+    .then((runtime) => {
+      runtimes.set(key, runtime);
+      pendingBuilds.delete(key);
+      return runtime;
+    })
+    .catch((err) => {
+      pendingBuilds.delete(key);
+      throw err;
+    });
+  pendingBuilds.set(key, buildPromise);
+  return buildPromise;
 }
 
 export function getBaileysRuntime(tenantId: string, waAccountId: string) {
@@ -947,7 +1006,7 @@ export async function fetchBaileysHistoryOnDemand(input: {
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     instanceKey: input.instanceKey,
-    loginMode: "history_sync"
+    loginMode: "auto_restore"
   });
   const beforeSize = (runtime.recentHistory.get(input.chatJid) ?? []).length;
   const maxWaitMs = 12_000;
@@ -1168,7 +1227,7 @@ export async function markBaileysConversationRead(input: {
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,
     instanceKey: input.instanceKey,
-    loginMode: "mark_read"
+    loginMode: "auto_restore"
   });
   await runtime.socket.readMessages(keys);
   return { ok: true };

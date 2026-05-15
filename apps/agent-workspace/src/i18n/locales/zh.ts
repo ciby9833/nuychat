@@ -43,10 +43,10 @@ export default {
     agent: "坐席",
     unbound: "未绑定",
     socket: {
-      connected: "实时连接正常",
+      connected: "工作台连接正常",
       error: "连接失败",
-      disconnected: "已断开",
-      connecting: "连接中…"
+      disconnected: "工作台已断开",
+      connecting: "工作台连接中…"
     },
     language: "语言",
     logout: "退出登录"

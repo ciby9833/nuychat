@@ -8,6 +8,8 @@
  */
 import { realtimeEventBus } from "../realtime/realtime.events.js";
 
+const lastWaAccountEventSignature = new Map<string, string>();
+
 export function emitWaAccountUpdated(input: {
   tenantId: string;
   waAccountId: string;
@@ -29,6 +31,26 @@ export function emitWaAccountUpdated(input: {
   receivedPendingNotifications?: boolean | null;
   occurredAt?: string;
 }) {
+  const signature = JSON.stringify({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    status: input.status,
+    connectionState: input.connectionState,
+    loginPhase: input.loginPhase,
+    sessionRef: input.sessionRef ?? null,
+    qrCode: input.qrCode ?? null,
+    disconnectReason: input.disconnectReason ?? null,
+    autoReconnectCount: input.autoReconnectCount ?? 0,
+    isOnline: input.isOnline ?? null,
+    phoneConnected: input.phoneConnected ?? null,
+    receivedPendingNotifications: input.receivedPendingNotifications ?? null
+  });
+  const eventKey = `${input.tenantId}:${input.waAccountId}`;
+  if (lastWaAccountEventSignature.get(eventKey) === signature) {
+    return;
+  }
+  lastWaAccountEventSignature.set(eventKey, signature);
+
   realtimeEventBus.emitEvent("wa.account.updated", {
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,

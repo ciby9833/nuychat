@@ -43,10 +43,10 @@ export default {
     agent: "Agent",
     unbound: "Unbound",
     socket: {
-      connected: "Connected",
+      connected: "Workspace connected",
       error: "Connection failed",
-      disconnected: "Disconnected",
-      connecting: "Connecting…"
+      disconnected: "Workspace disconnected",
+      connecting: "Workspace connecting…"
     },
     language: "Language",
     logout: "Sign Out"

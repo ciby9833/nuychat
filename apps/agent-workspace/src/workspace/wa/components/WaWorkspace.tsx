@@ -28,7 +28,11 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
   const selectedAccount = vm.accounts.find((a) => a.waAccountId === vm.accountId) ?? null;
   const loginTask = vm.loginTask;
   const loginTaskAccount = loginTask ? vm.accounts.find((a) => a.waAccountId === loginTask.waAccountId) ?? null : null;
-  const accountConnected = selectedAccount?.status.code === "connected";
+  const selectedAccountStatusCode = selectedAccount?.status.code ?? null;
+  const accountConnected = selectedAccountStatusCode === "connected";
+  const requiresInteractiveLogin = ["offline", "failed", "session_expired", "never_logged_in"].includes(
+    selectedAccountStatusCode ?? ""
+  );
   const shouldShowQr = loginTask?.status.code === "qr_required" && Boolean(loginTask.qrCode);
   const isImageQrCode = typeof loginTask?.qrCode === "string" && loginTask.qrCode.startsWith("data:image/");
   const showLoadingState = Boolean(
@@ -36,7 +40,7 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
     ((loginTask.status.code === "qr_required" && !loginTask.qrCode) ||
       ["qr_scanned", "connecting"].includes(loginTask.status.code))
   );
-  const canOpenLogin = Boolean(selectedAccount) && !accountConnected;
+  const canOpenLogin = Boolean(selectedAccount) && requiresInteractiveLogin;
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#efeae2]">
@@ -45,7 +49,7 @@ export function WaWorkspace({ session }: WaWorkspaceProps) {
           className="relative grid h-full min-h-0 overflow-hidden rounded-[18px] border border-[#d1d7db] bg-[#f0f2f5] shadow-[0_18px_48px_rgba(17,27,33,0.08)]"
           style={{ gridTemplateColumns: "410px minmax(0,1fr) 360px" }}
         >
-          {!accountConnected && selectedAccount && (
+          {!loginTask && requiresInteractiveLogin && selectedAccount && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-[18px] bg-[#f8f9fa]/95 backdrop-blur-sm">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#e9edef]">
                 <svg className="h-7 w-7 text-[#667781]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

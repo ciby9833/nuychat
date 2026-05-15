@@ -38,12 +38,7 @@ export type WaSessionSnapshot = {
 };
 
 const STALE_PENDING_SESSION_MS = 2 * 60 * 1000;
-const BACKGROUND_LOGIN_MODES = new Set(["auto_restore", "worker_send", "worker_send_retry", "mark_read"]);
 const INTERACTIVE_LOGIN_MODES = new Set(["employee_scan", "admin_scan"]);
-
-function isBackgroundLoginMode(loginMode: string | null | undefined) {
-  return Boolean(loginMode && BACKGROUND_LOGIN_MODES.has(loginMode));
-}
 
 function isInteractiveLoginMode(loginMode: string | null | undefined) {
   return Boolean(loginMode && INTERACTIVE_LOGIN_MODES.has(loginMode));
@@ -64,6 +59,20 @@ export function normalizeWaSessionSnapshot<T extends WaSessionSnapshot | null>(s
     return {
       ...session,
       loginPhase: "connected"
+    } as T;
+  }
+
+  if (session.connectionState === "connecting" && session.loginPhase === "connected") {
+    return {
+      ...session,
+      loginPhase: session.qrCodeAvailable ? "qr_scanned" : "connecting"
+    } as T;
+  }
+
+  if (session.connectionState === "close" && session.loginPhase === "connected") {
+    return {
+      ...session,
+      loginPhase: "failed"
     } as T;
   }
 
@@ -111,19 +120,6 @@ export function deriveWaStatus(input: {
       code: "offline",
       label: "离线",
       detail: "上一次登录未完成，需重新扫码登录。",
-      tone: "default"
-    };
-  }
-
-  if (
-    session.loginPhase === "connecting" &&
-    isBackgroundLoginMode(session.loginMode) &&
-    session.connectionState !== "open"
-  ) {
-    return {
-      code: "offline",
-      label: "离线",
-      detail: "后台连接未完成，可重连或重新扫码。",
       tone: "default"
     };
   }

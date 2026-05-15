@@ -43,10 +43,10 @@ export default {
     agent: "Agen",
     unbound: "Tidak terikat",
     socket: {
-      connected: "Terhubung",
+      connected: "Workspace terhubung",
       error: "Koneksi gagal",
-      disconnected: "Terputus",
-      connecting: "Menghubungkan…"
+      disconnected: "Workspace terputus",
+      connecting: "Workspace menghubungkan…"
     },
     language: "Bahasa",
     logout: "Keluar"

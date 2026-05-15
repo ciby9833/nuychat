@@ -172,6 +172,7 @@ export function useWaWorkspace(session: Session | null) {
   const detailRequestSeqRef = useRef(0);
   const loginTaskRef = useRef<WaLoginTask | null>(null);
   const loginTaskRequestingRef = useRef(false);
+  const accountStatusCodeRef = useRef<Map<string, string>>(new Map());
 
   const activeDraftKey = accountId && selectedConversationId
     ? `${accountId}:${selectedConversationId}`
@@ -315,6 +316,7 @@ export function useWaWorkspace(session: Session | null) {
   quotedMessageRef.current = quotedMessage;
   uploadingAttachmentsRef.current = uploadingAttachments;
   loginTaskRef.current = loginTask;
+  accountStatusCodeRef.current = new Map(accounts.map((account) => [account.waAccountId, account.status.code]));
 
   useEffect(() => {
     setSelectedMentions((current) => {
@@ -379,6 +381,7 @@ export function useWaWorkspace(session: Session | null) {
       qrCode?: string | null;
       disconnectReason?: string | null;
     }) => {
+      const previousStatusCode = accountStatusCodeRef.current.get(event.waAccountId) ?? null;
       setAccounts((current) => current.map((item) =>
         item.waAccountId === event.waAccountId
           ? {
@@ -419,7 +422,9 @@ export function useWaWorkspace(session: Session | null) {
         };
       });
 
-      if (event.status.code === "connected" && event.waAccountId === accountIdRef.current) {
+      const loginTaskResolved = Boolean(loginTaskRef.current?.waAccountId === event.waAccountId && event.status.code === "connected");
+      const transitionedToConnected = previousStatusCode !== "connected" && event.status.code === "connected";
+      if ((loginTaskResolved || transitionedToConnected) && event.waAccountId === accountIdRef.current) {
         void loadAccountsRef.current();
         void loadConversationsRef.current();
         void loadContactsRef.current();
