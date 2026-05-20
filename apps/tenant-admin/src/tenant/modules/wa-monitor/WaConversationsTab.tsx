@@ -67,78 +67,152 @@ function formatFileSize(bytes: number | null | undefined) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+type AttachmentItem = NonNullable<WaMonitorConversationDetail["messages"][number]["attachments"]>[number];
+
 function isImageAttachment(mimeType: string | null | undefined, attachmentType: string) {
-  return Boolean(mimeType?.startsWith("image/")) || attachmentType === "image";
+  return Boolean(mimeType?.startsWith("image/")) || attachmentType === "image" || attachmentType === "sticker";
+}
+
+function isVideoAttachment(mimeType: string | null | undefined, attachmentType: string) {
+  return Boolean(mimeType?.startsWith("video/")) || attachmentType === "video";
 }
 
 function isAudioAttachment(mimeType: string | null | undefined, attachmentType: string) {
   return Boolean(mimeType?.startsWith("audio/")) || attachmentType === "audio" || attachmentType === "ptt" || attachmentType === "voice";
 }
 
-function renderAttachment(
-  item: NonNullable<WaMonitorConversationDetail["messages"][number]["attachments"]>[number],
-  labels: { voiceMessage: string; fileAttachment: string }
-) {
-  const sourceUrl = item.previewUrl ?? item.storageUrl;
-  if (!sourceUrl) {
-    return (
-      <div style={{ padding: "8px 10px", background: "#f5f5f5", borderRadius: 12 }}>
-        <Typography.Text>{item.fileName ?? item.attachmentType}</Typography.Text>
-      </div>
-    );
-  }
+function renderAttachment(item: AttachmentItem, labels: { voiceMessage: string; fileAttachment: string }) {
+  const sourceUrl = item.storageUrl ?? item.previewUrl;
+  const previewUrl = item.previewUrl ?? item.storageUrl;
 
   if (isImageAttachment(item.mimeType, item.attachmentType)) {
+    const isSticker = item.attachmentType === "sticker";
     return (
-      <a href={sourceUrl} target="_blank" rel="noreferrer">
+      <a href={sourceUrl ?? "#"} target="_blank" rel="noreferrer" style={{ display: "inline-block" }}>
         <img
-          src={sourceUrl}
-          alt={item.fileName ?? "image"}
+          src={previewUrl ?? undefined}
+          alt={item.fileName ?? (isSticker ? "sticker" : "image")}
           style={{
             display: "block",
-            maxWidth: 320,
-            maxHeight: 320,
-            borderRadius: 12,
-            objectFit: "cover",
-            border: "1px solid #ece5dd"
+            maxWidth: isSticker ? 120 : 320,
+            maxHeight: isSticker ? 120 : 320,
+            borderRadius: isSticker ? 0 : 12,
+            objectFit: "contain",
+            background: isSticker ? "transparent" : undefined,
+            border: isSticker ? "none" : "1px solid #ece5dd"
           }}
         />
       </a>
     );
   }
 
-  if (isAudioAttachment(item.mimeType, item.attachmentType)) {
+  if (isVideoAttachment(item.mimeType, item.attachmentType)) {
+    if (sourceUrl) {
+      return (
+        <div style={{ maxWidth: 320 }}>
+          <video
+            controls
+            preload="metadata"
+            src={sourceUrl}
+            poster={item.previewUrl ?? undefined}
+            style={{ width: "100%", maxHeight: 240, borderRadius: 12, display: "block" }}
+          />
+          {item.fileName ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>{item.fileName}</Typography.Text>
+          ) : null}
+        </div>
+      );
+    }
+    // video without URL — show placeholder with thumbnail if available
     return (
-      <div style={{ minWidth: 260 }}>
-        <audio controls preload="none" src={sourceUrl} style={{ width: "100%" }} />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {item.fileName ?? labels.voiceMessage}
-        </Typography.Text>
+      <div style={{ position: "relative", display: "inline-block" }}>
+        {item.previewUrl ? (
+          <img
+            src={item.previewUrl}
+            alt="video thumbnail"
+            style={{ maxWidth: 280, maxHeight: 200, borderRadius: 12, display: "block", filter: "brightness(0.75)" }}
+          />
+        ) : (
+          <div style={{ width: 280, height: 160, background: "#1a1a1a", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Typography.Text style={{ color: "#fff", fontSize: 12 }}>🎬 视频</Typography.Text>
+          </div>
+        )}
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ color: "#fff", fontSize: 18, lineHeight: 1 }}>▶</span>
+          </div>
+        </div>
       </div>
     );
   }
 
+  if (isAudioAttachment(item.mimeType, item.attachmentType)) {
+    const isPtt = item.attachmentType === "ptt" || item.attachmentType === "voice";
+    if (sourceUrl) {
+      return (
+        <div style={{ minWidth: 220 }}>
+          <audio controls preload="none" src={sourceUrl} style={{ width: "100%", height: 36 }} />
+          {item.durationMs ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {isPtt ? "🎙 " : ""}{Math.round(item.durationMs / 1000)}s
+            </Typography.Text>
+          ) : (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {item.fileName ?? labels.voiceMessage}
+            </Typography.Text>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div style={{ padding: "8px 12px", background: "#f0f0f0", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 18 }}>🎵</span>
+        <Typography.Text style={{ fontSize: 13 }}>{item.durationMs ? `${Math.round(item.durationMs / 1000)}s` : labels.voiceMessage}</Typography.Text>
+      </div>
+    );
+  }
+
+  // Document / generic file
   return (
     <a
-      href={sourceUrl}
-      target="_blank"
+      href={sourceUrl ?? "#"}
+      target={sourceUrl ? "_blank" : undefined}
       rel="noreferrer"
-      style={{
-        display: "block",
-        padding: "10px 12px",
-        background: "#f5f5f5",
-        borderRadius: 12,
-        border: "1px solid #ece5dd",
-        color: "inherit"
-      }}
+      style={{ display: "block", padding: "10px 12px", background: "#f5f5f5", borderRadius: 12, border: "1px solid #ece5dd", color: "inherit", textDecoration: "none" }}
     >
       <Typography.Text strong style={{ display: "block" }}>
-        {item.fileName ?? labels.fileAttachment}
+        📎 {item.fileName ?? labels.fileAttachment}
       </Typography.Text>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {[item.mimeType, formatFileSize(item.fileSize)].filter(Boolean).join(" · ") || item.attachmentType}
       </Typography.Text>
     </a>
+  );
+}
+
+function renderQuotedPreview(preview: NonNullable<WaMonitorConversationDetail["messages"][number]["quotedMessagePreview"]>) {
+  const label = preview.senderDisplayName ?? "对方";
+  const body = preview.bodyText
+    ?? (preview.attachmentFileName ? `📎 ${preview.attachmentFileName}` : null)
+    ?? `（${preview.messageType}）`;
+  return (
+    <div
+      style={{
+        borderLeft: "3px solid #25D366",
+        paddingLeft: 8,
+        marginBottom: 6,
+        background: "rgba(0,0,0,0.04)",
+        borderRadius: "0 6px 6px 0",
+        padding: "4px 8px 4px 10px"
+      }}
+    >
+      <Typography.Text style={{ display: "block", fontSize: 12, color: "#25D366", fontWeight: 600 }}>
+        {label}
+      </Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }} ellipsis>
+        {body}
+      </Typography.Text>
+    </div>
   );
 }
 
@@ -563,46 +637,116 @@ export function WaConversationsTab() {
                       </Button>
                     </div>
                   ) : null}
-                  {detail.messages.map((item) => (
-                    <div key={item.waMessageId} style={bubbleStyle(item.direction)}>
-                      {item.direction === "inbound" ? (
-                        <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4, fontSize: 12 }}>
-                          {item.senderDisplayName ?? item.senderRole ?? "-"}
-                        </Typography.Text>
-                      ) : null}
-                      {item.attachments?.length ? (
-                        <Space direction="vertical" size={8} style={{ width: "100%", marginBottom: item.bodyText ? 8 : 6 }}>
-                          {item.attachments.map((attachment) => (
-                            <div key={attachment.attachmentId}>
-                              {renderAttachment(attachment, {
-                                voiceMessage: t("waConversations.detail.voiceMessage"),
-                                fileAttachment: t("waConversations.detail.fileAttachment")
-                              })}
-                            </div>
-                          ))}
-                        </Space>
-                      ) : null}
-                      {item.bodyText ? (
-                        <Typography.Paragraph style={{ marginBottom: 6, whiteSpace: "pre-wrap" }}>
-                          {item.bodyText}
-                        </Typography.Paragraph>
-                      ) : item.attachments?.length ? null : (
-                        <Typography.Paragraph style={{ marginBottom: 6, whiteSpace: "pre-wrap", color: "#8c8c8c" }}>
-                          {item.messageType === "text" ? t("waConversations.detail.emptyMessage") : `（${item.messageType}）`}
-                        </Typography.Paragraph>
-                      )}
-                      <Space size={8}>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {formatMonitorDate(item.providerTs ?? item.createdAt)}
-                        </Typography.Text>
-                        {item.direction === "outbound" && item.deliveryStatus ? (
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            {item.deliveryStatus}
+                  {detail.messages.map((item) => {
+                    // Pure reaction messages render as a floating emoji pill
+                    if (item.messageType === "reaction" && item.bodyText) {
+                      return (
+                        <div
+                          key={item.waMessageId}
+                          style={{ alignSelf: item.direction === "outbound" ? "flex-end" : "flex-start" }}
+                        >
+                          <span style={{
+                            display: "inline-block",
+                            fontSize: 22,
+                            padding: "2px 8px",
+                            background: "rgba(255,255,255,0.85)",
+                            borderRadius: 20,
+                            border: "1px solid #ece5dd",
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.08)"
+                          }}>
+                            {item.bodyText}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    const attachLabels = {
+                      voiceMessage: t("waConversations.detail.voiceMessage"),
+                      fileAttachment: t("waConversations.detail.fileAttachment")
+                    };
+
+                    return (
+                      <div key={item.waMessageId} style={bubbleStyle(item.direction)}>
+                        {/* Sender name — inbound group messages */}
+                        {item.direction === "inbound" && item.senderDisplayName ? (
+                          <Typography.Text style={{ display: "block", marginBottom: 4, fontSize: 12, fontWeight: 600, color: "#075E54" }}>
+                            {item.senderDisplayName}
                           </Typography.Text>
                         ) : null}
-                      </Space>
-                    </div>
-                  ))}
+
+                        {/* Revoked */}
+                        {item.revokedAt ? (
+                          <Typography.Text type="secondary" style={{ fontSize: 13, fontStyle: "italic" }}>
+                            🚫 此消息已被撤回
+                          </Typography.Text>
+                        ) : (
+                          <>
+                            {/* Quoted message block */}
+                            {item.quotedMessagePreview ? renderQuotedPreview(item.quotedMessagePreview) : null}
+
+                            {/* Attachments (images, video, audio, docs) */}
+                            {item.attachments?.length ? (
+                              <Space direction="vertical" size={8} style={{ width: "100%", marginBottom: item.bodyText ? 8 : 4 }}>
+                                {item.attachments.map((attachment) => (
+                                  <div key={attachment.attachmentId}>
+                                    {renderAttachment(attachment, attachLabels)}
+                                  </div>
+                                ))}
+                              </Space>
+                            ) : null}
+
+                            {/* Body text */}
+                            {item.bodyText ? (
+                              <Typography.Paragraph style={{ marginBottom: 4, whiteSpace: "pre-wrap" }}>
+                                {item.bodyText}
+                              </Typography.Paragraph>
+                            ) : item.attachments?.length ? null : (
+                              <Typography.Paragraph style={{ marginBottom: 4, fontStyle: "italic", color: "#8c8c8c", fontSize: 13 }}>
+                                {`（${item.messageType}）`}
+                              </Typography.Paragraph>
+                            )}
+                          </>
+                        )}
+
+                        {/* Emoji reactions on this message */}
+                        {item.reactions?.length ? (
+                          <Space size={4} wrap style={{ marginTop: 4 }}>
+                            {item.reactions.map((r) => (
+                              <span
+                                key={r.reactionId}
+                                title={r.actorJid ?? undefined}
+                                style={{
+                                  fontSize: 13,
+                                  padding: "1px 5px",
+                                  background: "rgba(255,255,255,0.85)",
+                                  borderRadius: 12,
+                                  border: "1px solid #e0d9d0",
+                                  cursor: "default"
+                                }}
+                              >
+                                {r.emoji}
+                              </span>
+                            ))}
+                          </Space>
+                        ) : null}
+
+                        {/* Footer */}
+                        <Space size={5} style={{ marginTop: 3 }}>
+                          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                            {formatMonitorDate(item.providerTs ?? item.createdAt)}
+                          </Typography.Text>
+                          {item.editedAt ? (
+                            <Typography.Text type="secondary" style={{ fontSize: 11 }}>已编辑</Typography.Text>
+                          ) : null}
+                          {item.direction === "outbound" && item.deliveryStatus && item.deliveryStatus !== "pending" ? (
+                            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                              {item.deliveryStatus === "read" ? "✓✓" : item.deliveryStatus === "delivered" ? "✓✓" : "✓"}
+                            </Typography.Text>
+                          ) : null}
+                        </Space>
+                      </div>
+                    );
+                  })}
                 </Space>
               </div>
             ) : (

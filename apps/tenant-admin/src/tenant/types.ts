@@ -582,6 +582,26 @@ export type WaMonitorMessageItem = {
   createdAt: string;
   providerTs: string | null;
   deliveryStatus: string | null;
+  revokedAt: string | null;
+  editedAt: string | null;
+  quotedMessageId: string | null;
+  quotedMessagePreview: {
+    waMessageId: string;
+    senderDisplayName: string | null;
+    bodyText: string | null;
+    messageType: string;
+    attachmentFileName: string | null;
+  } | null;
+  mentions: Array<{
+    jid: string;
+    displayName: string | null;
+    phoneE164: string | null;
+  }>;
+  reactions: Array<{
+    reactionId: string;
+    actorJid: string | null;
+    emoji: string;
+  }>;
   attachments?: Array<{
     attachmentId: string;
     attachmentType: string;
