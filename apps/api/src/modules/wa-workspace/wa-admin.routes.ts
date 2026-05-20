@@ -43,6 +43,18 @@ import {
   updateAdminWaMonitorJudgmentConfig
 } from "./wa-monitor.service.js";
 import { getWaRuntimeStatus } from "./wa-runtime.service.js";
+import {
+  bindJidToCustomer,
+  createWaCustomerContact,
+  getCustomerContactById,
+  getCustomerReportStats,
+  getGroupMembersWithBindings,
+  listBindingsForCustomer,
+  listWaCustomerContacts,
+  listWaTeamMembers,
+  unbindJid,
+  updateWaCustomerContact
+} from "./wa-customer.service.js";
 
 function parseReportQuery(req: { query: unknown }, tenantId: string) {
   const query = req.query as {
@@ -416,6 +428,145 @@ export async function waAdminRoutes(app: FastifyInstance) {
         membershipId: String(row.membership_id),
         waSeatEnabled: Boolean(row.wa_seat_enabled)
       };
+    });
+  });
+
+  // ─── Customer Contacts (管理端客户维度) ──────────────────────────────────────
+
+  // 团队成员列表（用于负责销售选择器）
+  app.get("/api/admin/wa/customer-contacts/team-members", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    return listWaTeamMembers(tenantId);
+  });
+
+  // 列出客户档案
+  app.get("/api/admin/wa/customer-contacts", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const query = req.query as { search?: string; status?: string; page?: string; pageSize?: string };
+    return listWaCustomerContacts({
+      tenantId,
+      search: query.search ?? null,
+      status: query.status ?? "active",
+      page: query.page ? Number(query.page) : 1,
+      pageSize: query.pageSize ? Number(query.pageSize) : 50
+    });
+  });
+
+  // 创建客户档案
+  app.post("/api/admin/wa/customer-contacts", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const auth = req.user as { membershipId?: string } | undefined;
+    const body = req.body as { displayName?: string; remarks?: string | null; ownerMembershipId?: string | null };
+    if (!body.displayName?.trim()) throw app.httpErrors.badRequest("displayName is required");
+    return createWaCustomerContact({
+      tenantId,
+      membershipId: auth?.membershipId ?? "",
+      displayName: body.displayName.trim(),
+      remarks: body.remarks ?? null,
+      ownerMembershipId: body.ownerMembershipId ?? null
+    });
+  });
+
+  // 更新客户档案
+  app.patch("/api/admin/wa/customer-contacts/:waCustomerContactId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waCustomerContactId } = req.params as { waCustomerContactId: string };
+    const body = req.body as {
+      displayName?: string;
+      remarks?: string | null;
+      ownerMembershipId?: string | null;
+      customerStatus?: string;
+    };
+    const updated = await updateWaCustomerContact({ tenantId, waCustomerContactId, ...body });
+    if (!updated) throw app.httpErrors.notFound("Customer contact not found");
+    return updated;
+  });
+
+  // 归档/删除客户档案
+  app.delete("/api/admin/wa/customer-contacts/:waCustomerContactId", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waCustomerContactId } = req.params as { waCustomerContactId: string };
+    const updated = await updateWaCustomerContact({ tenantId, waCustomerContactId, customerStatus: "archived" });
+    if (!updated) throw app.httpErrors.notFound("Customer contact not found");
+    return { archived: true };
+  });
+
+  // 获取某客户的 JID 绑定列表
+  app.get("/api/admin/wa/customer-contacts/:waCustomerContactId/bindings", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waCustomerContactId } = req.params as { waCustomerContactId: string };
+    const customer = await getCustomerContactById({ tenantId, waCustomerContactId });
+    if (!customer) throw app.httpErrors.notFound("Customer contact not found");
+    return listBindingsForCustomer({ tenantId, waCustomerContactId });
+  });
+
+  // 绑定 JID → 客户（可顺带新建客户档案）
+  app.post("/api/admin/wa/customer-contacts/bind", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const auth = req.user as { membershipId?: string } | undefined;
+    const body = req.body as {
+      participantJid?: string;
+      waCustomerContactId?: string | null;
+      customerName?: string | null;
+      ownerMembershipId?: string | null;
+      bindingRemarks?: string | null;
+      sourceConversationId?: string | null;
+    };
+    if (!body.participantJid?.trim()) throw app.httpErrors.badRequest("participantJid is required");
+    if (!body.waCustomerContactId && !body.customerName?.trim()) {
+      throw app.httpErrors.badRequest("waCustomerContactId or customerName is required");
+    }
+    return bindJidToCustomer({
+      tenantId,
+      membershipId: auth?.membershipId ?? "",
+      participantJid: body.participantJid.trim(),
+      waCustomerContactId: body.waCustomerContactId ?? null,
+      customerName: body.customerName ?? null,
+      ownerMembershipId: body.ownerMembershipId ?? null,
+      bindingRemarks: body.bindingRemarks ?? null,
+      sourceConversationId: body.sourceConversationId ?? null
+    });
+  });
+
+  // 解绑 JID
+  app.delete("/api/admin/wa/customer-contacts/bindings/:participantJid", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { participantJid } = req.params as { participantJid: string };
+    return unbindJid({ tenantId, participantJid: decodeURIComponent(participantJid) });
+  });
+
+  // 群成员列表（含客户绑定信息，用于 WaConversationsTab 标注操作）
+  app.get("/api/admin/wa/monitor/conversations/:waConversationId/members-with-bindings", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const { waConversationId } = req.params as { waConversationId: string };
+    return withTenantTransaction(tenantId, async (trx) =>
+      getGroupMembersWithBindings(trx, { tenantId, waConversationId })
+    );
+  });
+
+  // 客户维度报表（用于 WaMonitorTab "客户" tab）
+  app.get("/api/admin/wa/reports/customers", async (req) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
+    const query = req.query as { waAccountId?: string; ownerMembershipId?: string; days?: string };
+    const days = Math.max(1, Math.min(Number(query.days ?? "30"), 366));
+    const endAt = new Date();
+    const startAt = new Date(endAt.getTime() - days * 24 * 60 * 60 * 1000);
+    return getCustomerReportStats({
+      tenantId,
+      waAccountId: query.waAccountId ?? null,
+      ownerMembershipId: query.ownerMembershipId ?? null,
+      startAt,
+      endAt
     });
   });
 }

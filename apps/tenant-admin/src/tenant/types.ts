@@ -1639,3 +1639,61 @@ export type MemoryEvalDatasetRowInput = {
   goldStaleMemories?: Array<{ type: string; title?: string; summary: string; detail?: string }>;
   notes?: string;
 };
+
+// ─── WA 客户维度 ─────────────────────────────────────────────────────────────
+
+export type WaCustomerContact = {
+  waCustomerContactId: string;
+  displayName: string;
+  remarks: string | null;
+  externalCustomerId: string | null;
+  customerStatus: string;
+  ownerMembershipId: string | null;
+  ownerName: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WaCustomerBinding = {
+  bindingId: string;
+  waCustomerContactId: string;
+  participantJid: string;
+  bindingRemarks: string | null;
+  sourceConversationId: string | null;
+  createdAt: string;
+};
+
+export type WaCustomerStats = WaCustomerContact & {
+  totalMessages: number;
+  requiresReplyCount: number;
+  repliedCount: number;
+  pendingCount: number;
+  replyRate: number | null;
+  avgReplyDurationSec: number | null;
+  lastMessageAt: string | null;
+  conversations: Array<{
+    waConversationId: string;
+    subject: string | null;
+    messageCount: number;
+  }>;
+};
+
+export type WaMemberWithBinding = {
+  memberRowId: string;
+  participantJid: string;
+  displayName: string | null;
+  phoneE164: string | null;
+  isAdmin: boolean;
+  customerContactId: string | null;
+  customerName: string | null;
+  ownerMembershipId: string | null;
+  ownerName: string | null;
+  bindingRemarks: string | null;
+};
+
+export type WaTeamMember = {
+  membershipId: string;
+  displayName: string | null;
+  role: string;
+};
+

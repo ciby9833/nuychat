@@ -75,7 +75,12 @@ import type {
   WaMonitorUnrepliedReportRow,
   PagedResponse,
   WaReplyPoolItem,
-  WaRuntimeStatus
+  WaRuntimeStatus,
+  WaCustomerContact,
+  WaCustomerBinding,
+  WaCustomerStats,
+  WaMemberWithBinding,
+  WaTeamMember
 } from "./types";
 
 const SESSION_KEY = "nuychat.authSession";
@@ -1444,4 +1449,94 @@ export function applySegment(segmentId: string, input?: { applyTagId?: string })
     method: "POST",
     body: JSON.stringify(input ?? {})
   });
+}
+
+// ─── WA 客户维度 ─────────────────────────────────────────────────────────────
+
+export function listAdminWaTeamMembers() {
+  return api<WaTeamMember[]>("/api/admin/wa/customer-contacts/team-members");
+}
+
+export function listAdminWaCustomerContacts(input?: {
+  search?: string | null;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const params = new URLSearchParams();
+  if (input?.search) params.set("search", input.search);
+  if (input?.status) params.set("status", input.status);
+  if (input?.page) params.set("page", String(input.page));
+  if (input?.pageSize) params.set("pageSize", String(input.pageSize));
+  const query = params.toString();
+  return api<{ rows: WaCustomerContact[]; total: number }>(
+    `/api/admin/wa/customer-contacts${query ? `?${query}` : ""}`
+  );
+}
+
+export function createAdminWaCustomerContact(input: {
+  displayName: string;
+  remarks?: string | null;
+  ownerMembershipId?: string | null;
+}) {
+  return api<WaCustomerContact>("/api/admin/wa/customer-contacts", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateAdminWaCustomerContact(
+  waCustomerContactId: string,
+  input: { displayName?: string; remarks?: string | null; ownerMembershipId?: string | null; customerStatus?: string }
+) {
+  return api<WaCustomerContact>(`/api/admin/wa/customer-contacts/${waCustomerContactId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function archiveAdminWaCustomerContact(waCustomerContactId: string) {
+  return api<{ archived: boolean }>(`/api/admin/wa/customer-contacts/${waCustomerContactId}`, {
+    method: "DELETE"
+  });
+}
+
+export function bindAdminJidToCustomer(input: {
+  participantJid: string;
+  waCustomerContactId?: string | null;
+  customerName?: string | null;
+  ownerMembershipId?: string | null;
+  bindingRemarks?: string | null;
+  sourceConversationId?: string | null;
+}) {
+  return api<{ customer: WaCustomerContact; binding: WaCustomerBinding }>(
+    "/api/admin/wa/customer-contacts/bind",
+    { method: "POST", body: JSON.stringify(input) }
+  );
+}
+
+export function unbindAdminJidFromCustomer(participantJid: string) {
+  return api<{ deleted: boolean }>(
+    `/api/admin/wa/customer-contacts/bindings/${encodeURIComponent(participantJid)}`,
+    { method: "DELETE" }
+  );
+}
+
+export function listAdminWaMembersWithBindings(waConversationId: string) {
+  return api<WaMemberWithBinding[]>(
+    `/api/admin/wa/monitor/conversations/${waConversationId}/members-with-bindings`
+  );
+}
+
+export function getAdminWaCustomerReport(input?: {
+  waAccountId?: string | null;
+  ownerMembershipId?: string | null;
+  days?: number;
+}) {
+  const params = new URLSearchParams();
+  if (input?.waAccountId) params.set("waAccountId", input.waAccountId);
+  if (input?.ownerMembershipId) params.set("ownerMembershipId", input.ownerMembershipId);
+  if (input?.days) params.set("days", String(input.days));
+  const query = params.toString();
+  return api<WaCustomerStats[]>(`/api/admin/wa/reports/customers${query ? `?${query}` : ""}`);
 }

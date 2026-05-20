@@ -28,9 +28,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  getAdminWaCustomerReport,
   getAdminWaRuntimeStatus,
   getWaMonitorJudgmentConfig,
   getWaMonitorDashboard,
+  listAdminWaTeamMembers,
   listMembers,
   listWaMonitorAccountReport,
   listWaMonitorMessageDetailReport,
@@ -42,6 +44,7 @@ import {
 import type {
   MemberListItem,
   PagedResponse,
+  WaCustomerStats,
   WaMonitorAccountReportRow,
   WaMonitorDashboard,
   WaMonitorJudgmentConfig,
@@ -50,13 +53,14 @@ import type {
   WaMonitorReportQuery,
   WaMonitorTimeReportRow,
   WaMonitorUnrepliedReportRow,
-  WaRuntimeStatus
+  WaRuntimeStatus,
+  WaTeamMember
 } from "../../types";
 import { WaAccountsPane } from "../agents/components/WaAccountsPane";
 
 const { RangePicker } = DatePicker;
 
-type ReportTab = "health" | "accounts" | "members" | "time" | "messages" | "unreplied";
+type ReportTab = "health" | "accounts" | "members" | "time" | "messages" | "unreplied" | "customers";
 type AnyReportRow =
   | WaMonitorAccountReportRow
   | WaMonitorMessageDetailReportRow
@@ -145,6 +149,10 @@ export function WaMonitorTab() {
   const [unrepliedReport, setUnrepliedReport] = useState<PagedResponse<WaMonitorUnrepliedReportRow> | null>(null);
   const [alertsExpanded, setAlertsExpanded] = useState(false);
   const [expandedMessageRowKeys, setExpandedMessageRowKeys] = useState<string[]>([]);
+  const [customerReport, setCustomerReport] = useState<WaCustomerStats[] | null>(null);
+  const [customerTeamMembers, setCustomerTeamMembers] = useState<WaTeamMember[]>([]);
+  const [customerOwnerFilter, setCustomerOwnerFilter] = useState<string | null>(null);
+  const [customerDays, setCustomerDays] = useState<number>(30);
 
   const loadBase = useCallback(async () => {
     setLoading(true);
@@ -189,12 +197,24 @@ export function WaMonitorTab() {
       if (activeTab === "time") setTimeReport(await listWaMonitorTimeReport(reportQuery));
       if (activeTab === "messages") setMessageReport(await listWaMonitorMessageDetailReport(reportQuery));
       if (activeTab === "unreplied") setUnrepliedReport(await listWaMonitorUnrepliedReport(reportQuery));
+      if (activeTab === "customers") {
+        const [rows, team] = await Promise.all([
+          getAdminWaCustomerReport({
+            waAccountId: waAccountId ?? undefined,
+            ownerMembershipId: customerOwnerFilter ?? undefined,
+            days: customerDays
+          }),
+          customerTeamMembers.length === 0 ? listAdminWaTeamMembers() : Promise.resolve(customerTeamMembers)
+        ]);
+        setCustomerReport(rows);
+        if (customerTeamMembers.length === 0) setCustomerTeamMembers(team);
+      }
     } catch (error) {
       void message.error((error as Error).message);
     } finally {
       setReportLoading(false);
     }
-  }, [activeTab, reportQuery]);
+  }, [activeTab, customerDays, customerOwnerFilter, customerTeamMembers, reportQuery, waAccountId]);
 
   useEffect(() => {
     void loadReport();
@@ -352,7 +372,7 @@ export function WaMonitorTab() {
   }, [activeTab, reportQuery]);
 
   const exportCurrentReport = useCallback(async () => {
-    if (activeTab === "health") return;
+    if (activeTab === "health" || activeTab === "customers") return;
     setExporting(true);
     try {
       const rows = await fetchAllRows();
@@ -448,7 +468,7 @@ export function WaMonitorTab() {
     }
   }, [accountColumns, activeTab, fetchAllRows, granularity, memberColumns, messageColumns, t, timeColumns, unrepliedColumns]);
 
-  const reportToolbar = activeTab === "health" ? null : (
+  const reportToolbar = activeTab === "health" || activeTab === "customers" ? null : (
     <Card>
       <Space wrap size={12}>
         <RangePicker
@@ -748,6 +768,160 @@ export function WaMonitorTab() {
                     onChange={handleTableChange}
                   />
                 </Card>
+              </Space>
+            )
+          },
+          {
+            key: "customers",
+            label: "客户维度",
+            children: (
+              <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                {/* 客户报表筛选栏 */}
+                <Card>
+                  <Space wrap size={12}>
+                    <Select
+                      allowClear
+                      showSearch
+                      placeholder="WA 账号"
+                      options={accountOptions}
+                      value={waAccountId ?? undefined}
+                      onChange={(value) => setWaAccountId(value ?? null)}
+                      style={{ width: 260 }}
+                    />
+                    <Select
+                      allowClear
+                      showSearch
+                      placeholder="负责销售"
+                      options={customerTeamMembers.map((m) => ({
+                        label: m.displayName ?? m.role,
+                        value: m.membershipId
+                      }))}
+                      value={customerOwnerFilter ?? undefined}
+                      onChange={(value) => setCustomerOwnerFilter(value ?? null)}
+                      style={{ width: 200 }}
+                    />
+                    <Select
+                      value={customerDays}
+                      onChange={setCustomerDays}
+                      style={{ width: 120 }}
+                      options={[
+                        { label: "近 7 天", value: 7 },
+                        { label: "近 30 天", value: 30 },
+                        { label: "近 90 天", value: 90 }
+                      ]}
+                    />
+                    <Button icon={<ReloadOutlined />} onClick={() => void loadReport()} loading={reportLoading}>
+                      {t("waMonitor.refresh")}
+                    </Button>
+                  </Space>
+                </Card>
+
+                <Table<WaCustomerStats>
+                  rowKey="waCustomerContactId"
+                  loading={reportLoading}
+                  dataSource={customerReport ?? []}
+                  pagination={false}
+                  columns={[
+                    {
+                      title: "客户",
+                      dataIndex: "displayName",
+                      width: 160,
+                      render: (name: string, row) => (
+                        <Space direction="vertical" size={0}>
+                          <Typography.Text strong>{name}</Typography.Text>
+                          {row.remarks ? (
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              {row.remarks}
+                            </Typography.Text>
+                          ) : null}
+                        </Space>
+                      )
+                    },
+                    {
+                      title: "负责销售",
+                      dataIndex: "ownerName",
+                      width: 120,
+                      render: (value: string | null) => value ?? <Typography.Text type="secondary">-</Typography.Text>
+                    },
+                    {
+                      title: "消息数",
+                      dataIndex: "totalMessages",
+                      width: 80,
+                      sorter: (a, b) => a.totalMessages - b.totalMessages
+                    },
+                    {
+                      title: "需回 / 已回",
+                      width: 110,
+                      render: (_, row) => (
+                        <Space size={4}>
+                          <Tag color="orange">{row.requiresReplyCount}</Tag>
+                          <Typography.Text type="secondary">/</Typography.Text>
+                          <Tag color="green">{row.repliedCount}</Tag>
+                        </Space>
+                      )
+                    },
+                    {
+                      title: "回复率",
+                      dataIndex: "replyRate",
+                      width: 90,
+                      sorter: (a, b) => (a.replyRate ?? 0) - (b.replyRate ?? 0),
+                      render: (value: number | null) =>
+                        value == null ? "-" : `${Math.round(value * 100)}%`
+                    },
+                    {
+                      title: "均响应",
+                      dataIndex: "avgReplyDurationSec",
+                      width: 90,
+                      sorter: (a, b) => (a.avgReplyDurationSec ?? 0) - (b.avgReplyDurationSec ?? 0),
+                      render: (value: number | null) => formatDuration(value)
+                    },
+                    {
+                      title: "最近发言",
+                      dataIndex: "lastMessageAt",
+                      width: 160,
+                      sorter: (a, b) =>
+                        (a.lastMessageAt ?? "").localeCompare(b.lastMessageAt ?? ""),
+                      render: (value: string | null) =>
+                        value ? dayjs(value).format("MM-DD HH:mm") : "-"
+                    },
+                    {
+                      title: "状态",
+                      width: 100,
+                      render: (_, row) => {
+                        if (row.pendingCount === 0) {
+                          return <Tag color="green">无待回复</Tag>;
+                        }
+                        const hoursAgo = row.lastMessageAt
+                          ? (Date.now() - new Date(row.lastMessageAt).getTime()) / 3600000
+                          : 0;
+                        return hoursAgo > 24
+                          ? <Tag color="red">逾期 {row.pendingCount} 条</Tag>
+                          : <Tag color="gold">待回 {row.pendingCount} 条</Tag>;
+                      }
+                    },
+                    {
+                      title: "关联群组",
+                      width: 200,
+                      render: (_, row) =>
+                        row.conversations.length === 0 ? (
+                          <Typography.Text type="secondary">-</Typography.Text>
+                        ) : (
+                          <Space direction="vertical" size={2}>
+                            {row.conversations.slice(0, 3).map((c) => (
+                              <Typography.Text key={c.waConversationId} style={{ fontSize: 12 }} ellipsis>
+                                {c.subject ?? c.waConversationId} ({c.messageCount})
+                              </Typography.Text>
+                            ))}
+                            {row.conversations.length > 3 ? (
+                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                +{row.conversations.length - 3} 个群
+                              </Typography.Text>
+                            ) : null}
+                          </Space>
+                        )
+                    }
+                  ]}
+                />
               </Space>
             )
           }

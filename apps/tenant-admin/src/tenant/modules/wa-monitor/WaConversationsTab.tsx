@@ -1,17 +1,29 @@
 // 功能菜单
-import { ReloadOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Empty, Input, List, Row, Segmented, Select, Space, Switch, Tag, Typography, message } from "antd";
+import { ReloadOutlined, UserOutlined } from "@ant-design/icons";
+import { AutoComplete, Button, Card, Col, Empty, Input, List, Popconfirm, Row, Segmented, Select, Space, Switch, Tag, Typography, message } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  bindAdminJidToCustomer,
   getWaMonitorConversationDetail,
   getWaMonitorDashboard,
+  listAdminWaCustomerContacts,
+  listAdminWaMembersWithBindings,
+  listAdminWaTeamMembers,
   listWaMonitorConversations,
   loadMoreWaMonitorMessages,
-  setWaMonitorTarget
+  setWaMonitorTarget,
+  unbindAdminJidFromCustomer
 } from "../../api";
-import type { WaMonitorConversationDetail, WaMonitorConversationItem, WaMonitorDashboard } from "../../types";
+import type {
+  WaCustomerContact,
+  WaMemberWithBinding,
+  WaMonitorConversationDetail,
+  WaMonitorConversationItem,
+  WaMonitorDashboard,
+  WaTeamMember
+} from "../../types";
 
 type ConversationFilter = "all" | "group" | "direct";
 
@@ -146,6 +158,100 @@ export function WaConversationsTab() {
   const [targetUpdatingId, setTargetUpdatingId] = useState<string | null>(null);
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
   const keepScrollOffsetRef = useRef<number | null>(null);
+
+  // 成员客户绑定
+  const [membersWithBindings, setMembersWithBindings] = useState<WaMemberWithBinding[]>([]);
+  const [teamMembers, setTeamMembers] = useState<WaTeamMember[]>([]);
+  const [customerList, setCustomerList] = useState<WaCustomerContact[]>([]);
+  const [bindingJid, setBindingJid] = useState<string | null>(null);
+  const [bindingCustomerSearch, setBindingCustomerSearch] = useState("");
+  const [bindingCustomerId, setBindingCustomerId] = useState<string | null>(null);
+  const [bindingOwnerMembershipId, setBindingOwnerMembershipId] = useState<string>("");
+  const [bindingSaving, setBindingSaving] = useState(false);
+
+  // 当群聊会话选中时加载成员绑定数据
+  useEffect(() => {
+    const convId = detail?.conversation.waConversationId;
+    const convType = detail?.conversation.conversationType;
+    if (!convId || convType !== "group") {
+      setMembersWithBindings([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [nextMembers, nextTeam, nextCustomers] = await Promise.all([
+          listAdminWaMembersWithBindings(convId),
+          listAdminWaTeamMembers(),
+          listAdminWaCustomerContacts({ pageSize: 500 }).then((r) => r.rows)
+        ]);
+        if (cancelled) return;
+        setMembersWithBindings(nextMembers);
+        setTeamMembers(nextTeam);
+        setCustomerList(nextCustomers);
+      } catch (error) {
+        if (!cancelled) void message.error((error as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.conversation.waConversationId, detail?.conversation.conversationType]);
+
+  const handleBindMember = useCallback(async (participantJid: string) => {
+    if (!bindingCustomerSearch.trim()) return;
+    setBindingSaving(true);
+    try {
+      const result = await bindAdminJidToCustomer({
+        participantJid,
+        waCustomerContactId: bindingCustomerId ?? null,
+        customerName: bindingCustomerId ? null : bindingCustomerSearch.trim(),
+        ownerMembershipId: bindingOwnerMembershipId || null,
+        sourceConversationId: selectedConversationId
+      });
+      setMembersWithBindings((current) =>
+        current.map((m) =>
+          m.participantJid === participantJid
+            ? {
+                ...m,
+                customerContactId: result.customer.waCustomerContactId,
+                customerName: result.customer.displayName,
+                ownerMembershipId: result.customer.ownerMembershipId,
+                ownerName: result.customer.ownerName
+              }
+            : m
+        )
+      );
+      if (!customerList.some((c) => c.waCustomerContactId === result.customer.waCustomerContactId)) {
+        setCustomerList((prev) => [...prev, result.customer]);
+      }
+      setBindingJid(null);
+      setBindingCustomerSearch("");
+      setBindingCustomerId(null);
+      void message.success("绑定成功");
+    } catch (error) {
+      void message.error((error as Error).message);
+    } finally {
+      setBindingSaving(false);
+    }
+  }, [bindingCustomerId, bindingCustomerSearch, bindingOwnerMembershipId, customerList, selectedConversationId]);
+
+  const handleUnbindMember = useCallback(async (participantJid: string) => {
+    try {
+      await unbindAdminJidFromCustomer(participantJid);
+      setMembersWithBindings((current) =>
+        current.map((m) =>
+          m.participantJid === participantJid
+            ? { ...m, customerContactId: null, customerName: null, ownerMembershipId: null, ownerName: null, bindingRemarks: null }
+            : m
+        )
+      );
+      void message.success("已解除绑定");
+    } catch (error) {
+      void message.error((error as Error).message);
+    }
+  }, []);
 
   const loadBase = useCallback(async () => {
     setLoading(true);
@@ -308,61 +414,57 @@ export function WaConversationsTab() {
         </Col>
       </Row>
 
-      <Row gutter={16} align="stretch">
-        <Col span={9}>
+      <Row gutter={12} align="stretch" style={{ flexWrap: "nowrap" }}>
+        {/* ── 左栏：会话列表 ── */}
+        <Col flex="320px" style={{ minWidth: 0 }}>
           <Card
+            style={{ height: "100%" }}
             title={t("waConversations.listTitle")}
             extra={selectedAccount ? (
-              <Space size={8}>
+              <Space size={6}>
                 <Tag color={mapToneToStatusColor(selectedAccount.status.tone)}>{selectedAccount.status.label}</Tag>
-                <Typography.Text type="secondary">{selectedAccount.displayName}</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>{selectedAccount.displayName}</Typography.Text>
               </Space>
             ) : "-"}
           >
-            <Space direction="vertical" size={12} style={{ width: "100%" }}>
-              <div>
-                <Typography.Text type="secondary">{t("waConversations.accountSelector.label")}</Typography.Text>
-                <Select
-                  value={selectedAccountId ?? undefined}
-                  onChange={(value) => setSelectedAccountId(value)}
-                  options={(dashboard?.accounts ?? []).map((item) => ({
-                    label: `${item.displayName} (${item.phoneE164 ?? item.instanceKey})`,
-                    value: item.waAccountId
-                  }))}
-                  placeholder={t("waConversations.accountSelector.placeholder")}
-                  style={{ width: "100%", marginTop: 6 }}
-                />
-              </div>
+            <Space direction="vertical" size={10} style={{ width: "100%" }}>
+              <Select
+                value={selectedAccountId ?? undefined}
+                onChange={(value) => setSelectedAccountId(value)}
+                options={(dashboard?.accounts ?? []).map((item) => ({
+                  label: `${item.displayName} (${item.phoneE164 ?? item.instanceKey})`,
+                  value: item.waAccountId
+                }))}
+                placeholder={t("waConversations.accountSelector.placeholder")}
+                style={{ width: "100%" }}
+              />
 
-              <Space wrap size={8} style={{ width: "100%", justifyContent: "space-between" }}>
-                <Input.Search
-                  placeholder={t("waConversations.searchPlaceholder")}
-                  allowClear
-                  value={conversationSearch}
-                  onChange={(event) => setConversationSearch(event.target.value)}
-                  style={{ maxWidth: 320 }}
-                />
-                <Segmented<ConversationFilter>
-                  value={conversationFilter}
-                  onChange={(value) => setConversationFilter(value)}
-                  options={[
-                    { label: t("waConversations.filter.all"), value: "all" },
-                    { label: t("waConversations.filter.group"), value: "group" },
-                    { label: t("waConversations.filter.direct"), value: "direct" }
-                  ]}
-                />
-              </Space>
+              <Input.Search
+                placeholder={t("waConversations.searchPlaceholder")}
+                allowClear
+                value={conversationSearch}
+                onChange={(event) => setConversationSearch(event.target.value)}
+              />
+
+              <Segmented<ConversationFilter>
+                value={conversationFilter}
+                onChange={(value) => setConversationFilter(value)}
+                block
+                options={[
+                  { label: t("waConversations.filter.all"), value: "all" },
+                  { label: t("waConversations.filter.group"), value: "group" },
+                  { label: t("waConversations.filter.direct"), value: "direct" }
+                ]}
+              />
 
               {selectedAccount ? (
-                <Space wrap size={8}>
-                  <Tag>{t("waConversations.accountMeta.owner")}: {selectedAccount.primaryOwnerName ?? t("waConversations.accountMeta.unset")}</Tag>
-                  <Tag>{t("waConversations.accountMeta.members")}: {selectedAccount.memberCount}</Tag>
-                  <Tag>{t("waConversations.accountMeta.unread")}: {selectedAccount.unreadMessageCount}</Tag>
-                  <Tag>{t("waConversations.accountMeta.conversations")}: {selectedAccount.conversationCount}</Tag>
+                <Space wrap size={4}>
+                  <Tag style={{ fontSize: 11 }}>{t("waConversations.accountMeta.members")}: {selectedAccount.memberCount}</Tag>
+                  <Tag style={{ fontSize: 11 }}>{t("waConversations.accountMeta.unread")}: {selectedAccount.unreadMessageCount}</Tag>
                 </Space>
               ) : null}
 
-              <div style={{ maxHeight: 780, overflowY: "auto", border: "1px solid #f0f0f0", borderRadius: 12 }}>
+              <div style={{ height: 720, overflowY: "auto", border: "1px solid #f0f0f0", borderRadius: 10, marginTop: 2 }}>
                 <List
                   loading={conversationLoading}
                   dataSource={conversations}
@@ -371,20 +473,24 @@ export function WaConversationsTab() {
                     <List.Item
                       onClick={() => setSelectedConversationId(row.waConversationId)}
                       style={{
-                        padding: "12px 14px",
+                        padding: "10px 12px",
                         cursor: "pointer",
                         background: row.waConversationId === selectedConversationId ? "#e6f4ff" : "#fff",
                         borderBottom: "1px solid #f5f5f5"
                       }}
                     >
-                      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                      <Space direction="vertical" size={3} style={{ width: "100%" }}>
                         <Space style={{ width: "100%", justifyContent: "space-between" }} align="start">
-                          <Space direction="vertical" size={0}>
-                            <Typography.Text strong>{row.displayName}</Typography.Text>
-                            <Typography.Text type="secondary">{row.contactPhoneE164 ?? row.chatJid}</Typography.Text>
+                          <Space direction="vertical" size={0} style={{ flex: 1, minWidth: 0 }}>
+                            <Typography.Text strong ellipsis>{row.displayName}</Typography.Text>
+                            <Typography.Text type="secondary" style={{ fontSize: 11 }} ellipsis>
+                              {row.contactPhoneE164 ?? row.chatJid}
+                            </Typography.Text>
                           </Space>
-                          <Space direction="vertical" size={4} align="end">
-                            <Tag>{row.conversationType === "group" ? t("waConversations.filter.group") : t("waConversations.filter.direct")}</Tag>
+                          <Space direction="vertical" size={3} align="end" style={{ flexShrink: 0 }}>
+                            <Tag style={{ fontSize: 11, margin: 0 }}>
+                              {row.conversationType === "group" ? t("waConversations.filter.group") : t("waConversations.filter.direct")}
+                            </Tag>
                             <Switch
                               size="small"
                               checked={Boolean(row.monitorEnabled)}
@@ -396,18 +502,15 @@ export function WaConversationsTab() {
                                 void toggleMonitorTarget(row, checked);
                               }}
                             />
-                            {row.unreadCount > 0 ? <Tag color="blue">{row.unreadCount}</Tag> : null}
+                            {row.unreadCount > 0 ? <Tag color="blue" style={{ margin: 0 }}>{row.unreadCount}</Tag> : null}
                           </Space>
                         </Space>
-                        <Typography.Text type="secondary" ellipsis>{row.lastMessagePreview || t("waConversations.list.noMessages")}</Typography.Text>
-                        <Space size={8}>
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            {row.currentReplierName ?? t("waConversations.list.unassigned")}
-                          </Typography.Text>
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            {row.lastMessageAt ? formatMonitorDate(row.lastMessageAt) : "-"}
-                          </Typography.Text>
-                        </Space>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }} ellipsis>
+                          {row.lastMessagePreview || t("waConversations.list.noMessages")}
+                        </Typography.Text>
+                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                          {row.lastMessageAt ? formatMonitorDate(row.lastMessageAt) : "-"}
+                        </Typography.Text>
                       </Space>
                     </List.Item>
                   )}
@@ -416,82 +519,284 @@ export function WaConversationsTab() {
             </Space>
           </Card>
         </Col>
-        <Col span={15}>
-          <Card title={t("waConversations.messageTitle")} extra={detail?.conversation.displayName ?? t("waConversations.detail.selectConversation")}>
+
+        {/* ── 中栏：消息浏览 ── */}
+        <Col flex="1" style={{ minWidth: 0 }}>
+          <Card
+            style={{ height: "100%" }}
+            title={t("waConversations.messageTitle")}
+            extra={
+              detail ? (
+                <Space size={6} wrap>
+                  <Tag style={{ margin: 0 }}>
+                    {detail.conversation.conversationType === "group" ? t("waConversations.filter.group") : t("waConversations.filter.direct")}
+                  </Tag>
+                  <Tag style={{ margin: 0 }}>{t("waConversations.detail.unread", { count: detail.conversation.unreadCount })}</Tag>
+                  <Tag color={detail.conversation.monitorEnabled ? "green" : "default"} style={{ margin: 0 }}>
+                    {detail.conversation.monitorEnabled ? t("waConversations.monitor.enabledTag") : t("waConversations.monitor.disabledTag")}
+                  </Tag>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {detail.conversation.displayName}
+                  </Typography.Text>
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">{t("waConversations.detail.selectConversation")}</Typography.Text>
+              )
+            }
+          >
             {!selectedConversationId ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("waConversations.detail.clickToLoad")} />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("waConversations.detail.clickToLoad")} style={{ padding: "60px 0" }} />
             ) : detailLoading ? (
-              <Space direction="vertical" size={8} style={{ width: "100%", padding: 12 }}>
+              <Space direction="vertical" size={8} style={{ width: "100%", padding: 24 }}>
                 <Typography.Text type="secondary">{t("waConversations.detail.loading")}</Typography.Text>
               </Space>
             ) : detail ? (
-              <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                <Space wrap size={8}>
-                  <Tag>{detail.conversation.conversationType === "group" ? t("waConversations.filter.group") : t("waConversations.filter.direct")}</Tag>
-                  <Tag>{t("waConversations.detail.members", { count: detail.members.length })}</Tag>
-                  <Tag>{t("waConversations.detail.unread", { count: detail.conversation.unreadCount })}</Tag>
-                  <Tag color={detail.conversation.monitorEnabled ? "green" : "default"}>
-                    {detail.conversation.monitorEnabled ? t("waConversations.monitor.enabledTag") : t("waConversations.monitor.disabledTag")}
-                  </Tag>
-                </Space>
-
-                <div
-                  ref={messageViewportRef}
-                  style={{ height: 780, overflowY: "auto", padding: 12, background: "#efeae2", borderRadius: 12, border: "1px solid #e5ddd5" }}
-                >
-                  <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                    {detail.hasMore ? (
-                      <div style={{ textAlign: "center" }}>
-                        <Button onClick={() => void loadMoreMessages()} loading={loadingMoreMessages}>
-                          {t("waConversations.detail.loadMore")}
-                        </Button>
-                      </div>
-                    ) : null}
-                    {detail.messages.map((item) => (
-                      <div key={item.waMessageId} style={bubbleStyle(item.direction)}>
-                        {item.direction === "inbound" ? (
-                          <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4, fontSize: 12 }}>
-                            {item.senderDisplayName ?? item.senderRole ?? "-"}
-                          </Typography.Text>
-                        ) : null}
-                        {item.attachments?.length ? (
-                          <Space direction="vertical" size={8} style={{ width: "100%", marginBottom: item.bodyText ? 8 : 6 }}>
-                            {item.attachments.map((attachment) => (
-                              <div key={attachment.attachmentId}>
-                                {renderAttachment(attachment, {
-                                  voiceMessage: t("waConversations.detail.voiceMessage"),
-                                  fileAttachment: t("waConversations.detail.fileAttachment")
-                                })}
-                              </div>
-                            ))}
-                          </Space>
-                        ) : null}
-                        {item.bodyText ? (
-                          <Typography.Paragraph style={{ marginBottom: 6, whiteSpace: "pre-wrap" }}>
-                            {item.bodyText}
-                          </Typography.Paragraph>
-                        ) : item.attachments?.length ? null : (
-                          <Typography.Paragraph style={{ marginBottom: 6, whiteSpace: "pre-wrap", color: "#8c8c8c" }}>
-                            {item.messageType === "text" ? t("waConversations.detail.emptyMessage") : `（${item.messageType}）`}
-                          </Typography.Paragraph>
-                        )}
-                        <Space size={8}>
+              <div
+                ref={messageViewportRef}
+                style={{ height: 760, overflowY: "auto", padding: 12, background: "#efeae2", borderRadius: 12, border: "1px solid #e5ddd5" }}
+              >
+                <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                  {detail.hasMore ? (
+                    <div style={{ textAlign: "center" }}>
+                      <Button onClick={() => void loadMoreMessages()} loading={loadingMoreMessages}>
+                        {t("waConversations.detail.loadMore")}
+                      </Button>
+                    </div>
+                  ) : null}
+                  {detail.messages.map((item) => (
+                    <div key={item.waMessageId} style={bubbleStyle(item.direction)}>
+                      {item.direction === "inbound" ? (
+                        <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4, fontSize: 12 }}>
+                          {item.senderDisplayName ?? item.senderRole ?? "-"}
+                        </Typography.Text>
+                      ) : null}
+                      {item.attachments?.length ? (
+                        <Space direction="vertical" size={8} style={{ width: "100%", marginBottom: item.bodyText ? 8 : 6 }}>
+                          {item.attachments.map((attachment) => (
+                            <div key={attachment.attachmentId}>
+                              {renderAttachment(attachment, {
+                                voiceMessage: t("waConversations.detail.voiceMessage"),
+                                fileAttachment: t("waConversations.detail.fileAttachment")
+                              })}
+                            </div>
+                          ))}
+                        </Space>
+                      ) : null}
+                      {item.bodyText ? (
+                        <Typography.Paragraph style={{ marginBottom: 6, whiteSpace: "pre-wrap" }}>
+                          {item.bodyText}
+                        </Typography.Paragraph>
+                      ) : item.attachments?.length ? null : (
+                        <Typography.Paragraph style={{ marginBottom: 6, whiteSpace: "pre-wrap", color: "#8c8c8c" }}>
+                          {item.messageType === "text" ? t("waConversations.detail.emptyMessage") : `（${item.messageType}）`}
+                        </Typography.Paragraph>
+                      )}
+                      <Space size={8}>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {formatMonitorDate(item.providerTs ?? item.createdAt)}
+                        </Typography.Text>
+                        {item.direction === "outbound" && item.deliveryStatus ? (
                           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            {formatMonitorDate(item.providerTs ?? item.createdAt)}
+                            {item.deliveryStatus}
                           </Typography.Text>
-                          {item.direction === "outbound" && item.deliveryStatus ? (
-                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              {item.deliveryStatus}
+                        ) : null}
+                      </Space>
+                    </div>
+                  ))}
+                </Space>
+              </div>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("waConversations.detail.loadFailed")} style={{ padding: "60px 0" }} />
+            )}
+          </Card>
+        </Col>
+
+        {/* ── 右栏：群成员标注 ── */}
+        <Col flex="300px" style={{ minWidth: 0 }}>
+          <Card
+            style={{ height: "100%" }}
+            styles={{ body: { padding: 0 } }}
+            title={
+              <Space size={6}>
+                <UserOutlined />
+                <span>群成员标注</span>
+                {detail?.conversation.conversationType === "group" && membersWithBindings.length > 0 ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    ({membersWithBindings.length})
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            }
+          >
+            {!detail || detail.conversation.conversationType !== "group" ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={
+                  !detail
+                    ? "请选择一个会话"
+                    : "该会话不是群聊"
+                }
+                style={{ padding: "60px 0" }}
+              />
+            ) : (
+              <div style={{ height: 800, overflowY: "auto" }}>
+                <List
+                  size="small"
+                  dataSource={membersWithBindings}
+                  locale={{ emptyText: "暂无成员数据" }}
+                  renderItem={(member) => (
+                    <List.Item
+                      style={{
+                        padding: "10px 14px",
+                        display: "block",
+                        borderBottom: "1px solid #f5f5f5"
+                      }}
+                    >
+                      {/* 成员信息行 */}
+                      <Space style={{ width: "100%", justifyContent: "space-between" }} align="start">
+                        <Space direction="vertical" size={1} style={{ flex: 1, minWidth: 0 }}>
+                          <Space size={4}>
+                            <Typography.Text strong style={{ fontSize: 13 }}>
+                              {member.displayName ?? member.phoneE164 ?? member.participantJid}
+                            </Typography.Text>
+                            {member.isAdmin ? (
+                              <Tag color="gold" style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px", margin: 0 }}>
+                                管理员
+                              </Tag>
+                            ) : null}
+                          </Space>
+                          {member.phoneE164 && member.phoneE164 !== member.displayName ? (
+                            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                              {member.phoneE164}
                             </Typography.Text>
                           ) : null}
                         </Space>
-                      </div>
-                    ))}
-                  </Space>
-                </div>
-              </Space>
-            ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("waConversations.detail.loadFailed")} />
+
+                        {/* 操作按钮 */}
+                        {member.customerContactId ? null : (
+                          <Button
+                            size="small"
+                            type={bindingJid === member.participantJid ? "primary" : "default"}
+                            ghost={bindingJid === member.participantJid}
+                            onClick={() => {
+                              if (bindingJid === member.participantJid) {
+                                setBindingJid(null);
+                              } else {
+                                setBindingJid(member.participantJid);
+                                setBindingCustomerId(null);
+                                setBindingCustomerSearch("");
+                                setBindingOwnerMembershipId("");
+                              }
+                            }}
+                          >
+                            标注
+                          </Button>
+                        )}
+                      </Space>
+
+                      {/* 已绑定客户展示 */}
+                      {member.customerContactId ? (
+                        <Space style={{ marginTop: 6, width: "100%", justifyContent: "space-between" }} align="center">
+                          <Space size={4} wrap>
+                            <Tag icon={<UserOutlined />} color="blue" style={{ margin: 0 }}>
+                              {member.customerName}
+                            </Tag>
+                            {member.ownerName ? (
+                              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                                {member.ownerName}
+                              </Typography.Text>
+                            ) : null}
+                          </Space>
+                          <Popconfirm
+                            title="确认解除绑定？"
+                            okText="解除"
+                            okType="danger"
+                            cancelText="取消"
+                            onConfirm={() => void handleUnbindMember(member.participantJid)}
+                          >
+                            <Button size="small" type="link" danger style={{ padding: 0 }}>
+                              解除
+                            </Button>
+                          </Popconfirm>
+                        </Space>
+                      ) : null}
+
+                      {/* 内联标注表单 */}
+                      {bindingJid === member.participantJid ? (
+                        <Space
+                          direction="vertical"
+                          size={8}
+                          style={{
+                            width: "100%",
+                            marginTop: 10,
+                            padding: "10px 12px",
+                            background: "#f7f9fc",
+                            borderRadius: 8,
+                            border: "1px solid #e8edf5"
+                          }}
+                        >
+                          <AutoComplete
+                            value={bindingCustomerSearch}
+                            onChange={(value) => {
+                              setBindingCustomerSearch(value);
+                              setBindingCustomerId(null);
+                            }}
+                            onSelect={(value: string, option: { value: string; customerId: string }) => {
+                              setBindingCustomerSearch(value);
+                              setBindingCustomerId(option.customerId);
+                            }}
+                            options={customerList
+                              .filter(
+                                (c) =>
+                                  !bindingCustomerSearch ||
+                                  c.displayName.toLowerCase().includes(bindingCustomerSearch.toLowerCase())
+                              )
+                              .slice(0, 20)
+                              .map((c) => ({
+                                value: c.displayName,
+                                label: c.displayName,
+                                customerId: c.waCustomerContactId
+                              }))}
+                            placeholder="搜索或输入新客户名称"
+                            style={{ width: "100%" }}
+                          />
+                          <Select
+                            value={bindingOwnerMembershipId || undefined}
+                            onChange={(value: string) => setBindingOwnerMembershipId(value ?? "")}
+                            options={teamMembers.map((m) => ({
+                              label: m.displayName ?? m.role,
+                              value: m.membershipId
+                            }))}
+                            placeholder="负责销售（可选）"
+                            allowClear
+                            style={{ width: "100%" }}
+                          />
+                          <Space size={6} style={{ width: "100%" }}>
+                            <Button
+                              type="primary"
+                              size="small"
+                              style={{ flex: 1 }}
+                              loading={bindingSaving}
+                              disabled={!bindingCustomerSearch.trim()}
+                              onClick={() => void handleBindMember(member.participantJid)}
+                            >
+                              保存
+                            </Button>
+                            <Button
+                              size="small"
+                              style={{ flex: 1 }}
+                              disabled={bindingSaving}
+                              onClick={() => setBindingJid(null)}
+                            >
+                              取消
+                            </Button>
+                          </Space>
+                        </Space>
+                      ) : null}
+                    </List.Item>
+                  )}
+                />
+              </div>
             )}
           </Card>
         </Col>
