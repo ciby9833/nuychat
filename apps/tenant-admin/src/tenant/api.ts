@@ -87,6 +87,17 @@ const SESSION_KEY = "nuychat.authSession";
 
 export const API_BASE = readRequiredEnv("VITE_API_BASE_URL");
 
+/**
+ * Returns the URL for the admin media proxy given an attachmentId.
+ * Routes through /api/admin/wa/media/:id which decrypts encrypted WA CDN files server-side.
+ * The access token is appended as ?token= because <img>/<video>/<audio> cannot set headers.
+ */
+export function adminMediaUrl(attachmentId: string): string | null {
+  const session = readTenantSession();
+  if (!session) return null;
+  return `${API_BASE}/api/admin/wa/media/${encodeURIComponent(attachmentId)}?token=${encodeURIComponent(session.accessToken)}`;
+}
+
 function readRequiredEnv(name: "VITE_API_BASE_URL"): string {
   const value = import.meta.env[name]?.trim();
   if (!value) {

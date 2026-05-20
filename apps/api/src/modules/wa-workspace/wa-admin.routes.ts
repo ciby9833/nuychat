@@ -569,4 +569,146 @@ export async function waAdminRoutes(app: FastifyInstance) {
       endAt
     });
   });
+
+  // ─── Admin media proxy (mirrors /api/wa/media/:attachmentId for admin auth) ──
+  // WhatsApp CDN URLs are AES-CBC encrypted; browsers cannot load them directly.
+  // ?token= query-param support is enabled in tenant.middleware.ts for this path.
+  app.get("/api/admin/wa/media/:attachmentId", async (req, reply) => {
+    const tenantId = req.tenant?.tenantId;
+    if (!tenantId) throw app.httpErrors.unauthorized("Missing tenant context");
+    const { attachmentId } = req.params as { attachmentId: string };
+
+    const result = await withTenantTransaction(tenantId, async (trx) =>
+      trx("wa_message_attachments as att")
+        .join("wa_messages as m", function joinMsg() {
+          this.on("m.wa_message_id", "=", "att.wa_message_id").andOn("m.tenant_id", "=", "att.tenant_id");
+        })
+        .where({ "att.tenant_id": tenantId, "att.attachment_id": attachmentId })
+        .select("att.*", "m.provider_payload as message_provider_payload", "m.wa_conversation_id", "att.storage_url", "att.preview_url")
+        .first<Record<string, unknown> | undefined>()
+    );
+    if (!result) throw app.httpErrors.notFound("Attachment not found");
+
+    const asStr = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+    const mimeType = asStr(result.mime_type) ?? "application/octet-stream";
+    const fileName = asStr(result.file_name);
+    const storageUrl = asStr(result.storage_url);
+    const attachmentType = String(result.attachment_type) as "image" | "video" | "audio" | "document" | "sticker";
+
+    // ── Local upload (outbound messages we sent) ─────────────────────────────
+    if (storageUrl?.startsWith("/uploads/")) {
+      const { readFile } = await import("node:fs/promises");
+      const { getUploadsDir } = await import("../../infra/storage/upload.service.js");
+      const nodePath = await import("node:path");
+      const diskPath = nodePath.default.join(getUploadsDir(), nodePath.default.basename(storageUrl));
+      const buffer = await readFile(diskPath);
+      void reply.header("Content-Type", mimeType);
+      void reply.header("Cache-Control", "private, max-age=86400");
+      if (fileName) void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
+      return reply.send(buffer);
+    }
+
+    // ── Reconstruct media payload for Baileys decryption ────────────────────
+    const rawPayload = result.provider_payload ?? result.message_provider_payload;
+    const payload = rawPayload
+      ? (typeof rawPayload === "string" ? JSON.parse(String(rawPayload)) : rawPayload) as Record<string, unknown>
+      : null;
+
+    const contentKeyMap: Record<string, string> = {
+      image: "imageMessage", video: "videoMessage", audio: "audioMessage",
+      document: "documentMessage", sticker: "stickerMessage"
+    };
+    const wrapperKeys = ["ephemeralMessage", "viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension", "documentWithCaptionMessage"];
+
+    function findMediaContainer(node: Record<string, unknown> | null): { container: Record<string, unknown>; media: Record<string, unknown> } | null {
+      if (!node) return null;
+      const key = contentKeyMap[attachmentType];
+      const direct = node[key];
+      if (direct && typeof direct === "object") return { container: node, media: direct as Record<string, unknown> };
+      for (const wk of wrapperKeys) {
+        const w = node[wk];
+        if (!w || typeof w !== "object") continue;
+        const nm = (w as Record<string, unknown>).message;
+        if (!nm || typeof nm !== "object") continue;
+        const nested = findMediaContainer(nm as Record<string, unknown>);
+        if (nested) return nested;
+      }
+      return null;
+    }
+
+    const mediaContainer = findMediaContainer((payload?.message as Record<string, unknown> | null) ?? null);
+    const msgContent = mediaContainer?.media ?? null;
+
+    if (!msgContent) {
+      throw app.httpErrors.notFound("Media content not available — payload missing");
+    }
+
+    const contentUrl = asStr(msgContent["url"]) ?? asStr(msgContent["staticUrl"]);
+    if (contentUrl?.startsWith("/uploads/")) {
+      const { readFile } = await import("node:fs/promises");
+      const { getUploadsDir } = await import("../../infra/storage/upload.service.js");
+      const nodePath = await import("node:path");
+      const diskPath = nodePath.default.join(getUploadsDir(), nodePath.default.basename(contentUrl));
+      const buffer = await readFile(diskPath);
+      void reply.header("Content-Type", mimeType);
+      void reply.header("Cache-Control", "private, max-age=86400");
+      if (fileName) void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
+      return reply.send(buffer);
+    }
+
+    function toBuffer(v: unknown): Buffer | undefined {
+      if (!v) return undefined;
+      if (Buffer.isBuffer(v)) return v;
+      if (v instanceof Uint8Array) return Buffer.from(v);
+      if (typeof v === "string") return Buffer.from(v, "base64");
+      if (typeof v === "object") {
+        const o = v as Record<string, unknown>;
+        if (o["type"] === "Buffer" && Array.isArray(o["data"])) return Buffer.from(o["data"] as number[]);
+        const keys = Object.keys(o).filter((k) => /^\d+$/.test(k));
+        if (keys.length > 0) return Buffer.from(keys.sort((a, b) => Number(a) - Number(b)).map((k) => Number(o[k])));
+      }
+      return undefined;
+    }
+
+    const reconstructed = {
+      ...msgContent,
+      mediaKey: toBuffer(msgContent["mediaKey"]),
+      fileEncSha256: toBuffer(msgContent["fileEncSha256"]),
+      fileSha256: toBuffer(msgContent["fileSha256"])
+    };
+    if (mediaContainer) mediaContainer.container[contentKeyMap[attachmentType]] = reconstructed;
+
+    // ── No mediaKey → public/newsletter URL ─────────────────────────────────
+    if (!reconstructed.mediaKey) {
+      if (!contentUrl) throw app.httpErrors.badGateway("No media key and no plain URL");
+      const res = await fetch(contentUrl);
+      if (!res.ok) throw app.httpErrors.badGateway(`Upstream ${res.status}`);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      void reply.header("Content-Type", res.headers.get("content-type") ?? mimeType);
+      void reply.header("Cache-Control", "public, max-age=86400");
+      if (fileName) void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
+      return reply.send(buffer);
+    }
+
+    // ── Encrypted WhatsApp CDN — decrypt via Baileys ─────────────────────────
+    try {
+      const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
+      const { getBaileysRuntime } = await import("./runtime/baileys-runtime.manager.js");
+      const waAccountId = asStr(result.wa_account_id) ?? "";
+      const runtime = getBaileysRuntime(tenantId, waAccountId);
+      const buffer = await downloadMediaMessage(
+        payload as unknown as Parameters<typeof downloadMediaMessage>[0],
+        "buffer",
+        {},
+        runtime ? { logger: app.log, reuploadRequest: async (msg) => runtime.socket.updateMediaMessage(msg) } : undefined
+      );
+      void reply.header("Content-Type", mimeType);
+      void reply.header("Cache-Control", "private, max-age=86400");
+      if (fileName) void reply.header("Content-Disposition", `inline; filename="${fileName}"`);
+      return reply.send(buffer);
+    } catch (error) {
+      app.log.error({ attachmentId, error }, "[wa-admin-media-proxy] decrypt failed");
+      throw app.httpErrors.badGateway("Failed to fetch media from WhatsApp");
+    }
+  });
 }

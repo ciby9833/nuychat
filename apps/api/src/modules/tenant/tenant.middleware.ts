@@ -28,7 +28,7 @@ export const tenantContextPlugin: FastifyPluginAsync = fp(async (app) => {
     if (!req.headers.authorization) {
       const query = req.query as Record<string, string | undefined>;
       const queryToken = query?.token;
-      if (queryToken && req.url.includes("/api/wa/media/")) {
+      if (queryToken && (req.url.includes("/api/wa/media/") || req.url.includes("/api/admin/wa/media/"))) {
         req.headers.authorization = `Bearer ${queryToken}`;
       }
     }
