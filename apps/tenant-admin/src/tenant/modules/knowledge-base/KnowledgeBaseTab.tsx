@@ -3,9 +3,9 @@
  * 文件职责: 知识库模块主入口，负责串联检索筛选、文章列表与文章编辑抽屉。
  * 主要交互文件:
  * - ./hooks/useKnowledgeBaseData.ts: 负责知识条目查询、创建、编辑、停用以及抽屉状态。
- * - ./components/KnowledgeBaseFilterBar.tsx: 展示搜索、分类筛选、创建与刷新入口。
- * - ./components/KnowledgeBaseTable.tsx: 展示知识条目列表与编辑/停用操作。
- * - ./components/KnowledgeBaseEditorDrawer.tsx: 承载知识条目创建与编辑表单。
+ * - ./components/KnowledgeBaseFilterBar.tsx: 展示搜索、分类筛选、待审查过滤与创建入口。
+ * - ./components/KnowledgeBaseTable.tsx: 展示知识条目列表，含质量信号（被否次数、待审标记）。
+ * - ./components/KnowledgeBaseEditorDrawer.tsx: 承载知识条目创建与编辑表单，被标记条目显示警告。
  * - ./types.ts: 统一导出知识库模块使用的类型。
  * - ../../api.ts: 通过通用 api() 访问知识库相关后端接口。
  */
@@ -24,12 +24,15 @@ export function KnowledgeBaseTab() {
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <KnowledgeBaseFilterBar
         total={data.total}
+        needsReviewCount={data.needsReviewCount}
         search={data.search}
         catFilter={data.catFilter}
+        reviewFilter={data.reviewFilter}
         categories={data.categories}
         error={data.error}
         onSearchChange={data.setSearch}
         onCategoryChange={data.setCatFilter}
+        onReviewFilterChange={data.setReviewFilter}
         onCreate={data.openCreate}
         onRefresh={() => { void data.load(); }}
       />
@@ -37,6 +40,7 @@ export function KnowledgeBaseTab() {
       <KnowledgeBaseTable
         entries={data.filteredEntries}
         onEdit={data.openEdit}
+        onMarkReviewed={(id) => { void data.markReviewed(id); }}
         onDeactivate={(id) => { void data.deactivate(id); }}
       />
 

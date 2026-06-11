@@ -204,6 +204,14 @@ export function createRoutingWorker() {
       }
 
       // ── 3. Run orchestrator ──────────────────────────────────────────────────
+      // Detect "fallback_ai" mode: conversation is in the human queue but no agent
+      // is currently available, so AI is filling the gap temporarily. Pass this to
+      // the orchestrator so it avoids re-triggering a handoff (which would duplicate
+      // the queue entry and re-send the routing notice).
+      const isAiFallback =
+        plan.statusPlan.aiFallbackAllowed === true &&
+        plan.statusPlan.serviceRequestMode === "human_requested";
+
       const orchestratorStart = Date.now();
       let result;
       let orchestratorError: string | null = null;
@@ -218,7 +226,8 @@ export function createRoutingWorker() {
             capabilityScope: null,
             actorType: "ai",
             preferredSkillNames: parsePreferredSkills(preferences?.preferred_skills),
-            aiAgentId: plan.target.aiAgentId
+            aiAgentId: plan.target.aiAgentId,
+            isAiFallback
           })
         );
       } catch (err) {
@@ -358,6 +367,28 @@ export function createRoutingWorker() {
           occurredAt: new Date().toISOString()
         });
       } else if (result.action === "handoff" || result.shouldHandoff) {
+        // Guard: if this is AI-fallback mode (customer already in human queue),
+        // DO NOT re-handoff. The customer is already queued; another
+        // releaseConversationToHumanQueue call would create a duplicate queue
+        // entry and re-send the "you're in queue" routing notice. Just skip it.
+        if (isAiFallback) {
+          await withTenantTransaction(tenantId, async (trx) => {
+            await routingPlanStepService.record(trx, {
+              tenantId,
+              planId,
+              stepType: "ai_runtime",
+              status: "completed",
+              payload: {
+                outcome: "handoff_suppressed_already_queued",
+                aiAgentId: plan.target.aiAgentId,
+                handoff: false,
+                confidence: result.confidence
+              }
+            });
+          });
+          return { conversationId, responded: false, handoff: false, reason: "already_queued_for_human" };
+        }
+
         const handoffTarget = await withTenantTransaction(tenantId, async (trx) =>
           resolveReservedHumanTarget(trx, {
             tenantId,
@@ -410,8 +441,11 @@ export function createRoutingWorker() {
         // (tokensUsed === 0 AND confidence === 0), which indicates a system-level
         // early-exit (budget blocked, no messages, etc.) rather than an AI answer
         // failure — those cases are already handled by the noAiResult() handoff path.
+        //
+        // Also skip when already in AI-fallback mode — the customer is already
+        // queued for a human, so a safety-net handoff would be a duplicate.
         const aiActuallyRan = result.tokensUsed > 0 || result.confidence > 0;
-        if (aiActuallyRan) {
+        if (aiActuallyRan && !isAiFallback) {
           const handoffTarget = await withTenantTransaction(tenantId, async (trx) =>
             resolveReservedHumanTarget(trx, {
               tenantId,

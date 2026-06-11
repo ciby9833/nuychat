@@ -7,31 +7,54 @@ export async function registerKnowledgeBaseAdminRoutes(app: FastifyInstance) {
     const tenantId = req.tenant?.tenantId;
     if (!tenantId) throw app.httpErrors.badRequest("Missing tenant context");
 
-    const query = req.query as { category?: string; search?: string; page?: string };
+    const query = req.query as {
+      category?: string;
+      search?: string;
+      page?: string;
+      needsReview?: string;
+    };
     const page = Math.max(1, Number(query.page ?? 1));
     const limit = 20;
     const offset = (page - 1) * limit;
+    const filterNeedsReview = query.needsReview === "true";
 
     return withTenantTransaction(tenantId, async (trx) => {
       const qb = trx("knowledge_base_entries")
-        .select("entry_id", "category", "title", "content", "tags", "is_active", "hit_count", "created_at", "updated_at")
+        .select(
+          "entry_id", "category", "title", "content", "tags",
+          "is_active", "hit_count",
+          "needs_review", "negative_feedback_count", "last_used_at", "last_flagged_at",
+          "created_at", "updated_at"
+        )
         .where({ tenant_id: tenantId })
-        .orderBy("created_at", "desc")
+        .orderBy([
+          // Surface flagged entries first when browsing without filter
+          { column: "needs_review", order: "desc" },
+          { column: "created_at", order: "desc" }
+        ])
         .limit(limit)
         .offset(offset);
 
       if (query.category) qb.where("category", query.category);
+      if (filterNeedsReview) qb.where("needs_review", true);
       if (query.search) {
         const tsq = String(query.search).split(/\s+/).filter(Boolean).join(" | ");
         qb.whereRaw("search_vector @@ to_tsquery('simple', ?)", [tsq]);
       }
 
-      const [rows, countRow] = await Promise.all([
+      const [rows, countRow, reviewCountRow] = await Promise.all([
         qb,
-        trx("knowledge_base_entries").where({ tenant_id: tenantId }).count("entry_id as cnt").first()
+        trx("knowledge_base_entries").where({ tenant_id: tenantId }).count("entry_id as cnt").first(),
+        trx("knowledge_base_entries").where({ tenant_id: tenantId, needs_review: true }).count("entry_id as cnt").first()
       ]);
 
-      return { entries: rows, total: Number((countRow as { cnt: string })?.cnt ?? 0), page, limit };
+      return {
+        entries: rows,
+        total: Number((countRow as { cnt: string })?.cnt ?? 0),
+        needsReviewCount: Number((reviewCountRow as { cnt: string })?.cnt ?? 0),
+        page,
+        limit
+      };
     });
   });
 
@@ -76,6 +99,11 @@ export async function registerKnowledgeBaseAdminRoutes(app: FastifyInstance) {
       content?: string;
       tags?: string[];
       isActive?: boolean;
+      /**
+       * Set to false to clear the needs_review flag after an admin has reviewed and
+       * corrected the entry. Also resets negative_feedback_count.
+       */
+      needsReview?: boolean;
     };
 
     return withTenantTransaction(tenantId, async (trx) => {
@@ -85,6 +113,15 @@ export async function registerKnowledgeBaseAdminRoutes(app: FastifyInstance) {
       if (body.content !== undefined) updates.content = body.content.trim();
       if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
       if (body.isActive !== undefined) updates.is_active = body.isActive;
+      if (body.needsReview !== undefined) {
+        updates.needs_review = body.needsReview;
+        // When an admin clears the review flag (needsReview=false), reset the feedback counter
+        // so the entry gets a clean slate after being corrected.
+        if (!body.needsReview) {
+          updates.negative_feedback_count = 0;
+          updates.last_flagged_at = null;
+        }
+      }
 
       const affected = await trx("knowledge_base_entries")
         .where({ tenant_id: tenantId, entry_id: entryId })

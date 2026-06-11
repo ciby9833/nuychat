@@ -8,6 +8,7 @@
  *   - FTS (to_tsquery 'simple') 只对 ASCII/Latin 文本可靠；PostgreSQL 的 simple 配置不做中文分词，
  *     整个中文短语会被当作单一 lexeme 存储。对 CJK 查询改用 ILIKE + bigram 分解，确保能召回中文知识。
  *   - 知识库条目数量通常很小（< 1000），ILIKE 扫表性能可接受。
+ *   - excludeEntryIds：用户对上一轮答案表示不满时，排除已用过的条目，引导 LLM 尝试不同来源。
  */
 
 import type { Knex } from "knex";
@@ -29,6 +30,11 @@ export async function searchKnowledgeEntries(
     tenantId: string;
     queryText: string;
     limit?: number;
+    /**
+     * Entry IDs to exclude — used when the user indicated the previous answer was wrong,
+     * so the system tries different knowledge sources instead of repeating the same content.
+     */
+    excludeEntryIds?: string[];
   }
 ): Promise<KnowledgeEntry[]> {
   const limit = Math.max(1, input.limit ?? 4);
@@ -43,6 +49,11 @@ export async function searchKnowledgeEntries(
     if (tsQuery) {
       const rows = (await db("knowledge_base_entries")
         .where({ tenant_id: input.tenantId, is_active: true })
+        .modify((qb) => {
+          if (input.excludeEntryIds && input.excludeEntryIds.length > 0) {
+            qb.whereNotIn("entry_id", input.excludeEntryIds);
+          }
+        })
         .andWhereRaw("search_vector @@ to_tsquery('simple', ?)", [tsQuery])
         .select("entry_id", "title", "category", "content", "updated_at")
         .orderBy("hit_count", "desc")
@@ -57,7 +68,12 @@ export async function searchKnowledgeEntries(
   // phrases are stored as single lexemes and won't match sub-phrase queries.
   // Bigram decomposition (e.g. "取件" → ["取件", "上取", ...]) gives reasonable
   // recall for a small knowledge base with no vector store.
-  return searchByKeywords(db, { tenantId: input.tenantId, queryText: q, limit });
+  return searchByKeywords(db, {
+    tenantId: input.tenantId,
+    queryText: q,
+    limit,
+    excludeEntryIds: input.excludeEntryIds
+  });
 }
 
 export async function buildKnowledgeContext(
@@ -91,7 +107,7 @@ export function formatKnowledgeEntriesAsContext(rows: KnowledgeEntry[]): string 
 
 async function searchByKeywords(
   db: Knex | Knex.Transaction,
-  input: { tenantId: string; queryText: string; limit: number }
+  input: { tenantId: string; queryText: string; limit: number; excludeEntryIds?: string[] }
 ): Promise<KnowledgeEntry[]> {
   const tokens = extractSearchTokens(input.queryText);
 
@@ -99,6 +115,11 @@ async function searchByKeywords(
     // Fallback: return most-hit active entries so the LLM has something to work with
     return (await db("knowledge_base_entries")
       .where({ tenant_id: input.tenantId, is_active: true })
+      .modify((qb) => {
+        if (input.excludeEntryIds && input.excludeEntryIds.length > 0) {
+          qb.whereNotIn("entry_id", input.excludeEntryIds);
+        }
+      })
       .select("entry_id", "title", "category", "content", "updated_at")
       .orderBy("hit_count", "desc")
       .orderBy("updated_at", "desc")
@@ -107,6 +128,11 @@ async function searchByKeywords(
 
   return (await db("knowledge_base_entries")
     .where({ tenant_id: input.tenantId, is_active: true })
+    .modify((qb) => {
+      if (input.excludeEntryIds && input.excludeEntryIds.length > 0) {
+        qb.whereNotIn("entry_id", input.excludeEntryIds);
+      }
+    })
     .where(function() {
       for (const token of tokens) {
         this.orWhereRaw("title ILIKE ?", [`%${token}%`]);

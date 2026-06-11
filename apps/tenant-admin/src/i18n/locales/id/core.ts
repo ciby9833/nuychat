@@ -133,11 +133,22 @@ export default {
     editArticle: "Edit Artikel",
     tagsSeparated: "Tag (pisahkan dengan koma)",
     items: "item",
+    needsReview: "Perlu Ditinjau",
+    onlyNeedsReview: "Hanya yang ditandai",
+    markReviewed: "Tandai OK",
+    needsReviewTip: "Ditandai oleh {{count}} percakapan sebagai tidak membantu — disarankan ditinjau",
+    reviewAlert: {
+      title: "Artikel ini perlu ditinjau",
+      desc: "Pengguna dari {{count}} percakapan berbeda melaporkan entri ini memberikan jawaban yang salah atau tidak membantu. Periksa konten dan simpan untuk menghapus tanda ini.",
+      saveHint: "Menyimpan akan otomatis menghapus tanda \"Perlu Ditinjau\" dan mereset penghitung umpan balik."
+    },
     col: {
       category: "Kategori",
       title: "Judul",
       content: "Konten",
       hits: "Kunjungan",
+      negativeFeedback: "Umpan Balik Neg.",
+      lastUsed: "Terakhir Digunakan",
       status: "Status"
     }
   },

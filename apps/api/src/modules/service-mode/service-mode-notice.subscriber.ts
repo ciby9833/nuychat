@@ -73,7 +73,14 @@ function shouldSendNotice(
   }
 
   if (scenario === "human_queue") {
-    return previousMode !== "queued_human";
+    // Only send the "you're in queue" notice once — when the conversation first enters
+    // the human queue. Do NOT re-send when:
+    //   • Already in queued_human (same state, no meaningful change)
+    //   • Coming from fallback_ai — this means the AI fallback ran temporarily while
+    //     the customer was ALREADY in the human queue, then returned. The customer
+    //     has already received the queue notice; sending another would be spam.
+    if (previousMode === "queued_human" || previousMode === "fallback_ai") return false;
+    return true;
   }
 
   return true;

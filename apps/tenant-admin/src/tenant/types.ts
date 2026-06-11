@@ -204,7 +204,14 @@ export type KBEntry = {
   tags: string[];
   is_active: boolean;
   hit_count: number;
+  /** How many distinct conversations indicated this entry gave a wrong/unhelpful answer. */
+  negative_feedback_count: number;
+  /** True when negative_feedback_count reached the threshold — entry needs admin review. */
+  needs_review: boolean;
+  last_used_at: string | null;
+  last_flagged_at: string | null;
   created_at: string;
+  updated_at: string;
 };
 
 export type ChannelConfig = {

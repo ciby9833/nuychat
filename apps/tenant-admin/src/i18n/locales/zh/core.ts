@@ -133,11 +133,22 @@ export default {
     editArticle: "编辑文章",
     tagsSeparated: "标签（逗号分隔）",
     items: "条",
+    needsReview: "待修正",
+    onlyNeedsReview: "仅看待修正",
+    markReviewed: "已确认",
+    needsReviewTip: "已被 {{count}} 个对话标记为回答有误，建议检查并修正内容",
+    reviewAlert: {
+      title: "此知识条目需要修正",
+      desc: "来自 {{count}} 个不同对话的用户反馈该条目提供了错误或无用的答案。请检查内容是否准确，修改后保存将自动清除此标记。",
+      saveHint: "保存后将自动清除「待修正」标记，并重置反馈计数。"
+    },
     col: {
       category: "分类",
       title: "标题",
       content: "内容",
       hits: "命中次数",
+      negativeFeedback: "否定反馈",
+      lastUsed: "最近使用",
       status: "状态"
     }
   },

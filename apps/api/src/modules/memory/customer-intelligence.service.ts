@@ -21,6 +21,19 @@ export interface WorkingMemoryTurn {
   role: "user" | "assistant";
   content: string;
   ts: number;
+  /** IDs of knowledge_base_entries used to produce this assistant reply (undefined for user turns). */
+  knowledgeEntryIds?: string[];
+  /**
+   * True once a negative-feedback signal has been recorded for this turn's knowledgeEntryIds.
+   * Prevents the same (entry, conversation) pair from being counted more than once —
+   * so the org-level counter tracks distinct conversations, not events-per-user.
+   */
+  negativeFeedbackCounted?: boolean;
+  /**
+   * Sentiment observed at the time this assistant turn was generated.
+   * Used to detect sentiment degradation on the next user turn.
+   */
+  sentimentAtReply?: string;
 }
 
 export interface ConversationInsight {
@@ -172,6 +185,23 @@ export async function appendWorkingMemory(conversationId: string, turns: Working
 
 export async function clearWorkingMemory(conversationId: string): Promise<void> {
   await redisConnection.del(wmKey(conversationId));
+}
+
+/**
+ * Patch the most recent assistant turn in working memory with the given fields.
+ * Used to mark `negativeFeedbackCounted=true` after recording org-level feedback,
+ * so the same (entry, conversation) pair is never double-counted.
+ */
+export async function patchLastAssistantTurn(
+  conversationId: string,
+  patch: Partial<WorkingMemoryTurn>
+): Promise<void> {
+  const turns = await getWorkingMemory(conversationId);
+  const idx = [...turns].reverse().findIndex((t) => t.role === "assistant");
+  if (idx === -1) return;
+  const realIdx = turns.length - 1 - idx;
+  turns[realIdx] = { ...turns[realIdx]!, ...patch };
+  await redisConnection.setex(wmKey(conversationId), WORKING_MEMORY_TTL_SECS, JSON.stringify(turns));
 }
 
 export async function getConversationInsightRecord(

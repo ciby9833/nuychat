@@ -133,11 +133,22 @@ export default {
     editArticle: "Edit Article",
     tagsSeparated: "Tags (comma-separated)",
     items: "items",
+    needsReview: "Needs Review",
+    onlyNeedsReview: "Show flagged only",
+    markReviewed: "Mark OK",
+    needsReviewTip: "Flagged by {{count}} conversation(s) as unhelpful — review recommended",
+    reviewAlert: {
+      title: "This article needs review",
+      desc: "Users in {{count}} distinct conversation(s) indicated this entry gave a wrong or unhelpful answer. Please verify the content and save to clear the flag.",
+      saveHint: "Saving will automatically clear the \"Needs Review\" flag and reset the feedback counter."
+    },
     col: {
       category: "Category",
       title: "Title",
       content: "Content",
       hits: "Hits",
+      negativeFeedback: "Neg. Feedback",
+      lastUsed: "Last Used",
       status: "Status"
     }
   },

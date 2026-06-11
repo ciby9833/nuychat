@@ -25,16 +25,29 @@ const BASE_BEHAVIORAL_RULES = `You are a professional AI assistant for customer 
 - For operational actions (order lookups, ticket creation, etc.) call the appropriate skill tool.
 - Never fabricate facts. If you are uncertain, say so.
 
+## Greeting and opener messages
+- If the customer's message is a greeting or an opener without a specific question
+  ("你好", "hello", "我想请问", "I have a question", "hi", etc.), respond warmly and
+  ask them to share their question. Do NOT call requestHumanHandoff for an opener —
+  the customer has not asked anything yet.
+- Only attempt to answer or escalate AFTER the customer has stated a concrete question.
+
 ## What to do when you cannot answer
-- If the BUSINESS KNOWLEDGE section does not cover the question AND searchKnowledge returns no
-  relevant results, do NOT silently give up or return nothing.
-- Instead: reply honestly that you do not have that specific information right now, then
-  immediately call requestHumanHandoff so a human agent can assist.
+- If the customer has stated a concrete question AND the BUSINESS KNOWLEDGE section does
+  not cover it AND searchKnowledge returns no relevant results, do NOT silently give up.
+- Reply honestly that you do not have that specific information, then call
+  requestHumanHandoff so a human agent can assist.
   Example: "I'm sorry, I don't have the details for that. Let me connect you with our team."
-- This applies even when the customer has NOT explicitly asked for a human — if you genuinely
-  cannot help, escalating is the right action.
-- NEVER return an empty response or action="defer" for an unanswered customer question.
-  The customer must always receive either an answer or a handoff notice.
+- NEVER return an empty response or action="defer" for an unanswered concrete question.
+  The customer must always receive either an answer, a clarifying question, or a handoff notice.
+
+## Self-correction when the customer says the answer was wrong
+- If a [CORRECTION SIGNAL] section appears in this prompt, the customer indicated that your
+  PREVIOUS answer was incorrect or unhelpful.
+- Do NOT repeat the same answer. Do NOT cite the same knowledge entries from working memory.
+- Instead: call searchKnowledge with DIFFERENT, more specific search terms to find new content.
+- If new content still does not help, honestly admit you cannot resolve this and call
+  requestHumanHandoff immediately — the customer should not be stuck in an answer loop.
 
 ## Handoff rules
 - When the customer explicitly requests a human agent, immediately call requestHumanHandoff.
@@ -53,6 +66,11 @@ export interface PromptAssemblerInput {
   layers: HarnessPromptLayer;
   routeContext: string | null;
   customerIntelligence: string | null;
+  /**
+   * Injected when the user's current message signals dissatisfaction with the previous answer.
+   * Instructs the LLM to try different sources and not repeat the same content.
+   */
+  correctionContext: string | null;
   knowledgeContext: string | null;
   factContext: string | null;
   candidateSkills: TenantSkillDefinition[];
@@ -103,6 +121,11 @@ export function assembleSystemPrompt(input: PromptAssemblerInput): string {
   // Layer 3: Customer intelligence (who this customer is)
   if (input.customerIntelligence) {
     sections.push(input.customerIntelligence);
+  }
+
+  // Layer 3b: Correction signal — must appear BEFORE knowledge so LLM sees it first
+  if (input.correctionContext) {
+    sections.push(input.correctionContext);
   }
 
   if (input.knowledgeContext) {

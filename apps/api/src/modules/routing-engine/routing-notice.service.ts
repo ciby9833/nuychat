@@ -12,7 +12,7 @@ import { EXPLICIT_AI_OPT_IN_COMMAND } from "../service-mode/service-mode.constan
 // without a functioning AI provider.
 const TEMPLATE_NOTICES: Record<
   "human_assigned" | "human_queue" | "fallback_ai",
-  Record<"zh" | "en", (vars: { agentName?: string | null; queuePos?: number | null; waitMin?: number | null }) => string>
+  Record<"zh" | "en" | "id", (vars: { agentName?: string | null; queuePos?: number | null; waitMin?: number | null }) => string>
 > = {
   human_assigned: {
     zh: ({ agentName }) =>
@@ -22,7 +22,11 @@ const TEMPLATE_NOTICES: Record<
     en: ({ agentName }) =>
       agentName
         ? `You've been connected to agent ${agentName}. They'll be with you shortly.`
-        : "You've been connected to a support agent. They'll be with you shortly."
+        : "You've been connected to a support agent. They'll be with you shortly.",
+    id: ({ agentName }) =>
+      agentName
+        ? `Anda telah dihubungkan dengan agen ${agentName}. Mereka akan segera melayani Anda.`
+        : "Anda telah dihubungkan dengan agen dukungan. Mereka akan segera melayani Anda."
   },
   human_queue: {
     zh: ({ queuePos, waitMin }) => {
@@ -36,24 +40,52 @@ const TEMPLATE_NOTICES: Record<
       if (queuePos != null && queuePos > 0) parts.push(` You are number ${queuePos} in the queue.`);
       if (waitMin != null && waitMin > 0) parts.push(` Estimated wait: ~${waitMin} min.`);
       return parts.join("");
+    },
+    id: ({ queuePos, waitMin }) => {
+      const parts = ["Anda telah masuk dalam antrean dukungan. Agen akan segera melayani Anda."];
+      if (queuePos != null && queuePos > 0) parts.push(` Anda berada di posisi ${queuePos} dalam antrean.`);
+      if (waitMin != null && waitMin > 0) parts.push(` Perkiraan waktu tunggu: ~${waitMin} menit.`);
+      return parts.join("");
     }
   },
   fallback_ai: {
     zh: () => "您好，当前人工客服暂时不可用，AI 助手将继续为您服务。如需人工客服，请稍后再试。",
-    en: () => "No human agents are available right now. Our AI assistant will continue to help you. Please try again later if you need a human agent."
+    en: () => "No human agents are available right now. Our AI assistant will continue to help you. Please try again later if you need a human agent.",
+    id: () => "Tidak ada agen yang tersedia saat ini. Asisten AI kami akan terus membantu Anda. Silakan coba lagi nanti jika Anda membutuhkan agen."
   }
 };
+
+// CJK detection: if the message contains Chinese/Japanese/Korean characters, it's CJK
+const CJK_RE = /[一-鿿぀-ヿ가-힯]/;
+
+/**
+ * Detect the most likely reply language from the customer's actual message text.
+ * This OVERRIDES the `customerLanguage` DB field when the text content is clear,
+ * because the stored language preference may be stale or set by timezone/locale
+ * rather than actual conversation language.
+ */
+function detectReplyLanguage(messageText: string | null, storedLanguage: string | null): "zh" | "en" | "id" {
+  if (messageText) {
+    if (CJK_RE.test(messageText)) return "zh";
+    if (/\b(saya|anda|tidak|yang|dengan|untuk|ada|ini|itu|dari|sudah|belum|atau)\b/i.test(messageText)) return "id";
+  }
+  const lang = (storedLanguage ?? "").toLowerCase();
+  if (lang.startsWith("zh")) return "zh";
+  if (lang.startsWith("id") || lang === "id") return "id";
+  return "en";
+}
 
 function buildTemplateFallback(
   scenario: "human_assigned" | "human_queue" | "fallback_ai",
   vars: {
+    messageText: string | null;
     language: string | null;
     agentName: string | null;
     queuePosition: number | null;
     estimatedWaitSec: number | null;
   }
 ): string {
-  const lang = (vars.language ?? "").toLowerCase().startsWith("zh") ? "zh" : "en";
+  const lang = detectReplyLanguage(vars.messageText, vars.language);
   const template = TEMPLATE_NOTICES[scenario][lang];
   const waitMin = vars.estimatedWaitSec != null ? Math.ceil(vars.estimatedWaitSec / 60) : null;
   return template({ agentName: vars.agentName, queuePos: vars.queuePosition, waitMin });
@@ -100,13 +132,19 @@ Return JSON only:
 {"text":"..."}
 
 Rules:
-- Use the customer's latest language when possible.
-- Be concise, clear, and natural.
+- LANGUAGE DETECTION (critical): look at the actual text of latestCustomerMessage to determine language.
+  If it contains Chinese characters → reply in Chinese (Simplified).
+  If it looks like Indonesian/Malay → reply in Indonesian.
+  Otherwise → reply in English.
+  NEVER use the customerLanguage field to override what you detect from the message text.
+- Be concise, clear, and natural. One or two sentences maximum.
 - Only use the facts provided below. Do not invent availability, times, or queue data.
-- If a human agent has been assigned, clearly say the transfer succeeded and mention the agent name when provided.
-- If the customer is waiting in a human queue, mention the queue position and estimated wait when provided.
-- If no human is currently serviceable and AI fallback is active, explain that no human is available right now and mention the next schedule summary only if provided.
-- When the facts include a switchBackCommand for a queue or fallback scenario, mention that exact command as the explicit way to continue with AI now.
+- For human_assigned: say the transfer succeeded and mention the agent name when provided.
+- For human_queue: say the customer is in queue and mention position/wait time when provided.
+  Do NOT mention schedules, dates, or when agents will be next available — the customer is already queued.
+- For fallback_ai: explain that no human is available right now. Only mention the nextScheduleSummary
+  if it is provided and non-null.
+- When the facts include a switchBackCommand for a fallback_ai scenario, mention that command.
 - Do not mention internal field names or system implementation details.`;
 
 export class RoutingNoticeService {
@@ -177,22 +215,26 @@ export class RoutingNoticeService {
           .first<AgentRow | undefined>()
       : null;
 
-    const availability = await resolveScopedHumanAvailability(db, {
-      tenantId: input.tenantId,
-      departmentId: assignment.department_id,
-      teamId: assignment.team_id
-    });
+    // Only load schedule facts for fallback_ai scenario — for human_queue/human_assigned,
+    // the customer is already in queue and should NOT be told about future schedules.
+    // Passing schedule info to human_queue causes the LLM to fabricate "next available" dates.
+    const nextSchedules = input.scenario === "fallback_ai"
+      ? await loadUpcomingScheduleFacts(db, {
+          tenantId: input.tenantId,
+          departmentId: assignment.department_id,
+          teamId: assignment.team_id
+        })
+      : { summary: null, items: [] };
 
-    const nextSchedules = await loadUpcomingScheduleFacts(db, {
-      tenantId: input.tenantId,
-      departmentId: assignment.department_id,
-      teamId: assignment.team_id
-    });
+    const messageText = lastCustomerMessage?.content?.text ?? null;
 
     const facts = {
       scenario: input.scenario,
+      // detectedLanguage is derived from the actual message text server-side and should
+      // be trusted over customerLanguage which may be based on timezone/profile settings.
+      detectedLanguage: detectReplyLanguage(messageText, customer?.language ?? null),
       customerLanguage: customer?.language ?? null,
-      latestCustomerMessage: lastCustomerMessage?.content?.text ?? null,
+      latestCustomerMessage: messageText,
       assignedAgentName: assignedAgent?.display_name ?? null,
       queuePosition: assignment.queue_position ?? null,
       estimatedWaitSec: assignment.estimated_wait_sec ?? null,
@@ -200,13 +242,8 @@ export class RoutingNoticeService {
       humanProgress: assignment.human_progress,
       queueMode: assignment.queue_mode,
       aiFallbackAllowed: Boolean(assignment.ai_fallback_allowed),
-      humanAvailability: availability,
+      // nextScheduleSummary only populated for fallback_ai scenario (see above)
       nextScheduleSummary: nextSchedules.summary,
-      nextScheduleItems: nextSchedules.items,
-      // Only include the #AI opt-in hint in the fallback_ai scenario where the
-      // customer may want to explicitly switch back to AI mid-conversation.
-      // For human_queue and human_assigned, omitting this prevents the AI from
-      // generating a confusing "type #AI" sentence in a pure-human handoff notice.
       switchBackCommand: input.scenario === "fallback_ai" ? EXPLICIT_AI_OPT_IN_COMMAND : null
     };
 
@@ -261,6 +298,7 @@ export class RoutingNoticeService {
     // ── Fallback to template if AI produced nothing ───────────────────────────
     if (!noticeText) {
       noticeText = buildTemplateFallback(input.scenario, {
+        messageText,
         language: customer?.language ?? null,
         agentName: assignedAgent?.display_name ?? null,
         queuePosition: assignment.queue_position ?? null,

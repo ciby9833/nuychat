@@ -301,6 +301,8 @@ export class RoutingDecisionService {
     });
 
     if (!humanDecision.assignedAgentId) {
+      // Tier-2 fallback: try any available agent within the same dept/team scope.
+      // (This handles the case where decideForTarget found ineligible agents.)
       const fallbackHumanDecision = await humanDispatchService.decideForAnyAvailableTarget(db, {
         tenantId: context.tenantId,
         departmentId: policy.humanTarget.departmentId,
@@ -313,6 +315,25 @@ export class RoutingDecisionService {
       });
       if (fallbackHumanDecision) {
         humanDecision = fallbackHumanDecision;
+      }
+    }
+
+    // Tier-3 fallback: if dept/team scope found no eligible agent at all,
+    // widen to ALL agents in the tenant so that any available agent can pick up.
+    // This prevents "no agents available" when agents exist in other groups.
+    if (!humanDecision.assignedAgentId && (policy.humanTarget.departmentId || policy.humanTarget.teamId)) {
+      const anyTenantDecision = await humanDispatchService.decideForAnyAvailableTarget(db, {
+        tenantId: context.tenantId,
+        departmentId: null,
+        teamId: null,
+        strategy: policy.humanTarget.assignmentStrategy ?? "balanced_new_case",
+        priority: matchedRule?.priority ?? 100,
+        reason: "ai_handoff_human_dispatch_fallback_any_group",
+        auditSource: buildAuditSource(matchedRule),
+        excludeAgentIds: context.excludedAgentIds ?? []
+      });
+      if (anyTenantDecision) {
+        humanDecision = anyTenantDecision;
       }
     }
 

@@ -34,6 +34,8 @@ import {
 import { resolveTenantAISettingsForScene } from "../ai/provider-config.service.js";
 import {
   appendWorkingMemory,
+  getWorkingMemory,
+  patchLastAssistantTurn,
   upsertConversationInsight
 } from "../memory/customer-intelligence.service.js";
 import {
@@ -139,6 +141,14 @@ export interface OrchestratorInput {
   actorType?: "ai" | "agent" | "workflow";
   requesterId?: string | null;
   preferredSkillNames?: string[];
+  /**
+   * True when the conversation is in "fallback_ai" mode — the customer has
+   * already been queued for a human agent but no agent is currently available,
+   * so the AI is temporarily handling messages. In this mode the AI must NOT
+   * call requestHumanHandoff (the customer is already in queue) and should
+   * focus on reassuring the customer and answering simple questions.
+   */
+  isAiFallback?: boolean;
 }
 
 export interface OrchestratorResult {
@@ -212,8 +222,12 @@ export class OrchestratorService {
     // The orchestrator has zero visibility into real-time queue state, so letting
     // the LLM handle these requests always risks fabricated "no agents available"
     // responses in the wrong language. Short-circuit immediately to handoff.
+    //
+    // Exception: when isAiFallback=true the customer is ALREADY in the human queue.
+    // Calling handoff again would re-queue them and send a duplicate routing notice.
+    // Let the LLM handle it with the queue-holding context injected below.
     const lastUserText = chatHistory.filter((m) => m.role === "user").at(-1)?.content ?? "";
-    if (isExplicitHumanTransferRequest(lastUserText)) {
+    if (isExplicitHumanTransferRequest(lastUserText) && !input.isAiFallback) {
       return {
         action: "handoff",
         response: null,
@@ -319,9 +333,13 @@ export class OrchestratorService {
       runtimePolicy: filterRuntimePoliciesForSkills(runtimePolicy, hydratedSkills),
       preferredScriptKeys
     });
-    // All built-in tools are always exposed: skill tools + knowledge search + human handoff.
-    // The LLM decides which to call for each goal.
-    const tools = [...skillTools, SEARCH_KNOWLEDGE_TOOL_DEFINITION, REQUEST_HANDOFF_TOOL_DEFINITION];
+    // All built-in tools are exposed: skill tools + knowledge search + human handoff.
+    // When isAiFallback=true the customer is already in the human queue — omit the
+    // requestHumanHandoff tool so the LLM cannot re-trigger a handoff. The routing
+    // worker also has a guard, but removing the tool is the cleaner first line of defence.
+    const tools = input.isAiFallback
+      ? [...skillTools, SEARCH_KNOWLEDGE_TOOL_DEFINITION]
+      : [...skillTools, SEARCH_KNOWLEDGE_TOOL_DEFINITION, REQUEST_HANDOFF_TOOL_DEFINITION];
     const skillsInvoked: string[] = [];
     const skillsBlocked: Array<{ name: string; reason: string }> = [];
     const hydratedRuntimePolicy = filterRuntimePoliciesForSkills(runtimePolicy, hydratedSkills);
@@ -335,6 +353,54 @@ export class OrchestratorService {
     //     so the LLM has business context immediately, even before calling any tool.
     //   Layer 2 (tool) — the searchKnowledge tool remains available so the LLM can
     //     run dynamic follow-up queries mid-conversation.
+    //
+    // ── Correction loop — feedback signal detection ───────────────────────────
+    //
+    // This pipeline is SEPARATE from the human-dispatch decision chain.
+    // It handles knowledge quality feedback ONLY; routing decisions are made
+    // elsewhere (routing-decision.service.ts / requestHumanHandoff tool call).
+    //
+    // Two layers:
+    //   A. Per-conversation correction loop (immediate, stateless):
+    //      Dissatisfaction signal → exclude previously-used entries → CORRECTION SIGNAL in prompt.
+    //      Only affects THIS conversation; other conversations are not affected.
+    //
+    //   B. Org-level quality counter (deduplicated per conversation):
+    //      negative_feedback_count counts DISTINCT CONVERSATIONS that flagged an entry.
+    //      One conversation can only contribute +1 per entry, ever, so a single vocal
+    //      user cannot inflate the counter across messages.
+    //      Threshold: ≥ 3 distinct conversations → needs_review=true flag for admin review.
+    //
+    // Signals (explicit pushback only — human-transfer requests are NOT feedback signals;
+    // they belong to the routing/dispatch chain and are handled by requestHumanHandoff):
+    //   (1) Explicit pushback: "不对"/"错了"/"还是不行"/"wrong"/etc.
+    //   (2) Repeat question: same topic asked again right after a knowledge-based reply
+    //       (≥55% bigram/word token overlap with previous user message)
+
+    const recentWmTurns = await getWorkingMemory(input.conversationId).catch(() => []);
+    const lastAssistantWmTurn = [...recentWmTurns].reverse().find((t) => t.role === "assistant");
+    const lastUserWmTurn = [...recentWmTurns].reverse().find((t) => t.role === "user");
+
+    // Signal (1): explicit dissatisfaction ("不对", "wrong", "还是不行", etc.)
+    const hasExplicitPushback = !!(lastUserText && lastAssistantWmTurn && detectUserPushback(lastUserText));
+
+    // Signal (2): repeat question — same topic asked again after a knowledge-based reply.
+    // Only triggers when the last AI turn actually used knowledge entries (knowledgeEntryIds),
+    // and the current user message has ≥55% token overlap with their previous message.
+    const hasRepeatQuestion = !!(
+      lastAssistantWmTurn?.knowledgeEntryIds?.length &&
+      lastUserWmTurn?.content &&
+      lastUserText &&
+      computeTokenOverlap(lastUserText, lastUserWmTurn.content) >= 0.55
+    );
+
+    // NOTE: "user requests human after knowledge answer" is intentionally NOT a feedback signal.
+    // Requesting a human doesn't mean the knowledge was wrong — the user may have other reasons.
+    // Human transfer requests are handled by the requestHumanHandoff tool in the LLM decision (step 4).
+
+    const isFeedbackSignal = hasExplicitPushback || hasRepeatQuestion;
+    const excludeEntryIds = isFeedbackSignal ? (lastAssistantWmTurn?.knowledgeEntryIds ?? []) : [];
+
     const [harnessContext, preloadedKnowledgeEntries] = await Promise.all([
       runContextPipeline(db, {
         tenantId: input.tenantId,
@@ -346,10 +412,34 @@ export class OrchestratorService {
         ? searchKnowledgeEntries(db, {
             tenantId: input.tenantId,
             queryText: lastUserText,
-            limit: 3
+            limit: 3,
+            excludeEntryIds: excludeEntryIds.length > 0 ? excludeEntryIds : undefined
           }).catch(() => [])
         : Promise.resolve([])
     ]);
+
+    // Org-level quality signal: increment negative_feedback_count for the flagged entries,
+    // but ONLY if this conversation hasn't already counted for these entries
+    // (checked via negativeFeedbackCounted on the last assistant WM turn).
+    // Threshold: >= 3 distinct conversations → auto-flag for admin review.
+    if (isFeedbackSignal && excludeEntryIds.length > 0 && !lastAssistantWmTurn?.negativeFeedbackCounted) {
+      db("knowledge_base_entries")
+        .where("tenant_id", input.tenantId)
+        .whereIn("entry_id", excludeEntryIds)
+        .increment("negative_feedback_count", 1)
+        .then(() =>
+          db("knowledge_base_entries")
+            .where("tenant_id", input.tenantId)
+            .whereIn("entry_id", excludeEntryIds)
+            .where("negative_feedback_count", ">=", 3)
+            .update({ needs_review: true, last_flagged_at: db.fn.now() })
+        )
+        .catch(() => null);
+
+      // Mark this assistant turn so the same conversation never double-counts
+      patchLastAssistantTurn(input.conversationId, { negativeFeedbackCounted: true }).catch(() => null);
+    }
+
     const factSnapshot = harnessContext.factSnapshot;
 
     // Track in-flight verified facts accumulated during this orchestration run
@@ -367,10 +457,31 @@ export class OrchestratorService {
 
     // ── Harness: Prompt Assembly ────────────────────────────────────────────────
     const promptLayers = buildPromptLayers({ aiAgent: aiAgent ?? null });
+
+    // Queue-holding context: a light hint injected when AI is running as fallback
+    // while the customer is already waiting in the human support queue.
+    // Purpose: answer the customer's actual question normally, AND if they ask
+    // about their wait status, reassure them — without announcing the queue
+    // status unprompted on every single message.
+    const queueHoldingContext = input.isAiFallback
+      ? `[CONTEXT: HUMAN QUEUE ACTIVE]\nThis customer has previously requested a human agent and is currently waiting in the support queue. A human specialist will join soon.\n- Answer their question normally and helpfully.\n- If they ask about wait status or why a human hasn't appeared, reassure them warmly that they are connected and a specialist is on the way.\n- Do NOT proactively announce the queue status on every message — only mention it when directly relevant.`
+      : null;
+
+    const correctionSignalReason = hasExplicitPushback
+      ? "The customer explicitly said the previous answer was wrong or unhelpful."
+      : hasRepeatQuestion
+        ? "The customer is asking the same question again, indicating the previous answer did not satisfy them."
+        : null;
+
+    const correctionContext = correctionSignalReason
+      ? `[CORRECTION SIGNAL]\n${correctionSignalReason}\n- Do NOT repeat the same information or cite the same entries from working memory.\n- Call searchKnowledge with DIFFERENT, more specific search terms to find alternative content.\n- If no new useful information is found, honestly admit the limitation${input.isAiFallback ? " and let the customer know a human specialist is already on the way" : " and call requestHumanHandoff"}.`
+      : null;
+
     const runtimePrompt = assembleSystemPrompt({
       layers: promptLayers,
-      routeContext: null,
+      routeContext: queueHoldingContext,
       customerIntelligence: harnessContext.customerIntelligence,
+      correctionContext,
       knowledgeContext: formatKnowledgeEntriesAsContext(preloadedKnowledgeEntries),
       factContext: harnessContext.factContext,
       candidateSkills: hydratedSkills,
@@ -820,10 +931,33 @@ export class OrchestratorService {
       const lastUserMsg = chatHistory.filter((m) => m.role === "user").at(-1);
       if (lastUserMsg && responseText) {
         const now = Date.now();
+        const usedEntryIds = preloadedKnowledgeEntries.map((e) => e.entry_id);
         appendWorkingMemory(input.conversationId, [
           { role: "user", content: lastUserMsg.content, ts: now },
-          { role: "assistant", content: responseText, ts: now + 1 }
+          {
+            role: "assistant",
+            content: responseText,
+            ts: now + 1,
+            knowledgeEntryIds: usedEntryIds.length > 0 ? usedEntryIds : undefined,
+            // Record sentiment at reply time; used next turn to detect sentiment degradation
+            sentimentAtReply: aiDecision.sentiment
+          }
         ]).catch(() => null);
+
+        // Increment hit_count for knowledge entries actually used in this reply
+        if (usedEntryIds.length > 0) {
+          db("knowledge_base_entries")
+            .where("tenant_id", input.tenantId)
+            .whereIn("entry_id", usedEntryIds)
+            .update({ last_used_at: db.fn.now() })
+            .then(() =>
+              db("knowledge_base_entries")
+                .where("tenant_id", input.tenantId)
+                .whereIn("entry_id", usedEntryIds)
+                .increment("hit_count", 1)
+            )
+            .catch(() => null);
+        }
       }
 
       const entities = extractEntitiesFromText(
@@ -1320,6 +1454,81 @@ function isExplicitHumanTransferRequest(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
   return EXPLICIT_HUMAN_TRANSFER_PATTERNS.some((pattern) => pattern.test(t));
+}
+
+/**
+ * Computes a simple token-overlap ratio between two texts (Jaccard-like on CJK bigrams + Latin words).
+ * Used to detect repeat questions: if the user's current message shares >= 55% tokens with their
+ * previous message, we treat it as a repeated inquiry after an unsatisfactory answer.
+ *
+ * Returns a value in [0, 1]. 0 = no overlap, 1 = identical.
+ */
+function computeTokenOverlap(a: string, b: string): number {
+  const tokenize = (text: string): Set<string> => {
+    const tokens = new Set<string>();
+    // CJK bigrams
+    const cjkSegs = text.match(/[一-鿿぀-ヿ가-힯]+/g) ?? [];
+    for (const seg of cjkSegs) {
+      if (seg.length >= 2) tokens.add(seg);
+      for (let i = 0; i < seg.length - 1; i++) tokens.add(seg[i] + seg[i + 1]);
+    }
+    // Latin words ≥ 2 chars
+    for (const w of (text.match(/[a-zA-Z]{2,}/g) ?? [])) tokens.add(w.toLowerCase());
+    return tokens;
+  };
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let intersection = 0;
+  for (const t of ta) if (tb.has(t)) intersection++;
+  return intersection / Math.max(ta.size, tb.size);
+}
+
+/**
+ * Detects when the customer signals that the AI's previous answer was incorrect or unhelpful.
+ * Used to trigger a "correction" loop: exclude previously-used knowledge entries and instruct
+ * the LLM to search for alternative content rather than repeating the same answer.
+ *
+ * Intentionally conservative — requires explicit correction signal, not general negativity.
+ */
+const USER_PUSHBACK_PATTERNS = [
+  // Chinese — explicit correction / "wrong"
+  /不对[啊吧呀嘛]?/,
+  /不是这[个样]?/,
+  /说错了/,
+  /答错了/,
+  /答非所问/,
+  /错了[啊吧]?/,
+  /不正确/,
+  /有误/,
+  /你说的不[对是]/,
+  // Chinese — "still not working / still the same"
+  /还是不[行对]/,
+  /还是一样/,
+  /还是那样/,
+  /依然不[行对]/,
+  /仍然不[行对]/,
+  /没有[用解决]/,
+  /没解决/,
+  /没有帮助/,
+  /不管用/,
+  // Chinese — explicit re-search request
+  /重新查[一下查找]*/,
+  /再查[一下查找]*/,
+  /换个[方式答案]/,
+  /换一种/,
+  // English
+  /\b(wrong|incorrect|not right|that('s| is) (wrong|not right|incorrect))\b/i,
+  /\b(still doesn'?t|still not|doesn'?t (work|help)|that didn'?t (work|help))\b/i,
+  /\bthat('s| is) not (what|the|correct|right)\b/i,
+  /\btry again\b/i,
+  /\bdifferent answer\b/i
+];
+
+function detectUserPushback(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return USER_PUSHBACK_PATTERNS.some((pattern) => pattern.test(t));
 }
 
 function noAiResult(reason: string): OrchestratorResult {
