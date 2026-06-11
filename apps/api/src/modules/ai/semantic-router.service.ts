@@ -1,26 +1,14 @@
 /**
- * 作用：消息语义分流，判断当前请求进入 knowledge / action / clarification 哪条轨道。
+ * 作用：消息语义分流，输出 analytics 标签供内存编码和监控使用。
  * 上游：orchestrator.service.ts
- * 下游：context-pipeline.ts、prompt-assembler.ts、后续 skill-hydration.service.ts
- * 协作对象：ai-runtime-contract.ts（fallback intent）、fact-layer.service.ts（后续可接 recent facts）
- * 不负责：不直接执行 tool，不直接生成最终回复，不决定最终 handoff。
- * 变更注意：第一阶段使用规则路由止血；后续可替换为轻量模型分类器，但保持相同输出契约。
+ * 下游：orchestrator 内存写入（semanticTrack 字段）
+ * 协作对象：ai-runtime-contract.ts（fallback intent）
+ * 不负责：不直接执行 tool，不生成最终回复，不决定 handoff，不限制工具访问。
+ * 变更注意：track 已从执行门控降级为纯分析标签；后续可替换为轻量模型分类器，保持相同输出契约。
  */
 
 import { inferConversationIntent } from "./ai-runtime-contract.js";
 import type { SemanticRouteResult } from "./semantic-router.types.js";
-
-const ACTION_KEYWORDS = [
-  "status", "tracking", "track", "order", "ticket", "refund", "cancel", "invoice", "booking",
-  "reservation", "appointment", "account", "password", "login", "shipment", "logistics",
-  "状态", "进度", "查询", "订单", "单号", "退款", "取消", "账单", "发票", "预约", "账号", "密码", "物流"
-];
-
-const CLARIFICATION_PATTERNS = [
-  "帮我查一下", "查一下", "看一下", "帮我看看", "处理一下",
-  "check", "help me", "look into", "please help", "can you help",
-  "tolong cek", "bantu cek"
-];
 
 const QUESTION_WORDS = [
   "what", "why", "how", "which", "when", "where", "can", "does",
@@ -33,25 +21,26 @@ export async function routeMessage(input: {
 }): Promise<SemanticRouteResult> {
   const userMessages = input.chatHistory.filter((message) => message.role === "user");
   const lastUserMessage = userMessages.at(-1)?.content.trim() ?? "";
-  const fullUserText = userMessages.map((message) => message.content).join(" ").toLowerCase();
   const normalizedLast = lastUserMessage.toLowerCase();
   const intent = inferConversationIntent(input.chatHistory);
 
-  if (shouldClarify(normalizedLast)) {
+  // Very short or empty messages — logged as clarification for analytics
+  if (normalizedLast.length <= 5) {
     return {
       track: "clarification_track",
       intent,
-      confidence: 0.72,
-      reason: "latest_user_message_is_too_generic_for_safe_execution"
+      confidence: 0.70,
+      reason: "latest_user_message_too_short_to_classify"
     };
   }
 
-  if (looksActionable(normalizedLast, fullUserText)) {
+  // Reference-like token (IDs, codes) — likely actionable
+  if (/\b[A-Z0-9-]{6,24}\b/i.test(lastUserMessage)) {
     return {
       track: "action_track",
       intent,
       confidence: 0.84,
-      reason: "message_contains_transactional_lookup_or_execution_signals"
+      reason: "message_contains_reference_like_token"
     };
   }
 
@@ -59,20 +48,6 @@ export async function routeMessage(input: {
     track: "knowledge_track",
     intent,
     confidence: QUESTION_WORDS.some((word) => normalizedLast.includes(word)) ? 0.82 : 0.68,
-    reason: "default_to_business_knowledge_answering_when_no_action_signal_detected"
+    reason: "default_to_knowledge_answering"
   };
-}
-
-function shouldClarify(lastUserMessage: string): boolean {
-  if (!lastUserMessage) return true;
-  const compact = lastUserMessage.replace(/\s+/g, " ").trim();
-  const hasReferenceLikeToken = /\b[A-Z0-9-]{6,24}\b/i.test(compact);
-  const tooShort = compact.length <= 8;
-  const genericOnly = CLARIFICATION_PATTERNS.some((pattern) => compact.includes(pattern));
-  return !hasReferenceLikeToken && (tooShort || genericOnly);
-}
-
-function looksActionable(lastUserMessage: string, fullUserText: string): boolean {
-  if (/\b[A-Z0-9-]{6,24}\b/i.test(lastUserMessage)) return true;
-  return ACTION_KEYWORDS.some((keyword) => fullUserText.includes(keyword));
 }

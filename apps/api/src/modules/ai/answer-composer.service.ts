@@ -8,7 +8,6 @@
  */
 
 import type { AIInteractionContract, AISentiment, AIControlAction } from "./ai-runtime-contract.js";
-import type { SemanticTrack } from "./semantic-router.types.js";
 import type { OrchestratorResult } from "../orchestrator/orchestrator.service.js";
 
 type BlockedSkill = { name: string; reason: string };
@@ -43,7 +42,6 @@ export function composeClarificationTurn(input: {
 }
 
 export function composeFinalAnswer(input: {
-  track: SemanticTrack;
   aiDecision: AIInteractionContract;
   policyEnforcement: {
     action: AIControlAction;
@@ -59,14 +57,8 @@ export function composeFinalAnswer(input: {
     ? (input.policyEnforcement.handoffReason ?? "human_review_required")
     : null;
   const responseText = action === "reply"
-    ? resolveTrackReply(input.track, input.aiDecision.response)
+    ? (input.aiDecision.response?.trim() || null)
     : null;
-  const intent = input.track === "clarification_track" && action === "reply"
-    ? "clarification_request"
-    : input.aiDecision.intent;
-  const sentiment = input.track === "clarification_track" && action === "reply"
-    ? "neutral"
-    : input.aiDecision.sentiment;
   const responseSummary = responseText ?? handoffReason ?? input.finalContent.slice(0, 400);
 
   return {
@@ -77,8 +69,8 @@ export function composeFinalAnswer(input: {
     result: {
       action,
       response: responseText,
-      intent,
-      sentiment,
+      intent: input.aiDecision.intent,
+      sentiment: input.aiDecision.sentiment,
       shouldHandoff: action === "handoff",
       handoffReason: handoffReason ?? undefined,
       tokensUsed: input.tokensUsed,
@@ -87,12 +79,4 @@ export function composeFinalAnswer(input: {
       skillsBlocked: input.skillsBlocked
     }
   };
-}
-
-function resolveTrackReply(track: SemanticTrack, response: string | null): string | null {
-  if (response?.trim()) return response.trim();
-  if (track === "clarification_track") {
-    return "Could you please provide more details so I can assist you?";
-  }
-  return null;
 }

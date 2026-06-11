@@ -42,6 +42,7 @@ export class RoutingContextService {
           "department_id",
           "team_id",
           "assigned_agent_id",
+          "assigned_ai_agent_id",
           "assignment_strategy",
           "priority",
           "status",
@@ -59,6 +60,7 @@ export class RoutingContextService {
           department_id: string | null;
           team_id: string | null;
           assigned_agent_id: string | null;
+          assigned_ai_agent_id: string | null;
           assignment_strategy: "round_robin" | "least_busy" | "sticky" | null;
           priority: number | null;
           status: string | null;
@@ -148,6 +150,7 @@ export class RoutingContextService {
             departmentId: assignment.department_id ?? null,
             teamId: assignment.team_id ?? null,
             assignedAgentId: assignment.assigned_agent_id ?? null,
+            assignedAiAgentId: assignment.assigned_ai_agent_id ?? null,
             assignmentStrategy: assignment.assignment_strategy ?? null,
             priority: assignment.priority ?? null,
             status: assignment.status ?? null,

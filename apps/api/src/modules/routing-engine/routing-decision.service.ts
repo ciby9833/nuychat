@@ -590,16 +590,19 @@ function isHumanPriorityConversation(context: RoutingContext): boolean {
   const sentiment = (context.issueSummary.lastSentiment ?? "").toLowerCase();
   const tier = (context.customerTier ?? "").toLowerCase();
 
+  // VIP customers always get human priority
   if (tier === "vip") return true;
+  // Negative/angry sentiment → human is better at de-escalation
   if (sentiment.includes("negative") || sentiment.includes("angry")) return true;
-  return ["complaint", "refund", "dispute", "legal", "escalat", "cancel"].some((keyword) => intent.includes(keyword));
+  // Industry-agnostic adversarial signals: complaint, dispute, legal threat, escalation
+  return ["complaint", "dispute", "legal", "escalat"].some((keyword) => intent.includes(keyword));
 }
 
-function isAIFriendlyConversation(context: RoutingContext): boolean {
-  const intent = (context.issueSummary.lastIntent ?? "").toLowerCase();
-  return ["faq", "order_status", "tracking", "logistics", "invoice", "hours", "pricing", "product"].some((keyword) =>
-    intent.includes(keyword)
-  );
+function isAIFriendlyConversation(_context: RoutingContext): boolean {
+  // Previously listed industry-specific categories (order_status, tracking, logistics, invoice…).
+  // Removed: these are e-commerce-centric and don't apply to all tenants.
+  // For hybrid mode, routing is now purely load-based (see resolveSmartOwnerSide below).
+  return false;
 }
 
 function resolvePlanAction(selectedOwnerType: RoutingOwnerSide, assignedAgentId: string | null): RoutingPlanAction {

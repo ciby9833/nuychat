@@ -22,11 +22,9 @@ import {
 import {
   listTenantSkillsForPlanning,
 } from "../agent-skills/skill-definition.service.js";
-import { smartPlanCapabilities } from "../agent-skills/skill-planner.service.js";
 import { hydrateSkillsForTurn } from "../agent-skills/skill-hydration.service.js";
 import {
-  recordSkillRun,
-  validateCapabilitySuggestions
+  recordSkillRun
 } from "../agent-skills/planner-guard.service.js";
 import {
   clearConversationCapabilityState,
@@ -58,6 +56,7 @@ import {
 import { scheduleLongTask } from "../tasks/task-scheduler.service.js";
 import {
   buildVerifiedFactFromToolResult,
+  buildVerifiedFactFromKnowledgeEntry,
   summarizeSkillResult,
   type VerifiedFact
 } from "../ai/fact-layer.service.js";
@@ -70,7 +69,62 @@ import {
   SandboxState
 } from "../ai/harness/index.js";
 import { routeMessage } from "../ai/semantic-router.service.js";
-import type { SemanticTrack } from "../ai/semantic-router.types.js";
+import { formatKnowledgeEntriesAsContext, searchKnowledgeEntries } from "../knowledge/knowledge-retrieval.service.js";
+
+// ─── Built-in Agent Tools ─────────────────────────────────────────────────────
+
+/**
+ * Name of the built-in knowledge-search tool injected into every agent turn.
+ * The LLM calls this when it needs to look up policies, FAQs, or product info —
+ * instead of the old approach of pre-fetching knowledge only on "knowledge_track".
+ */
+const SEARCH_KNOWLEDGE_TOOL_NAME = "searchKnowledge";
+
+const SEARCH_KNOWLEDGE_TOOL_DEFINITION = {
+  type: "function" as const,
+  function: {
+    name: SEARCH_KNOWLEDGE_TOOL_NAME,
+    description:
+      "Search the business knowledge base for policies, FAQs, product information, procedures, or any factual content the tenant has configured. Call this whenever the customer asks a question that may be answered by documented business knowledge.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string" as const,
+          description: "The search query, ideally phrased as the customer's question or the key concept to look up."
+        }
+      },
+      required: ["query"]
+    }
+  }
+};
+
+/**
+ * Tool the LLM calls to explicitly request a human agent.
+ * Replaces the old "action=handoff" JSON-contract approach:
+ * the model now signals handoff intent as a structured tool call
+ * instead of embedding it in the free-text JSON response.
+ */
+const REQUEST_HANDOFF_TOOL_NAME = "requestHumanHandoff";
+
+const REQUEST_HANDOFF_TOOL_DEFINITION = {
+  type: "function" as const,
+  function: {
+    name: REQUEST_HANDOFF_TOOL_NAME,
+    description:
+      "Transfer this conversation to a human agent. Call this when the customer explicitly requests a human, when the issue requires human judgment or approval, or when the available tools cannot resolve the customer's problem.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        reason: {
+          type: "string" as const,
+          description: "Brief operational reason for the handoff (e.g. 'customer_requested_human', 'complex_issue', 'requires_approval')."
+        }
+      },
+      required: ["reason"]
+    }
+  }
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -153,12 +207,37 @@ export class OrchestratorService {
       return noAiResult("no_messages");
     }
 
+    // ── Explicit human-transfer gate ──────────────────────────────────────────
+    // Detect unambiguous "I want a human agent" messages BEFORE calling the LLM.
+    // The orchestrator has zero visibility into real-time queue state, so letting
+    // the LLM handle these requests always risks fabricated "no agents available"
+    // responses in the wrong language. Short-circuit immediately to handoff.
+    const lastUserText = chatHistory.filter((m) => m.role === "user").at(-1)?.content ?? "";
+    if (isExplicitHumanTransferRequest(lastUserText)) {
+      return {
+        action: "handoff",
+        response: null,
+        intent: "human_handoff",
+        sentiment: "neutral",
+        shouldHandoff: true,
+        handoffReason: "customer_requested_human",
+        tokensUsed: 0,
+        confidence: 0.99,
+        skillsInvoked: []
+      };
+    }
+
     const model = aiSettings.model;
     const providerName = aiSettings.providerName;
     const actorType = input.actorType ?? "ai";
-    const semanticRoute = await routeMessage({
-      chatHistory
-    });
+
+    // ── Semantic route — analytics/memory label only ──────────────────────────
+    // routeMessage() is kept for analytics metadata and memory encoding.
+    // It NO LONGER gates which tools or context layers are loaded.
+    // The LLM is now the decision-maker: it sees all available tools and
+    // decides autonomously when to call knowledge search, skills, or handoff.
+    const semanticRoute = await routeMessage({ chatHistory });
+
     const runtimePolicy = await getBoundRuntimePolicies(db, {
       tenantId: input.tenantId,
       capabilityScope: input.capabilityScope,
@@ -166,21 +245,22 @@ export class OrchestratorService {
       conversationId: input.conversationId
     });
     const requestedPreferredSkills = normalizePreferredSkills(input.preferredSkillNames ?? []);
-    const tenantSkills = semanticRoute.track === "action_track"
-      ? await listTenantSkillsForPlanning(db, {
-          tenantId: input.tenantId,
-          channelType: input.channelType,
-          actorRole: actorType,
-          capabilityScope: input.capabilityScope ?? null,
-          ownerMode: actorType
-        })
-      : [];
-    const activeCapabilityState = semanticRoute.track === "action_track"
-      ? await getConversationCapabilityState(db, {
-          tenantId: input.tenantId,
-          conversationId: input.conversationId
-        })
-      : null;
+
+    // ── Always load tenant skills ─────────────────────────────────────────────
+    // Previously guarded by action_track. Now every turn has access to all
+    // tenant-configured skills so the LLM can invoke them for any goal.
+    const tenantSkills = await listTenantSkillsForPlanning(db, {
+      tenantId: input.tenantId,
+      channelType: input.channelType,
+      actorRole: actorType,
+      capabilityScope: input.capabilityScope ?? null,
+      ownerMode: actorType
+    });
+
+    const activeCapabilityState = await getConversationCapabilityState(db, {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId
+    });
     const continuationSkill = activeCapabilityState
       ? tenantSkills.find((skill) => skill.capabilityId === activeCapabilityState.capabilityId) ?? null
       : null;
@@ -190,107 +270,27 @@ export class OrchestratorService {
         conversationId: input.conversationId
       });
     }
-    const preReplyPolicy = semanticRoute.track === "action_track"
-      ? await evaluatePreReplyPolicy(db, {
-          tenantId: input.tenantId,
-          chatHistory,
-          preferredSkillNames: requestedPreferredSkills,
-          availableSkills: tenantSkills
-        })
-      : {
-          enabled: false,
-          intent: semanticRoute.intent,
-          requiredChecks: [],
-          requiredBindingKeysByCheck: {},
-          preferredBindingKeys: requestedPreferredSkills
-        };
+    const preReplyPolicy = await evaluatePreReplyPolicy(db, {
+      tenantId: input.tenantId,
+      chatHistory,
+      preferredSkillNames: requestedPreferredSkills,
+      availableSkills: tenantSkills
+    });
     const preferredScriptKeys = preReplyPolicy.preferredBindingKeys;
-    const plannerSkills = continuationSkill
-      ? [continuationSkill]
-      : preferredScriptKeys.length > 0
-      ? tenantSkills.filter((skill) => skill.scripts.some((script) => preferredScriptKeys.includes(script.scriptKey)))
-      : tenantSkills;
-    // ── Recent skill context guard ────────────────────────────────────────────
-    // If a skill already ran successfully in the last 3 minutes AND its result
-    // is visible in chatHistory (assistant turn follows the user turn that
-    // triggered it), skip skill selection and let the LLM synthesize a
-    // focused answer from existing context.  This prevents redundant re-invocation
-    // when the customer asks a follow-up like "what is the latest status?" right
-    // after receiving a full logistics dump.
-    const hasRecentSkillContext = semanticRoute.track === "action_track" && !continuationSkill
-      ? await checkRecentSkillContext(db, {
-          tenantId: input.tenantId,
-          conversationId: input.conversationId,
-          chatHistory
-        })
-      : false;
 
-    // ── Smart Skill Planning ─────────────────────────────────────────────────
-    // Tier 1 (≤ 5 skills): skip LLM planner, use all as candidates.
-    // Tier 2 (> 5, keyword-filtered ≤ 5): rule-based pre-filter.
-    // Tier 3 (> 5, keyword can't narrow): call LLM planner.
-    const capabilitySuggestions = semanticRoute.track !== "action_track"
-      ? {
-          candidates: [],
-          requiresClarification: semanticRoute.track === "clarification_track",
-          clarificationQuestion: semanticRoute.track === "clarification_track"
-            ? "Could you share the specific order number, reference, or detail you want me to check?"
-            : null,
-          plannerStrategy: "direct" as const
-        }
-      : continuationSkill
-      ? {
-          candidates: [{ skillSlug: continuationSkill.slug, reason: "continue_capability_state", confidence: 1 }],
-          requiresClarification: false,
-          clarificationQuestion: null,
-          plannerStrategy: "direct" as const
-        }
-      : hasRecentSkillContext
-        ? {
-            candidates: [],
-            requiresClarification: false,
-            clarificationQuestion: null,
-            plannerStrategy: "direct" as const
-          }
-        : await smartPlanCapabilities({
-            provider: aiSettings.provider,
-            providerName,
-            model,
-            messages: chatHistory,
-            temperature: aiSettings.temperature,
-            maxTokens: aiSettings.maxTokens,
-            skills: plannerSkills,
-            db,
-            tenantId: input.tenantId
-          });
-    const validatedSuggestions = semanticRoute.track !== "action_track"
-      ? {
-          candidates: [],
-          requiresClarification: capabilitySuggestions.requiresClarification,
-          clarificationQuestion: capabilitySuggestions.clarificationQuestion
-        }
-      : continuationSkill
-      ? {
-          candidates: [{ skill: continuationSkill, reason: "continue_capability_state", confidence: 1 }],
-          requiresClarification: false,
-          clarificationQuestion: null
-        }
-      : await validateCapabilitySuggestions(db, {
-          tenantId: input.tenantId,
-          conversationId: input.conversationId,
-          suggestions: capabilitySuggestions,
-          availableSkills: plannerSkills
-        });
-    const candidateSkills = validatedSuggestions.candidates.map((item) => item.skill).slice(0, 5);
-    const selectedSkill = candidateSkills[0] ?? null;
-    const hydratedSkills = semanticRoute.track === "action_track"
-      ? hydrateSkillsForTurn({
-          candidateSkills,
-          selectedSkill,
-          preferredScriptKeys,
-          maxSkills: 2
-        })
-      : [];
+    // ── Agent-model: direct tool dispatch (no planner) ────────────────────────
+    // All tenant skills are exposed as tools alongside the built-in
+    // searchKnowledge and requestHumanHandoff tools. The LLM decides
+    // autonomously which tools to call for each customer goal.
+    // continuationSkill is used only to maintain priority ordering for
+    // in-progress multi-step flows; it does not gate other tools.
+    const selectedSkill = continuationSkill ?? null;
+    const hydratedSkills = hydrateSkillsForTurn({
+      candidateSkills: tenantSkills,
+      selectedSkill: continuationSkill,
+      preferredScriptKeys,
+      maxSkills: 20   // guard against extreme skill counts; 20 is ample for any real deployment
+    });
     const selectedScriptKey = selectedSkill?.scripts.find(
       (script) => script.enabled && (preferredScriptKeys.length === 0 || preferredScriptKeys.includes(script.scriptKey))
     )?.scriptKey ?? selectedSkill?.scripts.find((script) => script.enabled)?.scriptKey ?? null;
@@ -300,108 +300,78 @@ export class OrchestratorService {
       conversationId: input.conversationId,
       customerId: input.customerId,
       caseId: input.caseId ?? null,
-      status: candidateSkills.length > 0 ? "planned" : "blocked",
-      selectedReason: continuationSkill
-        ? "continue_capability_state"
-        : validatedSuggestions.candidates[0]?.reason ?? "no_capability_selected",
-      confidence: validatedSuggestions.candidates[0]?.confidence ?? 0,
+      status: "planned",
+      selectedReason: continuationSkill ? "continue_capability_state" : "direct_tool_dispatch",
+      confidence: 1,
       plannerTrace: {
-        plannerStrategy: capabilitySuggestions.plannerStrategy,
-        capabilitySuggestions: {
-          candidates: capabilitySuggestions.candidates,
-          requiresClarification: capabilitySuggestions.requiresClarification
-        },
-        candidateSkills: validatedSuggestions.candidates.map((item) => ({
-          slug: item.skill.slug,
-          reason: item.reason,
-          confidence: item.confidence
-        })),
+        plannerStrategy: "direct",
+        capabilitySuggestions: { candidates: [], requiresClarification: false },
+        candidateSkills: [],
         hydratedSkillSlugs: hydratedSkills.map((skill) => skill.slug),
-        availableSkillCount: plannerSkills.length,
+        availableSkillCount: tenantSkills.length,
         selectedSkillSlug: selectedSkill?.slug ?? null,
         selectedScriptKey
       }
     });
-    // Note: phase-level traces (formerly in skill_execution_traces) are now
-    // folded into plannerTrace above and verifier/reviserSteps below.
-    if (candidateSkills.length === 0) {
-      if (validatedSuggestions.requiresClarification) {
-        const clarificationReply = validatedSuggestions.clarificationQuestion?.trim() || "Could you please provide more details so I can assist you?";
-        if (clarificationReply) {
-          await db("skill_runs")
-            .where({ run_id: skillRunId })
-            .update({
-              status: "completed",
-              updated_at: db.fn.now()
-            });
-          return composeClarificationTurn({
-            reply: clarificationReply,
-            confidence: 0.5
-          });
-        }
-      }
-    }
-    if (selectedSkill && candidateSkills.length === 1 && validatedSuggestions.requiresClarification && !continuationSkill) {
-      const clarificationReply = buildClarificationReply({
-        plannerDecision: validatedSuggestions,
-        selectedSkill
-      });
-      await upsertConversationCapabilityState(db, {
-        tenantId: input.tenantId,
-        conversationId: input.conversationId,
-        customerId: input.customerId,
-        capabilityId: selectedSkill.capabilityId,
-        status: "clarifying",
-        clarificationQuestion: clarificationReply,
-        missingInputs: Array.isArray(selectedSkill.inputSchema.required)
-          ? selectedSkill.inputSchema.required.map((item) => String(item))
-          : [],
-        resolvedInputs: {},
-        lastUserMessage: chatHistory.filter((message) => message.role === "user").at(-1)?.content ?? null
-      });
-      await db("skill_runs")
-        .where({ run_id: skillRunId })
-        .update({
-          status: "waiting_input",
-          updated_at: db.fn.now()
-        });
-      return composeClarificationTurn({
-        reply: clarificationReply,
-        confidence: Math.max(validatedSuggestions.candidates[0]?.confidence ?? 0, 0.5)
-      });
-    }
-    const tools = buildRuntimeTools({
+
+    const skillTools = buildRuntimeTools({
       candidateSkills: hydratedSkills,
       runtimePolicy: filterRuntimePoliciesForSkills(runtimePolicy, hydratedSkills),
       preferredScriptKeys
     });
+    // All built-in tools are always exposed: skill tools + knowledge search + human handoff.
+    // The LLM decides which to call for each goal.
+    const tools = [...skillTools, SEARCH_KNOWLEDGE_TOOL_DEFINITION, REQUEST_HANDOFF_TOOL_DEFINITION];
     const skillsInvoked: string[] = [];
     const skillsBlocked: Array<{ name: string; reason: string }> = [];
     const hydratedRuntimePolicy = filterRuntimePoliciesForSkills(runtimePolicy, hydratedSkills);
 
     // ── Harness: Context Pipeline ──────────────────────────────────────────────
-    // Load customer intelligence + fact snapshot + conversation state in parallel.
-    // harness = prompt + context + experience + skills + sandbox
-    const harnessContext = await runContextPipeline(db, {
-      tenantId: input.tenantId,
-      conversationId: input.conversationId,
-      customerId: input.customerId,
-      track: semanticRoute.track,
-      knowledgeQuery: chatHistory.filter((message) => message.role === "user").at(-1)?.content ?? "",
-      activeSkillSlug: (selectedSkill || continuationSkill)?.slug ?? null
-    });
+    // Load customer intelligence + fact snapshot in parallel, then pre-load the
+    // most relevant knowledge entries for the current user message.
+    //
+    // Dual-track knowledge:
+    //   Layer 1 (pre-loaded) — top matching entries injected into the system prompt
+    //     so the LLM has business context immediately, even before calling any tool.
+    //   Layer 2 (tool) — the searchKnowledge tool remains available so the LLM can
+    //     run dynamic follow-up queries mid-conversation.
+    const [harnessContext, preloadedKnowledgeEntries] = await Promise.all([
+      runContextPipeline(db, {
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        customerId: input.customerId,
+        activeSkillSlug: (selectedSkill || continuationSkill)?.slug ?? null
+      }),
+      lastUserText
+        ? searchKnowledgeEntries(db, {
+            tenantId: input.tenantId,
+            queryText: lastUserText,
+            limit: 3
+          }).catch(() => [])
+        : Promise.resolve([])
+    ]);
     const factSnapshot = harnessContext.factSnapshot;
 
     // Track in-flight verified facts accumulated during this orchestration run
     const runVerifiedFacts: VerifiedFact[] = [...factSnapshot.verifiedFacts];
 
+    // Register pre-loaded knowledge as verified facts so the sandbox guardrail
+    // can cross-check AI replies against them.
+    if (preloadedKnowledgeEntries.length > 0) {
+      runVerifiedFacts.push(
+        ...preloadedKnowledgeEntries.map((entry) =>
+          buildVerifiedFactFromKnowledgeEntry(entry, lastUserText)
+        )
+      );
+    }
+
     // ── Harness: Prompt Assembly ────────────────────────────────────────────────
     const promptLayers = buildPromptLayers({ aiAgent: aiAgent ?? null });
     const runtimePrompt = assembleSystemPrompt({
       layers: promptLayers,
-      routeContext: buildSemanticRoutePrompt(semanticRoute.track, semanticRoute.reason, semanticRoute.intent),
+      routeContext: null,
       customerIntelligence: harnessContext.customerIntelligence,
-      knowledgeContext: harnessContext.knowledgeContext,
+      knowledgeContext: formatKnowledgeEntriesAsContext(preloadedKnowledgeEntries),
       factContext: harnessContext.factContext,
       candidateSkills: hydratedSkills,
       responseContract: ORCHESTRATOR_RESPONSE_CONTRACT
@@ -421,6 +391,9 @@ export class OrchestratorService {
       let inputTokens = 0;
       let outputTokens = 0;
       let lastToolCalls: AIToolCall[] = [];
+      // Set when the LLM calls requestHumanHandoff tool — skips further loops.
+      let handoffRequestedByTool = false;
+      let handoffReasonFromTool: string | null = null;
       const loopMessages: AIMessage[] = [
         { role: "system", content: runtimePrompt },
         ...llmMessages
@@ -456,6 +429,49 @@ export class OrchestratorService {
         });
 
         for (const toolCall of turn.toolCalls) {
+          // ── Built-in: searchKnowledge ────────────────────────────────────
+          if (toolCall.function.name === SEARCH_KNOWLEDGE_TOOL_NAME) {
+            const args = safeParseJson(toolCall.function.arguments);
+            const query = typeof args.query === "string" ? args.query.trim() : "";
+            let knowledgeResult: string;
+            if (query) {
+              try {
+                const knowledgeEntries = await searchKnowledgeEntries(db, {
+                  tenantId: input.tenantId,
+                  queryText: query,
+                  limit: 4
+                });
+                const contextText = formatKnowledgeEntriesAsContext(knowledgeEntries);
+                knowledgeResult = JSON.stringify({
+                  found: knowledgeEntries.length > 0,
+                  context: contextText || "No relevant knowledge found."
+                });
+                // Register knowledge entries as verified facts for guardrail checks
+                const knowledgeFacts = knowledgeEntries.map((entry) =>
+                  buildVerifiedFactFromKnowledgeEntry(entry, query)
+                );
+                runVerifiedFacts.push(...knowledgeFacts);
+              } catch {
+                knowledgeResult = JSON.stringify({ found: false, context: "Knowledge search temporarily unavailable." });
+              }
+            } else {
+              knowledgeResult = JSON.stringify({ found: false, context: "No query provided." });
+            }
+            loopMessages.push({ role: "tool", content: knowledgeResult, toolCallId: toolCall.id });
+            continue;
+          }
+
+          // ── Built-in: requestHumanHandoff ────────────────────────────────────
+          if (toolCall.function.name === REQUEST_HANDOFF_TOOL_NAME) {
+            const args = safeParseJson(toolCall.function.arguments);
+            handoffReasonFromTool = typeof args.reason === "string" && args.reason.trim()
+              ? args.reason.trim()
+              : "human_requested";
+            handoffRequestedByTool = true;
+            loopMessages.push({ role: "tool", content: JSON.stringify({ acknowledged: true }), toolCallId: toolCall.id });
+            break; // break the inner tool-call loop; outer loop guard below will exit
+          }
+
           const toolOwner = hydratedSkills.find((skill) =>
             skill.scripts.some((script) => script.enabled && script.scriptKey === toolCall.function.name)
           ) ?? null;
@@ -622,22 +638,60 @@ export class OrchestratorService {
             content: pointARevision.revisedContent
           });
         }
+        // If the LLM called requestHumanHandoff, exit the agentic loop immediately
+        if (handoffRequestedByTool) break;
       }
 
-      if (lastToolCalls.length > 0 && !finalContent.trim()) {
-        const forcedFinal = await callLLM(
-          aiSettings.provider,
-          model,
-          loopMessages,
-          [],
-          aiSettings.temperature,
-          aiSettings.maxTokens,
-          "json_object"
-        );
-        finalContent = forcedFinal.content;
-        tokensUsed += forcedFinal.tokensUsed;
-        inputTokens += forcedFinal.inputTokens;
-        outputTokens += forcedFinal.outputTokens;
+      // Apply tool-driven handoff override BEFORE policy evaluation
+      if (handoffRequestedByTool) {
+        finalContent = JSON.stringify({
+          action: "handoff",
+          response: "",
+          handoffReason: handoffReasonFromTool,
+          intent: "human_handoff",
+          sentiment: "neutral",
+          confidence: 0.95
+        });
+      }
+
+      // ── Ensure finalContent is JSON ─────────────────────────────────────────
+      // When tools are present the LLM runs in "text" mode and may respond with:
+      //   (a) an empty string after a tool-call turn (the common case) → force a
+      //       json_object call so it wraps the tool result into a proper reply.
+      //   (b) a plain-text reply on its final turn (no further tool calls needed)
+      //       → wrap it directly into the JSON envelope; no extra LLM call needed.
+      // Without this guard the plain-text content fails JSON.parse → action="defer"
+      // → the reply is silently dropped even though the LLM produced a good answer.
+      {
+        const trimmed = finalContent.trim();
+        const looksLikeJson = trimmed.startsWith("{");
+
+        if (lastToolCalls.length > 0 && !trimmed) {
+          // Case (a): tool-call turn produced no content → ask for JSON summary
+          const forcedFinal = await callLLM(
+            aiSettings.provider,
+            model,
+            loopMessages,
+            [],
+            aiSettings.temperature,
+            aiSettings.maxTokens,
+            "json_object"
+          );
+          finalContent = forcedFinal.content;
+          tokensUsed += forcedFinal.tokensUsed;
+          inputTokens += forcedFinal.inputTokens;
+          outputTokens += forcedFinal.outputTokens;
+        } else if (trimmed && !looksLikeJson) {
+          // Case (b): LLM returned a plain-text reply (not JSON) in tools mode.
+          // Wrap it into the expected contract shape so it is not discarded.
+          finalContent = JSON.stringify({
+            action: "reply",
+            response: trimmed,
+            intent: "general_inquiry",
+            sentiment: "neutral",
+            confidence: 0.75
+          });
+        }
       }
 
       // ── Parse response ──────────────────────────────────────────────────────
@@ -685,7 +739,6 @@ export class OrchestratorService {
           capabilityScope: input.capabilityScope ?? null,
           skillsInvoked,
           selectedSkillSlug: selectedSkill?.slug ?? null,
-          candidateSkillSlugs: candidateSkills.map((skill) => skill.slug),
           hydratedSkillSlugs: hydratedSkills.map((skill) => skill.slug)
         }
       });
@@ -710,7 +763,6 @@ export class OrchestratorService {
       }
 
       const composedAnswer = composeFinalAnswer({
-        track: semanticRoute.track,
         aiDecision,
         policyEnforcement: {
           action: aiDecision.action,
@@ -733,15 +785,16 @@ export class OrchestratorService {
           updated_at: db.fn.now()
         });
 
-      // Only enter "clarifying" capability state when the skill was genuinely
-      // awaiting user input (i.e. the planner asked for clarification and the
-      // AI replied with a question).  If the skill was blocked by a guard
-      // (duplicate, rate-limit, etc.) and the AI synthesised from context,
-      // that is NOT a clarification — clear any stale state instead.
+      // ── Capability state tracking ─────────────────────────────────────────
+      // Without a planner, we track state only for the continuation skill
+      // (an in-progress multi-step flow). If the LLM replied without invoking
+      // the continuation skill, it's asking for clarification — save that state.
+      // If a skill was blocked by a guard, do NOT treat it as clarification.
       const skillBlockedByGuard = selectedSkill && skillsInvoked.length === 0 && skillsBlocked.some(
         (b) => selectedSkill.scripts.some((s) => s.scriptKey === b.name)
       );
       if (selectedSkill && skillsInvoked.length === 0 && effectiveAction === "reply" && responseText && !skillBlockedByGuard) {
+        // LLM replied without invoking the continuation skill — it's clarifying
         await upsertConversationCapabilityState(db, {
           tenantId: input.tenantId,
           conversationId: input.conversationId,
@@ -756,6 +809,7 @@ export class OrchestratorService {
           lastUserMessage: chatHistory.filter((message) => message.role === "user").at(-1)?.content ?? null
         });
       } else if (selectedSkill) {
+        // Continuation skill was invoked or something else happened — clear stale state
         await clearConversationCapabilityState(db, {
           tenantId: input.tenantId,
           conversationId: input.conversationId
@@ -982,44 +1036,10 @@ function buildRuntimeTools(input: {
         }
       });
       existingNames.add(script.scriptKey);
-      if (tools.length >= 5) return tools;
     }
   }
 
   return tools;
-}
-
-function buildSemanticRoutePrompt(track: SemanticTrack, reason: string, intent: string) {
-  return [
-    `Track: ${track}`,
-    `Intent: ${intent}`,
-    `Reason: ${reason}`,
-    track === "knowledge_track"
-      ? "Handle this as a business knowledge request first. Do not invent unavailable tools or verification steps."
-      : track === "clarification_track"
-        ? "The request is underspecified. Prefer asking for the minimum missing detail instead of executing tools."
-        : "This request may require operational facts or actions. Use tools only when truly needed."
-  ].join("\n");
-}
-
-function buildClarificationReply(input: {
-  plannerDecision: {
-    clarificationQuestion: string | null;
-  };
-  selectedSkill: {
-    name: string;
-    inputSchema: Record<string, unknown>;
-  };
-}) {
-  const explicitQuestion = input.plannerDecision.clarificationQuestion?.trim();
-  if (explicitQuestion) return explicitQuestion;
-  const required = Array.isArray(input.selectedSkill.inputSchema.required)
-    ? input.selectedSkill.inputSchema.required.map((item) => String(item)).filter(Boolean)
-    : [];
-  if (required.length > 0) {
-    return `To proceed with "${input.selectedSkill.name}", please provide: ${required.join(", ")}.`;
-  }
-  return `To proceed with "${input.selectedSkill.name}", please provide the required information.`;
 }
 
 function toToolParameters(inputSchema: Record<string, unknown> | undefined) {
@@ -1262,6 +1282,46 @@ async function checkRecentSkillContext(
 // NOTE: buildRecentSkillInvocationContext removed — replaced by Fact Layer
 // (buildFactSnapshot + formatFactSnapshotForPrompt from ai/fact-layer.service.ts)
 
+/**
+ * Returns true when the customer's last message is an unambiguous request for a
+ * human agent. These are handled deterministically — the LLM is not called because
+ * it cannot know real-time agent availability and would fabricate a response.
+ *
+ * Patterns are intentionally conservative to avoid false positives on phrases like
+ * "how artificial intelligence works" (人工智能) or "human error" etc.
+ */
+const EXPLICIT_HUMAN_TRANSFER_PATTERNS = [
+  // Chinese
+  /转人工/,
+  /要人工/,
+  /找人工/,
+  /联系人工/,
+  /人工客服/,
+  /转客服/,
+  /转接人工/,
+  /需要人工/,
+  // English (word-boundary anchored to avoid partial matches)
+  /\btransfer.*human\b/i,
+  /\bspeak.*(?:to\s+a?\s*)?(?:human|agent|person|representative)\b/i,
+  /\btalk.*(?:to\s+a?\s*)?(?:human|agent|person|representative)\b/i,
+  /\b(?:live|human)\s+agent\b/i,
+  /\breal\s+(?:person|human)\b/i,
+  /\bconnect.*human\b/i,
+  // Indonesian
+  /\bagen\s+manusia\b/i,
+  /\bmanusia\s+(?:saja|sekarang)\b/i,
+  /\bminta\s+manusia\b/i,
+  /\bhubungi\s+(?:agen|manusia)\b/i,
+  /\bsambungkan.*manusia\b/i,
+  /\balihkan.*manusia\b/i
+];
+
+function isExplicitHumanTransferRequest(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return EXPLICIT_HUMAN_TRANSFER_PATTERNS.some((pattern) => pattern.test(t));
+}
+
 function noAiResult(reason: string): OrchestratorResult {
   return {
     action: "handoff",
@@ -1373,21 +1433,19 @@ function stableJson(value: unknown): string {
 }
 
 function extractEntitiesFromText(text: string) {
-  // Pure long-digit sequences (8–20 digits) are treated as order/tracking IDs first;
-  // only shorter numeric strings (up to 15 digits, possibly with leading +) that are
-  // NOT already captured as order IDs are considered phone numbers.
-  const rawOrderIds = [
-    ...(text.match(/\b[A-Z]{1,6}-?\d{4,}\b/g) ?? []),  // alphanumeric codes: JT123456, CS-001
-    ...(text.match(/\b\d{8,20}\b/g) ?? [])               // pure numeric tracking numbers
+  // Generic reference ID extraction — alphanumeric codes and long digit sequences.
+  // Stored as `orderIds` to stay compatible with the memory-layer schema; the
+  // values may be any kind of reference ID, not specifically order numbers.
+  const rawReferenceIds = [
+    ...(text.match(/\b[A-Z]{1,6}-?\d{4,}\b/g) ?? []),  // alphanumeric ref codes (e.g. INV-1234, AB12345)
+    ...(text.match(/\b\d{8,20}\b/g) ?? [])               // long numeric strings
   ];
-  const orderIds = [...new Set(rawOrderIds)];
+  const orderIds = [...new Set(rawReferenceIds)];
   const orderIdSet = new Set(orderIds);
   const phones = (text.match(/\+?\d{8,15}/g) ?? []).filter((p) => !orderIdSet.has(p));
   return {
     orderIds,
     phones: [...new Set(phones)],
-    addresses: text.includes("地址") || text.includes("alamat") || text.includes("address")
-      ? [text.slice(0, 80)]
-      : []
+    addresses: [] as string[]
   };
 }

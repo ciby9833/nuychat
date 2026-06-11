@@ -6,6 +6,59 @@ import { resolveTenantAISettingsForScene } from "../ai/provider-config.service.j
 import { assertTenantAIBudgetAllowsUsage } from "../ai/usage-meter.service.js";
 import { EXPLICIT_AI_OPT_IN_COMMAND } from "../service-mode/service-mode.constants.js";
 
+// ── Template fallback ────────────────────────────────────────────────────────
+// Used when AI settings are not configured, AI budget is exhausted, or the
+// AI call fails. Ensures the customer always receives a routing notice even
+// without a functioning AI provider.
+const TEMPLATE_NOTICES: Record<
+  "human_assigned" | "human_queue" | "fallback_ai",
+  Record<"zh" | "en", (vars: { agentName?: string | null; queuePos?: number | null; waitMin?: number | null }) => string>
+> = {
+  human_assigned: {
+    zh: ({ agentName }) =>
+      agentName
+        ? `您好，已为您转接人工客服 ${agentName}，稍等片刻即可为您服务。`
+        : "您好，已为您转接人工客服，稍等片刻即可为您服务。",
+    en: ({ agentName }) =>
+      agentName
+        ? `You've been connected to agent ${agentName}. They'll be with you shortly.`
+        : "You've been connected to a support agent. They'll be with you shortly."
+  },
+  human_queue: {
+    zh: ({ queuePos, waitMin }) => {
+      const parts = ["您好，已为您转接人工客服，当前正在排队中，请稍候。"];
+      if (queuePos != null && queuePos > 0) parts.push(`您当前排队位置：第 ${queuePos} 位。`);
+      if (waitMin != null && waitMin > 0) parts.push(`预计等待时间约 ${waitMin} 分钟。`);
+      return parts.join("");
+    },
+    en: ({ queuePos, waitMin }) => {
+      const parts = ["You've been placed in the support queue. An agent will be with you soon."];
+      if (queuePos != null && queuePos > 0) parts.push(` You are number ${queuePos} in the queue.`);
+      if (waitMin != null && waitMin > 0) parts.push(` Estimated wait: ~${waitMin} min.`);
+      return parts.join("");
+    }
+  },
+  fallback_ai: {
+    zh: () => "您好，当前人工客服暂时不可用，AI 助手将继续为您服务。如需人工客服，请稍后再试。",
+    en: () => "No human agents are available right now. Our AI assistant will continue to help you. Please try again later if you need a human agent."
+  }
+};
+
+function buildTemplateFallback(
+  scenario: "human_assigned" | "human_queue" | "fallback_ai",
+  vars: {
+    language: string | null;
+    agentName: string | null;
+    queuePosition: number | null;
+    estimatedWaitSec: number | null;
+  }
+): string {
+  const lang = (vars.language ?? "").toLowerCase().startsWith("zh") ? "zh" : "en";
+  const template = TEMPLATE_NOTICES[scenario][lang];
+  const waitMin = vars.estimatedWaitSec != null ? Math.ceil(vars.estimatedWaitSec / 60) : null;
+  return template({ agentName: vars.agentName, queuePos: vars.queuePosition, waitMin });
+}
+
 type RoutingNoticeScenario = "human_assigned" | "human_queue" | "fallback_ai";
 
 type QueueAssignmentRow = {
@@ -66,11 +119,12 @@ export class RoutingNoticeService {
       aiAgentName?: string | null;
     }
   ): Promise<{ text: string; aiAgentName: string } | null> {
-    const settings = await resolveTenantAISettingsForScene(db, input.tenantId, "ai_seat");
-    if (!settings) return null;
-
-    const budgetGate = await assertTenantAIBudgetAllowsUsage(db, input.tenantId);
-    if (!budgetGate.allowed) return null;
+    // Resolve AI settings (optional — if not available we fall back to templates)
+    const [settings, budgetGate] = await Promise.all([
+      resolveTenantAISettingsForScene(db, input.tenantId, "ai_seat"),
+      assertTenantAIBudgetAllowsUsage(db, input.tenantId)
+    ]);
+    const aiAvailable = Boolean(settings && budgetGate.allowed);
 
     const [assignment, conversation, customer] = await Promise.all([
       db("queue_assignments")
@@ -149,10 +203,11 @@ export class RoutingNoticeService {
       humanAvailability: availability,
       nextScheduleSummary: nextSchedules.summary,
       nextScheduleItems: nextSchedules.items,
-      switchBackCommand:
-        input.scenario === "human_queue" || input.scenario === "fallback_ai"
-          ? EXPLICIT_AI_OPT_IN_COMMAND
-          : null
+      // Only include the #AI opt-in hint in the fallback_ai scenario where the
+      // customer may want to explicitly switch back to AI mid-conversation.
+      // For human_queue and human_assigned, omitting this prevents the AI from
+      // generating a confusing "type #AI" sentence in a pure-human handoff notice.
+      switchBackCommand: input.scenario === "fallback_ai" ? EXPLICIT_AI_OPT_IN_COMMAND : null
     };
 
     const dedupeState = buildDedupeState({
@@ -170,45 +225,64 @@ export class RoutingNoticeService {
     });
     if (alreadySent) return null;
 
-    const ctx = buildCallContext(
-      db,
-      settings,
-      { tenantId: input.tenantId, conversationId: input.conversationId },
-      "routing_notice"
-    );
+    // ── Try AI-generated notice first ────────────────────────────────────────
+    let noticeText: string | null = null;
 
-    try {
-      const completion = await trackedComplete(
-        ctx,
-        {
-          messages: buildPromptMessages(facts),
-          responseFormat: "json_object",
-          temperature: 0.2,
-          maxTokens: Math.min(220, settings.maxTokens)
-        },
-        { conversationId: input.conversationId, scenario: input.scenario }
+    if (aiAvailable && settings) {
+      const ctx = buildCallContext(
+        db,
+        settings,
+        { tenantId: input.tenantId, conversationId: input.conversationId },
+        "routing_notice"
       );
 
-      const parsed = safeParseJson(completion.content);
-      const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
-      if (!text) return null;
-      await db("conversation_events").insert({
-        tenant_id: input.tenantId,
-        conversation_id: input.conversationId,
-        event_type: "routing_notice_sent",
-        actor_type: "system",
-        payload: {
-          scenario: input.scenario,
-          state: dedupeState
+      try {
+        const completion = await trackedComplete(
+          ctx,
+          {
+            messages: buildPromptMessages(facts),
+            responseFormat: "json_object",
+            temperature: 0.2,
+            maxTokens: Math.min(220, settings.maxTokens)
+          },
+          { conversationId: input.conversationId, scenario: input.scenario }
+        );
+
+        const parsed = safeParseJson(completion.content);
+        const candidate = typeof parsed.text === "string" ? parsed.text.trim() : "";
+        if (candidate) {
+          noticeText = candidate;
         }
-      });
-      return {
-        text,
-        aiAgentName: input.aiAgentName?.trim() || "AI"
-      };
-    } catch {
-      return null;
+      } catch {
+        // AI call failed — fall through to template below
+      }
     }
+
+    // ── Fallback to template if AI produced nothing ───────────────────────────
+    if (!noticeText) {
+      noticeText = buildTemplateFallback(input.scenario, {
+        language: customer?.language ?? null,
+        agentName: assignedAgent?.display_name ?? null,
+        queuePosition: assignment.queue_position ?? null,
+        estimatedWaitSec: assignment.estimated_wait_sec ?? null
+      });
+    }
+
+    await db("conversation_events").insert({
+      tenant_id: input.tenantId,
+      conversation_id: input.conversationId,
+      event_type: "routing_notice_sent",
+      actor_type: "system",
+      payload: {
+        scenario: input.scenario,
+        state: dedupeState
+      }
+    });
+
+    return {
+      text: noticeText,
+      aiAgentName: input.aiAgentName?.trim() || "AI"
+    };
   }
 }
 

@@ -152,6 +152,8 @@ export type RoutingContext = {
     departmentId: string | null;
     teamId: string | null;
     assignedAgentId: string | null;
+    /** The AI agent currently handling the conversation (set by routing.worker after AI replies). */
+    assignedAiAgentId: string | null;
     assignmentStrategy: HumanRoutingAssignmentStrategy | null;
     priority: number | null;
     status: string | null;

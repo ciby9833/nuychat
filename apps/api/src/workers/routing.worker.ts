@@ -52,7 +52,7 @@ function fitAiTraceReason(value: string | null | undefined) {
 export function createRoutingWorker() {
   const workerConnection = duplicateRedisConnection();
 
-  return new Worker<RoutingJobPayload>(
+  const worker = new Worker<RoutingJobPayload>(
     routingQueue.name,
     async (job) => {
       const { tenantId, planId, conversationId, customerId, channelType } = job.data;
@@ -397,19 +397,72 @@ export function createRoutingWorker() {
           }
         });
       } else {
-        await withTenantTransaction(tenantId, async (trx) => {
-          await routingPlanStepService.record(trx, {
+        // ── Safety-net handoff ───────────────────────────────────────────────
+        // The AI ran (tokensUsed > 0 or action="defer") but produced no reply
+        // and did not request a handoff. This is a silent failure — the customer
+        // would receive no visible response until the 7-minute SLA timeout fires.
+        //
+        // Instead: immediately release to the human queue. The service-mode engine
+        // will publish a routing notice to the customer in their language
+        // ("Connecting you to our team…") so the silence never reaches them.
+        //
+        // Only skip the safety-net when the orchestrator did not run at all
+        // (tokensUsed === 0 AND confidence === 0), which indicates a system-level
+        // early-exit (budget blocked, no messages, etc.) rather than an AI answer
+        // failure — those cases are already handled by the noAiResult() handoff path.
+        const aiActuallyRan = result.tokensUsed > 0 || result.confidence > 0;
+        if (aiActuallyRan) {
+          const handoffTarget = await withTenantTransaction(tenantId, async (trx) =>
+            resolveReservedHumanTarget(trx, {
+              tenantId,
+              plannedTarget: {
+                assignedAgentId: plan.fallback?.agentId ?? null,
+                departmentId: plan.fallback?.departmentId ?? plan.target.departmentId,
+                teamId: plan.fallback?.teamId ?? plan.target.teamId,
+                strategy: (plan.fallback?.strategy ?? plan.target.strategy) as ("round_robin" | "least_busy" | "sticky"),
+                priority: plan.fallback?.priority ?? plan.target.priority
+              }
+            })
+          );
+          await releaseConversationToHumanQueue({
             tenantId,
             planId,
-            stepType: "ai_runtime",
-            status: "completed",
-            payload: {
-              outcome: "no_response_no_handoff",
+            conversationId,
+            customerId,
+            channelType,
+            conversation,
+            executionId: selectedExecutionId,
+            handoffTarget,
+            reason: "ai_unable_to_answer",
+            transitionType: "ai_handoff_to_human_queue",
+            actorType: "ai",
+            actorId: plan.target.aiAgentId,
+            assignedAiAgentId: plan.target.aiAgentId,
+            stepStatus: "completed",
+            stepPayload: {
+              outcome: "no_response_safety_net_handoff",
               aiAgentId: plan.target.aiAgentId,
-              confidence: result.confidence
+              handoff: true,
+              confidence: result.confidence,
+              reason: "ai_ran_but_produced_no_reply"
             }
           });
-        });
+        } else {
+          // System-level skip (budget blocked, no messages, etc.) — log and exit.
+          await withTenantTransaction(tenantId, async (trx) => {
+            await routingPlanStepService.record(trx, {
+              tenantId,
+              planId,
+              stepType: "ai_runtime",
+              status: "completed",
+              payload: {
+                outcome: "no_response_no_handoff",
+                aiAgentId: plan.target.aiAgentId,
+                confidence: result.confidence
+              }
+            });
+          });
+        }
       }
 
       return {
@@ -422,9 +475,102 @@ export function createRoutingWorker() {
     },
     {
       connection: workerConnection as any,
-      concurrency: 3
+      concurrency: 3,
+      // Give each job 90 s to complete. If the AI provider hangs without
+      // throwing an error the job is considered stalled and BullMQ will
+      // requeue it — the error-catch path then forces a human handoff.
+      lockDuration: 90_000
     }
   );
+
+  // ── Stall safety net ─────────────────────────────────────────────────────
+  // If a job stalls and exhausts retries (max-stalled-count reached), BullMQ
+  // moves it to the "failed" state and no code path runs. We listen to the
+  // "failed" event so that conversations whose routing job permanently failed
+  // are released to the human queue rather than left stuck.
+  worker.on("failed", (job, err) => {
+    if (!job) return;
+    const { tenantId, conversationId, customerId, channelType } = job.data as RoutingJobPayload;
+    void (async () => {
+      try {
+        const conversation = await withTenantTransaction(tenantId, async (trx) =>
+          trx("conversations")
+            .where({ tenant_id: tenantId, conversation_id: conversationId })
+            .select("channel_id", "customer_id", "current_case_id", "current_handler_type", "current_handler_id", "status")
+            .first<{
+              channel_id: string;
+              customer_id: string | null;
+              current_case_id: string | null;
+              current_handler_type: string | null;
+              current_handler_id: string | null;
+              status: string;
+            } | undefined>()
+        );
+
+        if (!conversation) return;
+        // Only intervene for conversations still waiting on the AI.
+        if (conversation.status === "human_active") return;
+
+        const executionId = await withTenantTransaction(tenantId, async (trx) =>
+          dispatchAuditService.recordExecution(trx, {
+            tenantId,
+            conversationId,
+            customerId,
+            segmentId: null,
+            triggerType: "ai_routing_execution",
+            decisionType: "ai_runtime",
+            channelType,
+            channelId: conversation.channel_id,
+            routingRuleId: null,
+            routingRuleName: null,
+            matchedConditions: {},
+            inputSnapshot: { reason: "routing_job_failed", error: (err as Error)?.message ?? "unknown" },
+            decisionSummary: {},
+            decisionReason: "routing_job_failed_fallback_human",
+            candidates: []
+          })
+        );
+
+        await releaseConversationToHumanQueue({
+          tenantId,
+          planId: job.data.planId,
+          conversationId,
+          customerId,
+          channelType,
+          conversation: {
+            channel_id: conversation.channel_id,
+            customer_id: conversation.customer_id,
+            current_case_id: conversation.current_case_id,
+            current_handler_type: conversation.current_handler_type,
+            current_handler_id: conversation.current_handler_id
+          },
+          executionId,
+          handoffTarget: {
+            departmentId: null,
+            teamId: null,
+            assignedAgentId: null,
+            strategy: "least_busy",
+            priority: 100,
+            status: "pending",
+            reason: "routing_job_failed_fallback_human",
+            queuePosition: null,
+            estimatedWaitSec: null
+          },
+          reason: "routing_job_failed_fallback_human",
+          transitionType: "ai_unavailable_to_system",
+          actorType: "system",
+          actorId: null,
+          assignedAiAgentId: null,
+          stepStatus: "failed",
+          stepPayload: { reason: "routing_job_permanently_failed", error: (err as Error)?.message ?? "unknown" }
+        });
+      } catch {
+        // Log but don't throw — this is a safety-net handler
+      }
+    })();
+  });
+
+  return worker;
 }
 
 function parsePreferredSkills(value: unknown): string[] {
@@ -546,6 +692,7 @@ async function releaseConversationToHumanQueue(input: {
           departmentId: null,
           teamId: null,
           assignedAgentId: existingAssignment.assigned_agent_id,
+          assignedAiAgentId: existingAssignment.assigned_ai_agent_id,
           assignmentStrategy: null,
           priority: null,
           status: null,
@@ -618,13 +765,17 @@ async function releaseConversationToHumanQueue(input: {
         assignment_reason: resolvedHandoffTarget.reason,
         handoff_required: true,
         handoff_reason: input.reason,
-        service_request_mode: "human_requested",
+        // ai_unavailable_to_system: the system silently re-routes because no AI was configured;
+        //   the customer never requested a human and AI isn't "falling back" — just absent.
+        // ai_handoff_to_human_queue: AI actively decided the human is needed; lock the human
+        //   side and permit AI fallback if no human is available.
+        service_request_mode: input.transitionType === "ai_handoff_to_human_queue" ? "human_requested" : "normal",
         human_progress: resolvedHandoffTarget.assignedAgentId ? "assigned_waiting" : "queued_waiting",
         queue_mode: resolvedHandoffTarget.assignedAgentId ? "assigned_waiting" : "pending_unavailable",
         queue_position: resolvedHandoffTarget.queuePosition,
         estimated_wait_sec: resolvedHandoffTarget.estimatedWaitSec,
-        ai_fallback_allowed: true,
-        locked_human_side: true,
+        ai_fallback_allowed: input.transitionType === "ai_handoff_to_human_queue",
+        locked_human_side: input.transitionType === "ai_handoff_to_human_queue",
         updated_at: trx.fn.now()
       });
 
@@ -655,7 +806,14 @@ async function releaseConversationToHumanQueue(input: {
       assignedAgentId: resolvedHandoffTarget.assignedAgentId,
       queuePosition: resolvedHandoffTarget.queuePosition,
       estimatedWaitSec: resolvedHandoffTarget.estimatedWaitSec,
-      aiFallbackAllowed: true
+      aiFallbackAllowed: input.transitionType === "ai_handoff_to_human_queue",
+      // Always use "human_requested" in the notification snapshot so the
+      // service-mode subscriber sees "queued_human" and fires the human_queue
+      // routing notice ("Connecting you to a human agent, please wait").
+      // Note: this value is only used for the event; the DB is already updated
+      // above with the correct mode for each transitionType.
+      serviceRequestMode: "human_requested",
+      lockedHumanSide: input.transitionType === "ai_handoff_to_human_queue"
     }),
     aiAgentName: "AI",
     reason: input.reason

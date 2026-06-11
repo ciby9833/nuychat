@@ -11,23 +11,16 @@ import type { Knex } from "knex";
 import type { HarnessContext } from "./types.js";
 import {
   buildFactSnapshot,
-  buildVerifiedFactFromKnowledgeEntry,
   formatFactSnapshotForPrompt,
-  mergeKnowledgeFacts,
   type FactSnapshot
 } from "../fact-layer.service.js";
 import {
   buildCustomerIntelligenceContext
 } from "../../memory/customer-intelligence.service.js";
-import { formatKnowledgeEntriesAsContext, searchKnowledgeEntries } from "../../knowledge/knowledge-retrieval.service.js";
-import type { SemanticTrack } from "../semantic-router.types.js";
-
 export interface ContextPipelineInput {
   tenantId: string;
   conversationId: string;
   customerId: string;
-  track: SemanticTrack;
-  knowledgeQuery: string;
   /** If a skill is active, exclude certain memory types to reduce noise */
   activeSkillSlug: string | null;
 }
@@ -35,16 +28,18 @@ export interface ContextPipelineInput {
 /**
  * Run the context pipeline: customer intelligence + fact snapshot in parallel.
  *
+ * Knowledge search is intentionally NOT done here — it is now a built-in
+ * LLM tool (searchKnowledge) so the model can decide when to look things up
+ * regardless of the request type. This removes the old knowledge_track gate.
+ *
  * Note: conversation capability state is NOT loaded here — the orchestrator
- * already loads it earlier (line ~160) to determine the continuation skill,
- * which must happen before context pipeline runs. Loading it again here
- * would be a redundant DB call.
+ * already loads it earlier to determine the continuation skill.
  */
 export async function runContextPipeline(
   db: Knex | Knex.Transaction,
   input: ContextPipelineInput
 ): Promise<HarnessContext> {
-  const [customerIntelligence, knowledgeEntries, factSnapshot] = await Promise.all([
+  const [customerIntelligence, factSnapshot] = await Promise.all([
     buildCustomerIntelligenceContext(
       db,
       input.tenantId,
@@ -54,13 +49,6 @@ export async function runContextPipeline(
         excludeMemoryTypes: input.activeSkillSlug ? ["unresolved_issue"] : []
       }
     ),
-    input.track === "knowledge_track"
-      ? searchKnowledgeEntries(db, {
-          tenantId: input.tenantId,
-          queryText: input.knowledgeQuery,
-          limit: 4
-        })
-      : Promise.resolve([]),
     buildFactSnapshot(db, {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
@@ -68,17 +56,11 @@ export async function runContextPipeline(
     })
   ]);
 
-  const knowledgeContext = formatKnowledgeEntriesAsContext(knowledgeEntries);
-  const knowledgeFacts = knowledgeEntries.map((entry) =>
-    buildVerifiedFactFromKnowledgeEntry(entry, input.knowledgeQuery)
-  );
-  const mergedFactSnapshot = mergeKnowledgeFacts(factSnapshot, knowledgeFacts);
-
   return {
     customerIntelligence,
-    knowledgeContext,
-    factSnapshot: mergedFactSnapshot,
-    factContext: formatFactSnapshotForPrompt(mergedFactSnapshot),
+    knowledgeContext: null,  // Knowledge is now a tool result, not pre-injected context
+    factSnapshot,
+    factContext: formatFactSnapshotForPrompt(factSnapshot),
     conversationState: null
   };
 }

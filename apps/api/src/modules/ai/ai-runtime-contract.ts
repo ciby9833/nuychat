@@ -19,20 +19,21 @@ export const ORCHESTRATOR_RESPONSE_CONTRACT = `Return valid JSON only. Do not us
 
 JSON shape:
 {
-  "action": "reply" | "handoff" | "defer",
+  "action": "reply" | "defer",
   "response": "<customer-facing reply when action=reply, otherwise empty string>",
-  "handoffReason": "<short operational reason when action=handoff, otherwise empty string>",
   "intent": "<short intent label>",
   "sentiment": "positive" | "neutral" | "negative" | "angry",
-  "confidence": 0.0
+  "confidence": 0.0–1.0
 }
 
 Rules:
-- The system, not you, controls routing and execution boundaries.
-- Use "reply" when you can directly help the customer now.
-- Use "handoff" when the customer explicitly wants a human, the situation needs human judgment, or the current system/tools are insufficient.
-- Use "defer" when no customer-facing reply should be sent yet and no handoff is required.
-- Keep "handoffReason" operational and concise.
+- Use "reply" for ALL customer-facing responses, including honest "I don't know" messages.
+- Use "defer" ONLY for deliberate system-internal waits. NEVER use "defer" because you cannot
+  answer a question — that leaves the customer with no reply. When you cannot answer, write
+  an honest reply and call requestHumanHandoff before returning this JSON.
+- To transfer the conversation to a human agent: call requestHumanHandoff first, then return
+  action="reply" with an empty response (the system sends the handoff notice automatically).
+- Never write agent availability, queue position, or wait times in "response".
 - Always match the customer's language in "response".`;
 
 export function normalizeAIInteractionContract(
@@ -94,16 +95,8 @@ export function inferConversationIntent(history: ChatMessage[]): string {
   if (/\b(complaint|keluhan|投诉|クレーム|complain|举报)\b/i.test(text)) return "complaint";
   // Cancellation
   if (/\b(cancel|batal|取消|キャンセル|撤销)\b/i.test(text)) return "cancellation";
-  // Refund / return
-  if (/\b(refund|返款|退款|退货|pengembalian|return)\b/i.test(text)) return "refund_request";
-  // Status / tracking inquiry
-  if (/\b(status|track|resi|awb|进度|状态|查询|pengiriman)\b/i.test(text)) return "status_inquiry";
-  // Payment / billing
-  if (/\b(payment|bayar|付款|支払|transfer|invoice|账单|发票)\b/i.test(text)) return "payment_inquiry";
   // Account / profile
   if (/\b(account|akun|账号|密码|password|login|register|注册)\b/i.test(text)) return "account_inquiry";
-  // Appointment / booking
-  if (/\b(appointment|booking|预约|预订|reservation|jadwal)\b/i.test(text)) return "booking_inquiry";
   return "general_inquiry";
 }
 

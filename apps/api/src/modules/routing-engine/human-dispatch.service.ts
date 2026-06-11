@@ -434,7 +434,11 @@ async function loadCandidateEvaluations(
     .join("departments as d", function joinDepartments() {
       this.on("d.department_id", "=", "t.department_id").andOn("d.tenant_id", "=", "t.tenant_id");
     })
-    .join("agent_shifts as ash", function joinShifts() {
+    // LEFT JOIN: agents without any shift record are still visible to dispatch
+    // and will be treated as "presence-only" (no shift gates). Agents WITH a
+    // shift record are still required to have status='scheduled' and be within
+    // the defined shift window.
+    .leftJoin("agent_shifts as ash", function joinShifts() {
       this.on("ash.agent_id", "=", "ap.agent_id").andOn("ash.tenant_id", "=", "ap.tenant_id");
     })
     .leftJoin("shift_schedules as ss", function joinSchedules() {
@@ -475,6 +479,8 @@ async function loadCandidateEvaluations(
   if (baseRows.length === 0) return [];
 
   const currentDayRows = baseRows.filter((row) =>
+    // Agents with no shift record (LEFT JOIN null) are always "present"
+    row.shift_date == null ||
     normalizeShiftDate(row.shift_date, String(row.timezone ?? "Asia/Jakarta")) === formatLocalDate(now, String(row.timezone ?? "Asia/Jakarta"))
   );
 
@@ -553,7 +559,10 @@ async function loadCandidateEvaluations(
       joinedAt: String(row.joined_at),
       timezone: String(row.timezone ?? "Asia/Jakarta"),
       shiftDate: normalizeShiftDate(row.shift_date, String(row.timezone ?? "Asia/Jakarta")),
-      shiftStatus: String(row.shift_status ?? "off"),
+      // "unscheduled" = agent exists in the system but has no shift record;
+      // eligible by presence state alone (distinguished from "off" which means
+      // a shift exists but its status is not "scheduled").
+      shiftStatus: row.shift_status == null ? "unscheduled" : String(row.shift_status),
       shiftStartTime: typeof row.start_time === "string" ? row.start_time : "",
       shiftEndTime: typeof row.end_time === "string" ? row.end_time : "",
       activeBreak: row.break_id !== null && row.break_id !== undefined,
@@ -574,20 +583,24 @@ async function loadCandidateEvaluations(
 
 function isCandidateEligible(candidate: AgentCandidateRow, now: Date): boolean {
   if (candidate.activeBreak) return false;
-  if (candidate.shiftStatus !== "scheduled") return false;
   if (candidate.maxConcurrency <= 0) return false;
+  // Agent has no shift record → eligible by presence state alone (LEFT JOIN null)
+  if (candidate.shiftStatus === "unscheduled") return true;
+  // Agent has a shift record → must be in "scheduled" status and within time window
+  if (candidate.shiftStatus !== "scheduled") return false;
   if (!hasShiftWindow(candidate)) return true;
   return isWithinShift(now, candidate.timezone, candidate.shiftDate, candidate.shiftStartTime, candidate.shiftEndTime);
 }
 
 function explainCandidateIneligibleReason(candidate: AgentCandidateRow, now: Date): string | null {
   if (candidate.activeBreak) return "agent_on_break";
+  if (candidate.maxConcurrency <= 0) return "agent_concurrency_disabled";
+  if (candidate.shiftStatus === "unscheduled") return null;
   if (candidate.shiftStatus !== "scheduled") return "agent_not_scheduled";
   if (!hasShiftWindow(candidate)) return null;
   if (!isWithinShift(now, candidate.timezone, candidate.shiftDate, candidate.shiftStartTime, candidate.shiftEndTime)) {
     return "outside_shift_window";
   }
-  if (candidate.maxConcurrency <= 0) return "agent_concurrency_disabled";
   return null;
 }
 
@@ -835,7 +848,11 @@ function dedupeCandidateRows(candidates: AgentCandidateEvaluation[]): AgentCandi
 function compareCandidatePreference(a: AgentCandidateEvaluation, b: AgentCandidateEvaluation): number {
   if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
   if (a.activeBreak !== b.activeBreak) return a.activeBreak ? 1 : -1;
-  if (a.shiftStatus !== b.shiftStatus) return a.shiftStatus === "scheduled" ? -1 : 1;
+  if (a.shiftStatus !== b.shiftStatus) {
+    // scheduled > unscheduled (presence-only) > everything else
+    const rank = (s: string) => s === "scheduled" ? 0 : s === "unscheduled" ? 1 : 2;
+    return rank(a.shiftStatus) - rank(b.shiftStatus);
+  }
 
   const aInsideShift = a.rejectReason !== "outside_shift_window";
   const bInsideShift = b.rejectReason !== "outside_shift_window";

@@ -16,6 +16,10 @@ type HumanQueueTarget = {
   queuePosition: number | null;
   estimatedWaitSec: number | null;
   aiFallbackAllowed: boolean;
+  /** Defaults to "human_requested". Pass "normal" for system-initiated queue releases where the customer never asked for a human. */
+  serviceRequestMode?: ServiceRequestMode;
+  /** Defaults to true. Pass false for system-initiated transitions that should not lock the human side. */
+  lockedHumanSide?: boolean;
 };
 
 export class ServiceModeEngine {
@@ -26,7 +30,12 @@ export class ServiceModeEngine {
       humanProgress: assignment.humanProgress,
       queueMode: assignment.queueMode,
       assignedAgentId: assignment.assignedAgentId,
-      assignedAiAgentId: null,
+      // Read the real AI agent so deriveServiceMode can tell whether the
+      // conversation is currently in "fallback_ai" mode (AI handling as
+      // fallback for a human-requested conversation). Without this, the
+      // from-snapshot always shows "queued_human" and every inbound message
+      // re-triggers the fallback_ai routing notice.
+      assignedAiAgentId: assignment.assignedAiAgentId ?? null,
       queuePosition: assignment.queuePosition,
       estimatedWaitSec: assignment.estimatedWaitSec,
       aiFallbackAllowed: assignment.aiFallbackAllowed,
@@ -50,7 +59,7 @@ export class ServiceModeEngine {
 
   snapshotFromHumanQueueTarget(input: HumanQueueTarget): ServiceModeSnapshot {
     return buildSnapshot({
-      serviceRequestMode: "human_requested",
+      serviceRequestMode: input.serviceRequestMode ?? "human_requested",
       humanProgress: input.assignedAgentId ? "assigned_waiting" : "queued_waiting",
       queueMode: input.assignedAgentId ? "assigned_waiting" : "pending_unavailable",
       assignedAgentId: input.assignedAgentId,
@@ -58,7 +67,7 @@ export class ServiceModeEngine {
       queuePosition: input.queuePosition,
       estimatedWaitSec: input.estimatedWaitSec,
       aiFallbackAllowed: input.aiFallbackAllowed,
-      lockedHumanSide: true
+      lockedHumanSide: input.lockedHumanSide ?? true
     });
   }
 
@@ -107,7 +116,7 @@ function deriveServiceMode(input: {
   if (input.serviceRequestMode === "human_requested") {
     if (input.humanProgress === "human_active") return "human_active";
     if (input.assignedAgentId) return "human_assigned";
-    if (input.assignedAiAgentId || input.aiFallbackAllowed) return "fallback_ai";
+    if (input.assignedAiAgentId) return "fallback_ai";
     return "queued_human";
   }
   if (input.assignedAiAgentId) return "ai_active";
