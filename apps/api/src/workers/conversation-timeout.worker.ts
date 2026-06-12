@@ -222,7 +222,12 @@ export function createConversationTimeoutWorker() {
             });
           }
 
-          if (!shouldCloseForMode(triggerPolicy?.followUpActions ?? [], configuredFollowUpMode)) {
+          // When no trigger policy is configured (e.g. fresh tenant without SLA setup),
+          // default to closing after the fallback timeout rather than leaving the
+          // conversation open indefinitely.
+          const followUpShouldClose = shouldCloseForMode(triggerPolicy?.followUpActions ?? [], configuredFollowUpMode)
+            || !triggerPolicy;
+          if (!followUpShouldClose) {
             return { skipped: false, action: "follow_up_breach_recorded" };
           }
 
@@ -588,7 +593,11 @@ export function createConversationTimeoutWorker() {
             });
           }
 
-          if (!hasTriggerAction(triggerPolicy?.assignmentAcceptActions ?? [], "reassign")) {
+          // Default to reassigning when no trigger policy exists — prevents queued
+          // conversations from accumulating when the tenant hasn't configured SLA yet.
+          const assignmentShouldReassign = hasTriggerAction(triggerPolicy?.assignmentAcceptActions ?? [], "reassign")
+            || !triggerPolicy;
+          if (!assignmentShouldReassign) {
             if (hasTriggerAction(triggerPolicy?.assignmentAcceptActions ?? [], "escalate")) {
               await trx("conversation_events").insert({
                 tenant_id: tenantId,

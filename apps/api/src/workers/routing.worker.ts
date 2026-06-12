@@ -29,6 +29,7 @@ import { RoutingContextService } from "../modules/routing-engine/routing-context
 import { ServiceModeEngine } from "../modules/service-mode/service-mode.engine.js";
 import { UnifiedRoutingEngineService } from "../modules/routing-engine/unified-routing-engine.service.js";
 import { scheduleAssignmentAcceptTimeout } from "../modules/sla/conversation-sla.service.js";
+import type { RoutingPlan } from "../modules/routing-engine/types.js";
 import {
   inferStructuredMessageFromText,
   isInternalControlPayload,
@@ -276,12 +277,24 @@ export function createRoutingWorker() {
           ? ""
           : structuredToPlainText(structured, result.response);
         if (!outboundText) {
+          // AI returned a reply but the text is unusable (raw JSON leaked through
+          // isInternalControlPayload, or empty string after normalization).
+          // Release to human queue so the customer isn't left in silence.
+          if (!isAiFallback) {
+            await performSafetyNetHandoff({
+              tenantId, planId, conversationId, customerId, channelType,
+              conversation, executionId: selectedExecutionId, plan,
+              reason: "ai_empty_reply",
+              stepOutcome: "empty_reply_safety_net_handoff",
+              confidence: result.confidence
+            });
+          }
           return {
             conversationId,
             intent: result.intent,
             sentiment: result.sentiment,
             responded: false,
-            handoff: false
+            handoff: !isAiFallback
           };
         }
         // AI produced a reply → send it
@@ -429,60 +442,26 @@ export function createRoutingWorker() {
         });
       } else {
         // ── Safety-net handoff ───────────────────────────────────────────────
-        // The AI ran (tokensUsed > 0 or action="defer") but produced no reply
-        // and did not request a handoff. This is a silent failure — the customer
-        // would receive no visible response until the 7-minute SLA timeout fires.
+        // AI produced no reply and did not request a handoff. Release to the
+        // human queue in all cases so the customer gets a routing notice instead
+        // of silence. Two sub-cases are distinguished only for tracing:
+        //   • aiActuallyRan=true  → AI ran but gave no usable answer
+        //   • aiActuallyRan=false → orchestrator exited before calling the AI
+        //     (e.g. system-level budget guard, empty message list)
         //
-        // Instead: immediately release to the human queue. The service-mode engine
-        // will publish a routing notice to the customer in their language
-        // ("Connecting you to our team…") so the silence never reaches them.
-        //
-        // Only skip the safety-net when the orchestrator did not run at all
-        // (tokensUsed === 0 AND confidence === 0), which indicates a system-level
-        // early-exit (budget blocked, no messages, etc.) rather than an AI answer
-        // failure — those cases are already handled by the noAiResult() handoff path.
-        //
-        // Also skip when already in AI-fallback mode — the customer is already
-        // queued for a human, so a safety-net handoff would be a duplicate.
+        // Skip when already in AI-fallback mode — the customer is already queued
+        // for a human; a second release would create a duplicate queue entry.
         const aiActuallyRan = result.tokensUsed > 0 || result.confidence > 0;
-        if (aiActuallyRan && !isAiFallback) {
-          const handoffTarget = await withTenantTransaction(tenantId, async (trx) =>
-            resolveReservedHumanTarget(trx, {
-              tenantId,
-              plannedTarget: {
-                assignedAgentId: plan.fallback?.agentId ?? null,
-                departmentId: plan.fallback?.departmentId ?? plan.target.departmentId,
-                teamId: plan.fallback?.teamId ?? plan.target.teamId,
-                strategy: (plan.fallback?.strategy ?? plan.target.strategy) as ("round_robin" | "least_busy" | "sticky"),
-                priority: plan.fallback?.priority ?? plan.target.priority
-              }
-            })
-          );
-          await releaseConversationToHumanQueue({
-            tenantId,
-            planId,
-            conversationId,
-            customerId,
-            channelType,
-            conversation,
-            executionId: selectedExecutionId,
-            handoffTarget,
-            reason: "ai_unable_to_answer",
-            transitionType: "ai_handoff_to_human_queue",
-            actorType: "ai",
-            actorId: plan.target.aiAgentId,
-            assignedAiAgentId: plan.target.aiAgentId,
-            stepStatus: "completed",
-            stepPayload: {
-              outcome: "no_response_safety_net_handoff",
-              aiAgentId: plan.target.aiAgentId,
-              handoff: true,
-              confidence: result.confidence,
-              reason: "ai_ran_but_produced_no_reply"
-            }
+        if (!isAiFallback) {
+          await performSafetyNetHandoff({
+            tenantId, planId, conversationId, customerId, channelType,
+            conversation, executionId: selectedExecutionId, plan,
+            reason: aiActuallyRan ? "ai_unable_to_answer" : "ai_did_not_run",
+            stepOutcome: aiActuallyRan ? "no_response_safety_net_handoff" : "no_response_ai_skipped",
+            confidence: result.confidence
           });
         } else {
-          // System-level skip (budget blocked, no messages, etc.) — log and exit.
+          // Already queued for human — log the skip so tracing is complete.
           await withTenantTransaction(tenantId, async (trx) => {
             await routingPlanStepService.record(trx, {
               tenantId,
@@ -490,9 +469,10 @@ export function createRoutingWorker() {
               stepType: "ai_runtime",
               status: "completed",
               payload: {
-                outcome: "no_response_no_handoff",
+                outcome: "no_response_fallback_suppressed",
                 aiAgentId: plan.target.aiAgentId,
-                confidence: result.confidence
+                confidence: result.confidence,
+                aiActuallyRan
               }
             });
           });
@@ -639,6 +619,64 @@ type RoutingConversationRow = {
   current_handler_id: string | null;
   channel_id?: string;
 };
+
+/**
+ * Shared safety-net: resolve a human queue target for the conversation and
+ * release it there. Called from three distinct failure paths:
+ *  1. AI returned a non-empty response field but outbound text was unusable
+ *     (e.g. raw JSON leaked through isInternalControlPayload).
+ *  2. AI ran (tokensUsed > 0) but produced no reply and no explicit handoff.
+ *  3. Orchestrator exited before calling the AI (aiActuallyRan = false).
+ */
+async function performSafetyNetHandoff(input: {
+  tenantId: string;
+  planId: string;
+  conversationId: string;
+  customerId: string;
+  channelType: string;
+  conversation: RoutingConversationRow;
+  executionId: string;
+  plan: RoutingPlan;
+  reason: string;
+  stepOutcome: string;
+  confidence: number;
+}) {
+  const handoffTarget = await withTenantTransaction(input.tenantId, async (trx) =>
+    resolveReservedHumanTarget(trx, {
+      tenantId: input.tenantId,
+      plannedTarget: {
+        assignedAgentId: input.plan.fallback?.agentId ?? null,
+        departmentId: input.plan.fallback?.departmentId ?? input.plan.target.departmentId,
+        teamId: input.plan.fallback?.teamId ?? input.plan.target.teamId,
+        strategy: (input.plan.fallback?.strategy ?? input.plan.target.strategy) as ("round_robin" | "least_busy" | "sticky"),
+        priority: input.plan.fallback?.priority ?? input.plan.target.priority
+      }
+    })
+  );
+  await releaseConversationToHumanQueue({
+    tenantId: input.tenantId,
+    planId: input.planId,
+    conversationId: input.conversationId,
+    customerId: input.customerId,
+    channelType: input.channelType,
+    conversation: input.conversation,
+    executionId: input.executionId,
+    handoffTarget,
+    reason: input.reason,
+    transitionType: "ai_handoff_to_human_queue",
+    actorType: "ai",
+    actorId: input.plan.target.aiAgentId,
+    assignedAiAgentId: input.plan.target.aiAgentId,
+    stepStatus: "completed",
+    stepPayload: {
+      outcome: input.stepOutcome,
+      aiAgentId: input.plan.target.aiAgentId,
+      handoff: true,
+      confidence: input.confidence,
+      reason: input.reason
+    }
+  });
+}
 
 async function releaseConversationToHumanQueue(input: {
   tenantId: string;

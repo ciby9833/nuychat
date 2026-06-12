@@ -434,7 +434,10 @@ async function scheduleConversationTimeouts(
   preserveHumanOwner: boolean,
 ): Promise<void> {
   const definition = await resolveConversationSlaDefinition(tenantId, customerId);
-  if (!definition) return;
+  // Do NOT early-return when definition is null. Individual schedule* functions
+  // use their own fallback constants, and we need the fallback block below to
+  // fire for directly-human-routed conversations when no SLA is configured.
+
   const hasServiceReply = await db("messages")
     .where({ tenant_id: tenantId, conversation_id: conversationId, direction: "outbound" })
     .whereIn("sender_type", ["agent", "bot"])
@@ -453,6 +456,12 @@ async function scheduleConversationTimeouts(
   }
 
   if (timeoutPlan.scheduleAssignmentAccept) {
+    await scheduleAssignmentAcceptTimeout(tenantId, conversationId, customerId);
+  } else if (!preserveHumanOwner && ["assigned", "pending"].includes(queueStatus)) {
+    // No SLA definition supplied an assignmentAcceptTargetSec, so deriveInboundTimeoutPlan
+    // returned false above. Still schedule the timer so the conversation doesn't sit in
+    // the queue indefinitely — the actual delay comes from FALLBACK_ASSIGNMENT_ACCEPT_SEC
+    // inside scheduleAssignmentAcceptTimeout.
     await scheduleAssignmentAcceptTimeout(tenantId, conversationId, customerId);
   }
 

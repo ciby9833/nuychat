@@ -125,7 +125,7 @@ export class RoutingContextService {
       segmentId: conversation.current_segment_id ?? null,
       channelType: input.channelType,
       channelId: input.channelId,
-      operatingMode: tenant?.operating_mode ?? "human_first",
+      operatingMode: tenant?.operating_mode ?? "ai_first",
       customerLanguage: customer?.language ?? null,
       customerTier: customer?.tier ?? null,
       issueSummary: {

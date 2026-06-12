@@ -1,6 +1,15 @@
 import { db } from "../../infra/db/client.js";
 import { conversationTimeoutQueue } from "../../infra/queue/queues.js";
 
+/**
+ * Fallback delays used when no SLA definition has been configured for the tenant.
+ * These ensure conversations are never left without a recovery timer, even before
+ * the admin has set up explicit SLA targets.
+ * Override via env: FALLBACK_ASSIGNMENT_ACCEPT_SEC, FALLBACK_FOLLOW_UP_SEC
+ */
+const FALLBACK_ASSIGNMENT_ACCEPT_SEC = parseInt(process.env.FALLBACK_ASSIGNMENT_ACCEPT_SEC ?? "", 10) || 2 * 60 * 60; // 2 h
+const FALLBACK_FOLLOW_UP_SEC = parseInt(process.env.FALLBACK_FOLLOW_UP_SEC ?? "", 10) || 24 * 60 * 60; // 24 h
+
 export type FollowUpMonitorMode = "semantic" | "waiting_customer";
 export type SlaBreachMetric = "first_response" | "assignment_accept" | "subsequent_response" | "follow_up" | "resolution";
 export type SlaTriggerActionType = "alert" | "escalate" | "reassign" | "close_case";
@@ -229,7 +238,10 @@ export async function scheduleFollowUpTimeout(
   input?: { mode?: FollowUpMonitorMode | null }
 ): Promise<void> {
   const definition = await resolveConversationSlaDefinition(tenantId, customerId);
-  if (!definition?.followUpTargetSec || definition.followUpTargetSec <= 0) return;
+  // Use the configured target, or the env-configurable fallback so conversations
+  // are never left without a close timer even when no SLA definition exists.
+  const followUpTargetSec = definition?.followUpTargetSec ?? FALLBACK_FOLLOW_UP_SEC;
+  if (followUpTargetSec <= 0) return;
   const triggerPolicy = await resolveConversationTriggerPolicy(tenantId, customerId);
   const followUpMode = input?.mode ?? resolveConfiguredFollowUpCloseMode(triggerPolicy) ?? "waiting_customer";
 
@@ -241,7 +253,7 @@ export async function scheduleFollowUpTimeout(
     { tenantId, conversationId, alertType: "follow_up", followUpMode: followUpMode, scheduledAt },
     {
       jobId,
-      delay: definition.followUpTargetSec * 1000,
+      delay: followUpTargetSec * 1000,
       removeOnComplete: 50,
       removeOnFail: 20
     }
@@ -261,7 +273,10 @@ export async function scheduleAssignmentAcceptTimeout(
   }
 ): Promise<void> {
   const definition = await resolveConversationSlaDefinition(tenantId, customerId);
-  if (!definition?.assignmentAcceptTargetSec || definition.assignmentAcceptTargetSec <= 0) return;
+  // Use the configured target, or the env-configurable fallback so queued
+  // conversations are never left without a reassignment timer.
+  const assignmentAcceptTargetSec = definition?.assignmentAcceptTargetSec ?? FALLBACK_ASSIGNMENT_ACCEPT_SEC;
+  if (assignmentAcceptTargetSec <= 0) return;
 
   const scheduledAt = Date.now();
   const ids = assignmentAcceptJobIds(conversationId);
@@ -274,7 +289,7 @@ export async function scheduleAssignmentAcceptTimeout(
     { tenantId, conversationId, alertType: "assignment_accept", scheduledAt },
     {
       jobId: nextJobId,
-      delay: definition.assignmentAcceptTargetSec * 1000,
+      delay: assignmentAcceptTargetSec * 1000,
       removeOnComplete: 50,
       removeOnFail: 20
     }
@@ -362,10 +377,11 @@ export async function recoverOverdueAssignmentAcceptTimeouts(limit = 500): Promi
   for (const row of rows) {
     if (!row.customer_id || !row.updated_at) continue;
     const definition = await resolveConversationSlaDefinition(row.tenant_id, row.customer_id);
-    if (!definition?.assignmentAcceptTargetSec || definition.assignmentAcceptTargetSec <= 0) continue;
+    const targetSec = definition?.assignmentAcceptTargetSec ?? FALLBACK_ASSIGNMENT_ACCEPT_SEC;
+    if (targetSec <= 0) continue;
     const updatedAtMs = new Date(row.updated_at).getTime();
     if (!Number.isFinite(updatedAtMs)) continue;
-    if (updatedAtMs + definition.assignmentAcceptTargetSec * 1000 > now) continue;
+    if (updatedAtMs + targetSec * 1000 > now) continue;
     const ids = assignmentAcceptJobIds(row.conversation_id);
     await removeTimeoutJobs([...ids.legacy, ...ids.slots]);
     await conversationTimeoutQueue.add(
@@ -409,7 +425,8 @@ export async function recoverOverdueFollowUpTimeouts(limit = 500): Promise<numbe
   for (const row of rows) {
     if (!row.customer_id) continue;
     const definition = await resolveConversationSlaDefinition(row.tenant_id, row.customer_id);
-    if (!definition?.followUpTargetSec || definition.followUpTargetSec <= 0) continue;
+    const targetSec = definition?.followUpTargetSec ?? FALLBACK_FOLLOW_UP_SEC;
+    if (targetSec <= 0) continue;
 
     const latestMessage = await db("messages")
       .where({ tenant_id: row.tenant_id, conversation_id: row.conversation_id })
@@ -420,7 +437,7 @@ export async function recoverOverdueFollowUpTimeouts(limit = 500): Promise<numbe
     if (!latestMessage?.created_at || latestMessage.direction !== "outbound") continue;
     const latestMessageMs = new Date(latestMessage.created_at).getTime();
     if (!Number.isFinite(latestMessageMs)) continue;
-    if (latestMessageMs + definition.followUpTargetSec * 1000 > now) continue;
+    if (latestMessageMs + targetSec * 1000 > now) continue;
 
     const triggerPolicy = await resolveConversationTriggerPolicy(row.tenant_id, row.customer_id);
     const followUpMode = resolveConfiguredFollowUpCloseMode(triggerPolicy) ?? "waiting_customer";
