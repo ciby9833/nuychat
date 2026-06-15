@@ -13,7 +13,7 @@ import weekday from "dayjs/plugin/weekday";
 
 import "./i18n"; // initialise i18next before rendering
 import i18n, { getAntdLocale } from "./i18n";
-import { DashboardPage, LoginPage } from "./App";
+import { DashboardPage, LoginPage, PrivacyPolicyPage } from "./App";
 import "antd/dist/reset.css";
 import "./index.css";
 
@@ -39,6 +39,8 @@ function Root() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<LoginPage />} />
+            <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+            <Route path="/privacy" element={<Navigate to="/privacy-policy" replace />} />
             <Route path="/dashboard" element={<Navigate to="/dashboard/overview" replace />} />
             <Route path="/dashboard/:tab" element={<DashboardPage />} />
           </Routes>

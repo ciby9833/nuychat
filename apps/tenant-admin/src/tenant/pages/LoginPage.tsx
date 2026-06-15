@@ -2,7 +2,7 @@ import { LockOutlined, MailOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Form, Input, Select, Typography } from "antd";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { changeLanguage, LANGS } from "../../i18n";
 import { loginTenant, switchTenant } from "../api";
@@ -84,6 +84,9 @@ export function LoginPage() {
             {t("login.submit")}
           </Button>
         </Form>
+        <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
+          <Link to="/privacy-policy">Privacy Policy</Link>
+        </div>
       </Card>
     </main>
   );

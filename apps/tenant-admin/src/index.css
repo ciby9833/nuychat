@@ -35,3 +35,84 @@ body {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+.privacy-page {
+  min-height: 100vh;
+  background: #f5f7fb;
+  padding: 48px 18px;
+}
+
+.privacy-document {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid #e7eaf0;
+  border-radius: 8px;
+  padding: 44px;
+  box-shadow: 0 10px 30px rgba(31, 41, 55, 0.06);
+}
+
+.privacy-header {
+  max-width: 760px;
+}
+
+.privacy-brand {
+  display: block;
+  color: #1677ff;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin-bottom: 8px;
+}
+
+.privacy-section {
+  margin-top: 30px;
+}
+
+.privacy-section h2,
+.privacy-section h3 {
+  color: #172033;
+}
+
+.privacy-copy,
+.privacy-section p,
+.privacy-section li {
+  color: #394457;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.privacy-section ul {
+  padding-left: 22px;
+  margin: 12px 0 0;
+}
+
+.privacy-section li + li {
+  margin-top: 8px;
+}
+
+.privacy-zh {
+  background: #f8fafc;
+  border: 1px solid #e8edf5;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.privacy-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 28px;
+}
+
+@media (max-width: 640px) {
+  .privacy-page {
+    padding: 18px 10px;
+  }
+
+  .privacy-document {
+    padding: 24px 18px;
+  }
+
+  .privacy-section {
+    margin-top: 24px;
+  }
+}
