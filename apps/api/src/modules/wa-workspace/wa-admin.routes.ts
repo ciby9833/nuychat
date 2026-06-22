@@ -186,6 +186,9 @@ export async function waAdminRoutes(app: FastifyInstance) {
       })
     );
     await syncWaMonitorAnalysisRepeatForTenant(tenantId);
+    if (body.isActive) {
+      void triggerWaMonitorAnalysisScan({ tenantId, waAccountId: body.waAccountId!.trim() });
+    }
     return target;
   });
 

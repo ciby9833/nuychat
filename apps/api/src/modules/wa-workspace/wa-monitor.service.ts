@@ -27,7 +27,7 @@ type WaMonitorReportQuery = {
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const THIRTY_MIN_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const BACKFILL_BATCH_LIMIT = 10;
+const BACKFILL_BATCH_LIMIT = 100;
 const DEFAULT_JUDGMENT_PROMPT = [
   "你是 WA 客服对话监控助手，需要判断客户入站消息是否需要客服人工回复。",
   "请结合当前消息、群聊/私聊类型、上下文和前端维护的识别条件判断。",
@@ -82,8 +82,8 @@ export async function triggerWaMonitorAnalysisScan(input: WaMonitorAnalysisJobPa
 export async function ensureWaMonitorAnalysisRepeatForTenant(tenantId: string) {
   await waMonitorAnalysisQueue.add("wa.monitor.analysis", { tenantId }, {
     jobId: `wa-monitor:scan:repeat:${tenantId}`,
-    repeat: { every: 60 * 1000 },
-    removeOnComplete: true,
+    repeat: { every: 3 * 60 * 1000 },
+    removeOnComplete: false,
     removeOnFail: 100
   });
   return { queued: true };
@@ -740,6 +740,7 @@ async function processWaMonitorInboundMessageDetached(
       : null;
 
     const replyAt = reply?.reply_at ? new Date(String(reply.reply_at)) : null;
+    const senderJid = asString(row.participant_jid) ?? asString(row.sender_jid);
     await trx("wa_conversation_reply_facts")
       .insert({
         tenant_id: input.tenantId,
@@ -748,6 +749,7 @@ async function processWaMonitorInboundMessageDetached(
         source_wa_message_id: row.wa_message_id,
         requires_reply: analysis.requiresReply,
         customer_message_at: messageAt,
+        customer_participant_jid: senderJid,
         first_reply_wa_message_id: reply?.wa_message_id ?? null,
         first_reply_at: replyAt,
         replied_by_membership_id: reply?.sender_member_id ?? null,
@@ -757,6 +759,7 @@ async function processWaMonitorInboundMessageDetached(
       .onConflict(["tenant_id", "source_wa_message_id"])
       .merge({
         requires_reply: analysis.requiresReply,
+        customer_participant_jid: trx.raw("coalesce(wa_conversation_reply_facts.customer_participant_jid, excluded.customer_participant_jid)"),
         first_reply_wa_message_id: reply?.wa_message_id ?? null,
         first_reply_at: replyAt,
         replied_by_membership_id: reply?.sender_member_id ?? null,
@@ -796,7 +799,7 @@ export async function backfillAdminWaMonitorFacts(
         if (input.waAccountId) qb.where("m.wa_account_id", input.waAccountId);
       })
       .select("m.wa_message_id")
-      .orderBy("m.created_at", "desc")
+      .orderBy("m.created_at", "asc")
       .limit(limit)
   );
 
@@ -1367,6 +1370,7 @@ export async function listAdminWaMonitorMessageDetailReport(
   input: WaMonitorReportQuery
 ) {
   const { page, pageSize, offset } = normalizePagination(input);
+  const messageTs = buildMessageTimestampSql("m");
   const base = trx("wa_message_monitor_analysis as a")
     .join("wa_messages as m", function joinMessage() {
       this.on("m.wa_message_id", "=", "a.wa_message_id").andOn("m.tenant_id", "=", "a.tenant_id");
@@ -1378,8 +1382,7 @@ export async function listAdminWaMonitorMessageDetailReport(
       this.on("f.source_wa_message_id", "=", "a.wa_message_id").andOn("f.tenant_id", "=", "a.tenant_id");
     })
     .where("a.tenant_id", input.tenantId)
-    .where("f.customer_message_at", ">=", input.startAt)
-    .where("f.customer_message_at", "<=", input.endAt)
+    .whereRaw(`${messageTs} >= ? and ${messageTs} <= ?`, [input.startAt, input.endAt])
     .modify((qb) => {
       if (input.waAccountId) qb.where("a.wa_account_id", input.waAccountId);
       if (input.membershipId) qb.where("f.replied_by_membership_id", input.membershipId);
@@ -1585,6 +1588,9 @@ export async function getAdminWaDailyReport(
   const { start, end } = toTimeRange(input.date);
   const messageTs = buildMessageTimestampSql("m");
 
+  const accounts = await listWaAccounts(trx, input.tenantId);
+  const accountIds = accounts.map((item) => item.waAccountId);
+
   const [
     totals,
     replyTotals,
@@ -1592,8 +1598,7 @@ export async function getAdminWaDailyReport(
     accountFactRows,
     memberRows,
     unrepliedRows,
-    monitorConversations,
-    accounts
+    monitorConversations
   ] = await Promise.all([
     trx("wa_messages as m")
       .join("wa_monitor_targets as t", function joinTarget() {
@@ -1685,11 +1690,10 @@ export async function getAdminWaDailyReport(
       .limit(10),
     listWaConversations(trx, {
       tenantId: input.tenantId,
-      waAccountIds: (await listWaAccounts(trx, input.tenantId)).map((item) => item.waAccountId),
+      waAccountIds: accountIds,
       assignedToMembershipId: null,
       type: null
-    }),
-    listWaAccounts(trx, input.tenantId)
+    })
   ]);
 
   const conversationMap = new Map(monitorConversations.map((item) => [item.waConversationId, item]));

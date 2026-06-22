@@ -392,8 +392,8 @@ export async function getCustomerReportStats(input: {
         .andOn("rf.tenant_id", "m.tenant_id")
     )
     .modify((q) => {
-      if (input.waAccountId) q.andWhere("c.tenant_id", input.tenantId); // already filtered above; add account filter
-      if (input.ownerMembershipId) void q.where("c.owner_membership_id", input.ownerMembershipId);
+      if (input.waAccountId) q.andWhere("m.wa_account_id", input.waAccountId);
+      if (input.ownerMembershipId) q.where("c.owner_membership_id", input.ownerMembershipId);
     })
     .groupBy("c.wa_customer_contact_id", "c.display_name", "c.remarks",
       "c.external_customer_id", "c.customer_status", "c.owner_membership_id",
