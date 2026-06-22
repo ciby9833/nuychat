@@ -579,6 +579,18 @@ export async function setAdminWaMonitorTarget(
   return mapMonitorTarget(row as Record<string, unknown>);
 }
 
+async function resolveAccountOwnerMembershipId(
+  trx: Knex.Transaction,
+  tenantId: string,
+  waAccountId: string
+): Promise<string | null> {
+  const acc = await trx("wa_accounts")
+    .where({ tenant_id: tenantId, wa_account_id: waAccountId })
+    .select("primary_owner_membership_id")
+    .first<{ primary_owner_membership_id: string | null } | undefined>();
+  return acc?.primary_owner_membership_id ?? null;
+}
+
 export async function processWaMonitorMessage(
   trx: Knex.Transaction,
   input: { tenantId: string; waMessageId: string }
@@ -618,7 +630,11 @@ export async function processWaMonitorMessage(
     return { skipped: true, reason: "inbound monitor analysis is handled by detached worker" };
   }
 
-  if (direction === "outbound" && row.sender_member_id) {
+  if (direction === "outbound") {
+    const repliedByMembershipId = row.sender_member_id
+      ? String(row.sender_member_id)
+      : await resolveAccountOwnerMembershipId(trx, input.tenantId, String(row.wa_account_id));
+
     const unresolved = await trx("wa_conversation_reply_facts")
       .where({
         tenant_id: input.tenantId,
@@ -636,7 +652,7 @@ export async function processWaMonitorMessage(
         .update({
           first_reply_wa_message_id: row.wa_message_id,
           first_reply_at: messageAt,
-          replied_by_membership_id: row.sender_member_id,
+          replied_by_membership_id: repliedByMembershipId,
           reply_duration_sec: Math.max(0, Math.round((messageAt.getTime() - customerAt.getTime()) / 1000)),
           updated_at: trx.fn.now()
         });
@@ -732,14 +748,18 @@ async function processWaMonitorInboundMessageDetached(
           .where("r.tenant_id", input.tenantId)
           .where("r.wa_conversation_id", String(row.wa_conversation_id))
           .where("r.direction", "outbound")
-          .whereNotNull("r.sender_member_id")
           .whereRaw(`${replyTs} > ?`, [messageAt])
-          .select("r.wa_message_id", "r.sender_member_id", trx.raw(`${replyTs} as reply_at`))
+          .select("r.wa_message_id", "r.sender_member_id", "r.wa_account_id", trx.raw(`${replyTs} as reply_at`))
           .orderByRaw(`${replyTs} asc`)
           .first<Record<string, unknown> | undefined>()
       : null;
 
     const replyAt = reply?.reply_at ? new Date(String(reply.reply_at)) : null;
+    const repliedByMembershipId = reply
+      ? (reply.sender_member_id
+          ? String(reply.sender_member_id)
+          : await resolveAccountOwnerMembershipId(trx, input.tenantId, String(reply.wa_account_id)))
+      : null;
     const senderJid = asString(row.participant_jid) ?? asString(row.sender_jid);
     await trx("wa_conversation_reply_facts")
       .insert({
@@ -752,7 +772,7 @@ async function processWaMonitorInboundMessageDetached(
         customer_participant_jid: senderJid,
         first_reply_wa_message_id: reply?.wa_message_id ?? null,
         first_reply_at: replyAt,
-        replied_by_membership_id: reply?.sender_member_id ?? null,
+        replied_by_membership_id: repliedByMembershipId,
         reply_duration_sec: replyAt ? Math.max(0, Math.round((replyAt.getTime() - messageAt.getTime()) / 1000)) : null,
         updated_at: trx.fn.now()
       })
@@ -762,7 +782,7 @@ async function processWaMonitorInboundMessageDetached(
         customer_participant_jid: trx.raw("coalesce(wa_conversation_reply_facts.customer_participant_jid, excluded.customer_participant_jid)"),
         first_reply_wa_message_id: reply?.wa_message_id ?? null,
         first_reply_at: replyAt,
-        replied_by_membership_id: reply?.sender_member_id ?? null,
+        replied_by_membership_id: repliedByMembershipId,
         reply_duration_sec: replyAt ? Math.max(0, Math.round((replyAt.getTime() - messageAt.getTime()) / 1000)) : null,
         updated_at: trx.fn.now()
       });
@@ -861,7 +881,6 @@ async function listLatestHumanReplyGaps(
         where m2.tenant_id = m.tenant_id
           and m2.wa_conversation_id = m.wa_conversation_id
           and m2.direction = 'outbound'
-          and m2.sender_member_id is not null
           and ${outboundTs} > ${messageTs}
         order by ${outboundTs} asc
         limit 1
@@ -1135,7 +1154,7 @@ export async function listAdminWaMonitorAccountReport(
             "m.wa_account_id",
             trx.raw("count(*)::int as total_messages"),
             trx.raw("count(*) filter (where m.direction = 'inbound')::int as customer_message_count"),
-            trx.raw("count(*) filter (where m.direction = 'outbound' and m.sender_member_id is not null)::int as service_message_count")
+            trx.raw("count(*) filter (where m.direction = 'outbound')::int as service_message_count")
           )
           .groupBy("m.wa_account_id"),
     accountIds.length === 0
@@ -1260,7 +1279,7 @@ export async function listAdminWaMonitorTimeReport(
       trx.raw(`${messageBucket} as bucket_at`),
       trx.raw("count(*)::int as total_messages"),
       trx.raw("count(*) filter (where m.direction = 'inbound')::int as customer_message_count"),
-      trx.raw("count(*) filter (where m.direction = 'outbound' and m.sender_member_id is not null)::int as service_message_count")
+      trx.raw("count(*) filter (where m.direction = 'outbound')::int as service_message_count")
     )
     .groupByRaw(messageBucket);
 
@@ -1610,7 +1629,7 @@ export async function getAdminWaDailyReport(
       .select(
         trx.raw("count(*)::int as total_messages"),
         trx.raw("count(*) filter (where m.direction = 'inbound')::int as customer_message_count"),
-        trx.raw("count(*) filter (where m.direction = 'outbound' and m.sender_member_id is not null)::int as manual_reply_count")
+        trx.raw("count(*) filter (where m.direction = 'outbound')::int as manual_reply_count")
       )
       .first<{ total_messages: number; manual_reply_count: number } | undefined>(),
     trx("wa_conversation_reply_facts")
@@ -1639,7 +1658,7 @@ export async function getAdminWaDailyReport(
         trx.raw("count(distinct t.wa_conversation_id)::int as monitored_conversation_count"),
         trx.raw("count(distinct m.wa_message_id)::int as total_messages"),
         trx.raw("count(distinct m.wa_message_id) filter (where m.direction = 'inbound')::int as customer_message_count"),
-        trx.raw("count(distinct m.wa_message_id) filter (where m.direction = 'outbound' and m.sender_member_id is not null)::int as service_message_count")
+        trx.raw("count(distinct m.wa_message_id) filter (where m.direction = 'outbound')::int as service_message_count")
       )
       .groupBy("t.wa_account_id"),
     trx("wa_conversation_reply_facts")
