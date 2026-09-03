@@ -73,6 +73,7 @@ type RuntimeEntry = {
   phoneConnected: boolean | null;
   receivedPendingNotifications: boolean | null;
   restartRequested: boolean;
+  reconnectTimer: NodeJS.Timeout | null;
   syncFinalizeTimer: NodeJS.Timeout | null;
   postConnectSyncScheduled: boolean;
   reconcileScheduled: boolean;
@@ -110,10 +111,30 @@ const runtimes = new Map<string, RuntimeEntry>();
  */
 const pendingBuilds = new Map<string, Promise<RuntimeEntry>>();
 const loggedBaileysErrors = new Map<string, number>();
+const reconnectStates = new Map<string, {
+  attempts: number;
+  windowStartedAt: number;
+  preAuthFailures: number;
+}>();
 const postConnectTaskKeys = new Set<string>();
 const postConnectTaskQueue: Array<() => Promise<void>> = [];
 let postConnectTaskActive = 0;
 const POST_CONNECT_TASK_CONCURRENCY = 1;
+const RECONNECT_WINDOW_MS = 10 * 60 * 1000;
+const MAX_RECONNECT_ATTEMPTS_PER_WINDOW = 6;
+const MAX_PRE_AUTH_FAILURES = 3;
+const RECONNECT_DELAYS_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 120_000];
+
+type ReconnectDecision =
+  | { action: "none"; reason: string }
+  | { action: "retry"; delayMs: number; attempt: number; reason: string }
+  | { action: "stop"; reason: string; disconnectReason: string };
+
+type BaileysDisconnectError = Error & {
+  output?: {
+    statusCode?: unknown;
+  };
+};
 
 function shouldLogBaileysError(trace: string): boolean {
   const now = Date.now();
@@ -163,6 +184,131 @@ const baileysLogger = {
 
 function runtimeKey(tenantId: string, waAccountId: string) {
   return `${tenantId}:${waAccountId}`;
+}
+
+function resetReconnectState(key: string) {
+  reconnectStates.delete(key);
+}
+
+function clearRuntimeTimers(entry: RuntimeEntry) {
+  if (entry.syncFinalizeTimer) {
+    clearTimeout(entry.syncFinalizeTimer);
+    entry.syncFinalizeTimer = null;
+  }
+  if (entry.reconnectTimer) {
+    clearTimeout(entry.reconnectTimer);
+    entry.reconnectTimer = null;
+  }
+}
+
+function isAuthTerminalDisconnect(disconnectCode: number) {
+  return disconnectCode === DisconnectReason.loggedOut || disconnectCode === 401 || disconnectCode === 403;
+}
+
+function getDisconnectCode(update: Partial<ConnectionState>) {
+  const error = update.lastDisconnect?.error as BaileysDisconnectError | undefined;
+  const code = Number(error?.output?.statusCode ?? 0);
+  return Number.isFinite(code) ? code : 0;
+}
+
+function classifyReconnect(input: {
+  key: string;
+  autoReconnect: boolean;
+  restartRequested: boolean;
+  disconnectCode: number;
+  previousConnectionState: string;
+  previousLoginPhase: string;
+  previousReceivedPendingNotifications: boolean | null;
+  isNewLogin?: boolean;
+}): ReconnectDecision {
+  if (!input.autoReconnect) return { action: "none", reason: "auto reconnect disabled" };
+  if (input.restartRequested) return { action: "none", reason: "runtime restart already requested" };
+  if (isAuthTerminalDisconnect(input.disconnectCode)) {
+    return {
+      action: "stop",
+      reason: "auth terminal disconnect",
+      disconnectReason: String(input.disconnectCode || DisconnectReason.loggedOut)
+    };
+  }
+
+  const hadAuthenticatedSession =
+    input.previousConnectionState === "open" ||
+    input.previousReceivedPendingNotifications === true ||
+    input.previousLoginPhase === "connected" ||
+    input.previousLoginPhase === "syncing" ||
+    input.isNewLogin === true;
+
+  const now = Date.now();
+  const previous = reconnectStates.get(input.key);
+  const state = previous && now - previous.windowStartedAt <= RECONNECT_WINDOW_MS
+    ? previous
+    : { attempts: 0, windowStartedAt: now, preAuthFailures: 0 };
+
+  state.attempts += 1;
+  if (!hadAuthenticatedSession) {
+    state.preAuthFailures += 1;
+  } else {
+    state.preAuthFailures = 0;
+  }
+  reconnectStates.set(input.key, state);
+
+  if (state.preAuthFailures >= MAX_PRE_AUTH_FAILURES) {
+    return {
+      action: "stop",
+      reason: "repeated pre-auth disconnects",
+      disconnectReason: "pre_auth_reconnect_exhausted"
+    };
+  }
+  if (state.attempts > MAX_RECONNECT_ATTEMPTS_PER_WINDOW) {
+    return {
+      action: "stop",
+      reason: "reconnect budget exhausted",
+      disconnectReason: "reconnect_exhausted"
+    };
+  }
+
+  const delayMs = RECONNECT_DELAYS_MS[Math.min(state.attempts - 1, RECONNECT_DELAYS_MS.length - 1)];
+  return {
+    action: "retry",
+    delayMs,
+    attempt: state.attempts,
+    reason: hadAuthenticatedSession ? "authenticated session reconnect" : "pre-auth reconnect"
+  };
+}
+
+function scheduleReconnect(entry: RuntimeEntry, decision: Extract<ReconnectDecision, { action: "retry" }>) {
+  const key = runtimeKey(entry.tenantId, entry.waAccountId);
+  if (entry.reconnectTimer) {
+    clearTimeout(entry.reconnectTimer);
+  }
+  entry.reconnectTimer = setTimeout(() => {
+    entry.reconnectTimer = null;
+    const current = runtimes.get(key);
+    if (current !== entry) {
+      return;
+    }
+    runtimes.delete(key);
+    void ensureBaileysRuntime({
+      tenantId: entry.tenantId,
+      waAccountId: entry.waAccountId,
+      instanceKey: entry.instanceKey,
+      loginMode: entry.activeLoginMode,
+      forceNew: true
+    }).catch((error) => {
+      console.error("[wa-baileys] reconnect failed to start", {
+        tenantId: entry.tenantId,
+        waAccountId: entry.waAccountId,
+        error
+      });
+    });
+  }, decision.delayMs);
+  console.warn("[wa-baileys] reconnect scheduled", {
+    tenantId: entry.tenantId,
+    waAccountId: entry.waAccountId,
+    attempt: decision.attempt,
+    delayMs: decision.delayMs,
+    reason: decision.reason
+  });
 }
 
 function enqueuePostConnectTask(taskKey: string, task: () => Promise<void>) {
@@ -232,7 +378,6 @@ function deriveLoginPhase(
   if (update.isNewLogin) return "syncing";
   if (update.connection === "close") return "failed";
   if (update.connection === "open") {
-    if (update.receivedPendingNotifications === true) return "connected";
     return "syncing";
   }
   if (current.connectionState === "open" && update.connection === "connecting") {
@@ -433,7 +578,11 @@ async function buildSocket(input: {
     version: version.version,
     auth: authState.authState,
     logger: baileysLogger,
-    browser: Browsers.macOS("Desktop"),
+    // WhatsApp rejects new companion registration when Baileys advertises the
+    // native Desktop sub-platform (DARWIN/WIN32), returning 428 before pairing
+    // can settle. Advertise the normal web client identity used by Baileys's
+    // own default configuration instead.
+    browser: Browsers.macOS("Chrome"),
     markOnlineOnConnect: false,
     syncFullHistory: true,
     shouldIgnoreJid: () => false,
@@ -459,6 +608,7 @@ async function buildSocket(input: {
             .select("participant_jid", "is_admin");
           return {
             id: jid,
+            owner: undefined,
             subject: conv.subject ? String(conv.subject) : jid,
             participants: members.map((m) => ({
               id: String(m.participant_jid),
@@ -487,6 +637,7 @@ async function buildSocket(input: {
     phoneConnected: null,
     receivedPendingNotifications: null,
     restartRequested: false,
+    reconnectTimer: null,
     syncFinalizeTimer: null,
     postConnectSyncScheduled: false,
     reconcileScheduled: false,
@@ -539,16 +690,42 @@ async function buildSocket(input: {
     entry.isOnline = nextIsOnline;
     entry.phoneConnected = nextPhoneConnected;
     entry.receivedPendingNotifications = nextReceivedPendingNotifications;
-    const disconnectCode = Number(update.lastDisconnect?.error?.output?.statusCode ?? 0);
+    const disconnectCode = getDisconnectCode(update);
     entry.lastDisconnectReason = disconnectCode ? String(disconnectCode) : null;
 
-    const shouldReconnect =
-      update.connection === "close" &&
-      config.autoReconnect &&
-      disconnectCode !== DisconnectReason.loggedOut &&
-      !entry.restartRequested;
+    if (update.connection === "open" || update.receivedPendingNotifications === true) {
+      resetReconnectState(runtimeKey(input.tenantId, input.waAccountId));
+    }
+
+    const reconnectDecision = update.connection === "close"
+      ? classifyReconnect({
+          key: runtimeKey(input.tenantId, input.waAccountId),
+          autoReconnect: config.autoReconnect,
+          restartRequested: entry.restartRequested,
+          disconnectCode,
+          previousConnectionState,
+          previousLoginPhase,
+          previousReceivedPendingNotifications,
+          isNewLogin: update.isNewLogin
+        })
+      : { action: "none", reason: "connection not closed" } satisfies ReconnectDecision;
+
+    if (reconnectDecision.action === "stop") {
+      entry.connectionState = "close";
+      entry.loginPhase = "failed";
+      entry.qrCode = null;
+      entry.lastDisconnectReason = reconnectDecision.disconnectReason;
+      resetReconnectState(runtimeKey(input.tenantId, input.waAccountId));
+      console.warn("[wa-baileys] reconnect stopped", {
+        tenantId: input.tenantId,
+        waAccountId: input.waAccountId,
+        reason: reconnectDecision.reason,
+        disconnectReason: reconnectDecision.disconnectReason
+      });
+    }
+
     const shouldTreatAsTransientReconnect =
-      shouldReconnect && (
+      reconnectDecision.action === "retry" && (
         previousConnectionState === "open" ||
         previousReceivedPendingNotifications === true ||
         previousLoginPhase === "qr_scanned" ||
@@ -580,6 +757,7 @@ async function buildSocket(input: {
       });
       // Close in the next tick to avoid re-entrancy issues inside the event handler.
       setImmediate(() => {
+        clearRuntimeTimers(entry);
         try { socket.end(new Error("orphaned runtime replaced by newer session")); } catch { /* ignore */ }
       });
       return;
@@ -647,6 +825,7 @@ async function buildSocket(input: {
       entry.restartRequested = true;
       await authState.saveCreds();
       await persistBaileysAuthSnapshot(input.tenantId, input.waAccountId, authState.sessionPath);
+      clearRuntimeTimers(entry);
       runtimes.delete(runtimeKey(input.tenantId, input.waAccountId));
       try {
         socket.end(new Error("pairing restart required"));
@@ -667,15 +846,14 @@ async function buildSocket(input: {
       entry.postConnectSyncScheduled = false;
       entry.reconcileScheduled = false;
       entry.avatarSyncScheduled = false;
-      if (shouldReconnect) {
-        runtimes.delete(runtimeKey(input.tenantId, input.waAccountId));
-        void ensureBaileysRuntime({
-          tenantId: input.tenantId,
-          waAccountId: input.waAccountId,
-          instanceKey: input.instanceKey,
-          loginMode: entry.activeLoginMode,
-          forceNew: true
-        }).catch(() => undefined);
+      if (reconnectDecision.action === "retry") {
+        scheduleReconnect(entry, reconnectDecision);
+      } else if (reconnectDecision.action === "stop") {
+        clearRuntimeTimers(entry);
+        const key = runtimeKey(input.tenantId, input.waAccountId);
+        if (runtimes.get(key) === entry) {
+          runtimes.delete(key);
+        }
       }
     }
   });
@@ -916,6 +1094,7 @@ export async function ensureBaileysRuntime(input: {
   if (input.resetAuth) {
     const existing = runtimes.get(key);
     if (existing) {
+      clearRuntimeTimers(existing);
       try {
         existing.socket.end(new Error("reset auth state"));
       } catch {
@@ -924,6 +1103,7 @@ export async function ensureBaileysRuntime(input: {
       runtimes.delete(key);
     }
     pendingBuilds.delete(key);
+    resetReconnectState(key);
     await resetBaileysAuthState(input.tenantId, input.waAccountId);
   }
   if (!input.forceNew) {
@@ -1135,9 +1315,7 @@ export async function restartBaileysRuntime(input: {
   const key = runtimeKey(input.tenantId, input.waAccountId);
   const existing = runtimes.get(key);
   if (existing) {
-    if (existing.syncFinalizeTimer) {
-      clearTimeout(existing.syncFinalizeTimer);
-    }
+    clearRuntimeTimers(existing);
     try {
       existing.socket.end(new Error("manual restart"));
     } catch {
@@ -1145,6 +1323,7 @@ export async function restartBaileysRuntime(input: {
     }
     runtimes.delete(key);
   }
+  resetReconnectState(key);
 
   const runtime = await ensureBaileysRuntime({
     ...input,
@@ -1162,9 +1341,7 @@ export async function logoutBaileysRuntime(input: {
   const key = runtimeKey(input.tenantId, input.waAccountId);
   const existing = runtimes.get(key);
   if (existing) {
-    if (existing.syncFinalizeTimer) {
-      clearTimeout(existing.syncFinalizeTimer);
-    }
+    clearRuntimeTimers(existing);
     try {
       await existing.socket.logout();
     } catch {
@@ -1176,6 +1353,7 @@ export async function logoutBaileysRuntime(input: {
     }
     runtimes.delete(key);
   }
+  resetReconnectState(key);
 
   await resetBaileysAuthState(input.tenantId, input.waAccountId);
 

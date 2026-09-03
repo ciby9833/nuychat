@@ -36,6 +36,10 @@ function buildInstanceKey(displayName: string) {
   return `wa-${displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "account"}`;
 }
 
+function shouldForceFreshLogin(disconnectReason: unknown) {
+  return ["401", "403", "pre_auth_reconnect_exhausted"].includes(String(disconnectReason ?? ""));
+}
+
 export async function listAdminWaAccounts(trx: Knex.Transaction, tenantId: string) {
   return listWaAccounts(trx, tenantId);
 }
@@ -66,7 +70,7 @@ export async function createAdminLoginTask(
     .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
     .orderByRaw("coalesce(updated_at, heartbeat_at, created_at) desc, created_at desc")
     .first<Record<string, unknown> | undefined>();
-  const forceFresh = String(latestSession?.disconnect_reason ?? "") === "401";
+  const forceFresh = shouldForceFreshLogin(latestSession?.disconnect_reason);
 
   const ticket = await waProviderAdapter.createLoginTicket({
     tenantId: input.tenantId,

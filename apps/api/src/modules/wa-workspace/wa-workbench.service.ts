@@ -40,6 +40,10 @@ import {
 } from "./runtime/baileys-send.service.js";
 import { triggerWaConversationHistorySync } from "./wa-history-sync.service.js";
 
+function shouldForceFreshLogin(disconnectReason: unknown) {
+  return ["401", "403", "pre_auth_reconnect_exhausted"].includes(String(disconnectReason ?? ""));
+}
+
 async function assertConversationAccessible(
   trx: Knex.Transaction,
   input: { tenantId: string; membershipId: string; role: string; waConversationId: string }
@@ -181,7 +185,7 @@ export async function createWorkbenchLoginTask(
     .where({ tenant_id: input.tenantId, wa_account_id: input.waAccountId })
     .orderByRaw("coalesce(updated_at, heartbeat_at, created_at) desc, created_at desc")
     .first<Record<string, unknown> | undefined>();
-  const forceFresh = String(latestSession?.disconnect_reason ?? "") === "401";
+  const forceFresh = shouldForceFreshLogin(latestSession?.disconnect_reason);
   const ticket = await waProviderAdapter.createLoginTicket({
     tenantId: input.tenantId,
     waAccountId: input.waAccountId,

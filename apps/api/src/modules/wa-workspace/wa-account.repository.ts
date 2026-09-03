@@ -261,7 +261,7 @@ export async function createWaLoginTask(
     requestedByMembershipId: string;
     loginMode: string;
     sessionRef: string;
-    qrCode: string;
+    qrCode: string | null;
     expiresAt: string;
   }
 ) {

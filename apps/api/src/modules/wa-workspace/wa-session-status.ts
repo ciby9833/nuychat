@@ -39,6 +39,7 @@ export type WaSessionSnapshot = {
 
 const STALE_PENDING_SESSION_MS = 2 * 60 * 1000;
 const INTERACTIVE_LOGIN_MODES = new Set(["employee_scan", "admin_scan"]);
+const SESSION_EXPIRED_REASONS = new Set(["401", "403", "pre_auth_reconnect_exhausted"]);
 
 function isInteractiveLoginMode(loginMode: string | null | undefined) {
   return Boolean(loginMode && INTERACTIVE_LOGIN_MODES.has(loginMode));
@@ -106,7 +107,7 @@ export function deriveWaStatus(input: {
     };
   }
 
-  if (session.disconnectReason === "401") {
+  if (session.disconnectReason && SESSION_EXPIRED_REASONS.has(session.disconnectReason)) {
     return {
       code: "session_expired",
       label: "会话失效",
