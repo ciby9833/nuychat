@@ -118,10 +118,10 @@ export function deriveWaStatus(input: {
 
   if (isStalePendingSession(session)) {
     return {
-      code: "offline",
-      label: "离线",
+      code: "failed",
+      label: "登录失败",
       detail: "上一次登录未完成，需重新扫码登录。",
-      tone: "default"
+      tone: "danger"
     };
   }
 
